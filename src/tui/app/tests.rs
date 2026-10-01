@@ -8063,3 +8063,19 @@ fn the_order_is_saved_beside_the_theme() {
     sort::set_sort(&mut doc, ListSort::Name);
     assert!(doc.to_string().contains("[ui]\nsort = \"name\""), "{doc}");
 }
+
+// clip.exe reads its input in the console's code page, not as UTF-8: a
+// path with a non-ASCII name would land mangled over the copy OSC 52 had
+// already made right.
+#[test]
+fn under_wsl_the_clipboard_fallback_is_clip_exe_for_ascii_text_only() {
+    use super::operations::clipboard_program;
+    if cfg!(target_os = "macos") {
+        assert_eq!(clipboard_program("/tmp/x", false), Some("pbcopy"));
+        return;
+    }
+    let url = "http://localhost:3000";
+    assert_eq!(clipboard_program(url, true), Some("clip.exe"));
+    assert_eq!(clipboard_program("/home/me/çalışma", true), None);
+    assert_eq!(clipboard_program(url, false), None, "OSC 52 alone");
+}

@@ -802,10 +802,10 @@ impl App {
         self.clipboard = Some(text.to_string());
     }
 
-    /// OSC 52 first: it works on Linux and macOS, and through tmux with
-    /// `set-clipboard on`. `pbcopy` is a macOS-only fallback for terminals
-    /// that ignore the sequence; it is spawned with every stdio redirected,
-    /// never inheriting the alternate screen.
+    /// OSC 52 first: it works on Linux and macOS, in Windows Terminal, and
+    /// through tmux with `set-clipboard on`. [`clipboard_program`] is the
+    /// fallback for terminals that ignore the sequence; it is spawned with
+    /// every stdio redirected, never inheriting the alternate screen.
     ///
     /// The escape sequence is written from here — it is one `write` to the
     /// terminal pando already owns — but the child is not. `y` is a key
@@ -819,12 +819,12 @@ impl App {
         let _ = write!(stdout, "\x1b]52;c;{}\x07", base64(text.as_bytes()));
         let _ = stdout.flush();
 
-        if !cfg!(target_os = "macos") {
+        let Some(program) = clipboard_program(text, crate::wsl::Wsl::here().is_some()) else {
             return;
-        }
+        };
         let text = text.to_string();
         thread::spawn(move || {
-            let Ok(mut child) = std::process::Command::new("pbcopy")
+            let Ok(mut child) = std::process::Command::new(program)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -836,10 +836,22 @@ impl App {
                 let _ = stdin.write_all(text.as_bytes());
             }
             // Taking the handle above closed pando's end of the pipe, so
-            // `pbcopy` sees EOF; this reaps it rather than leaving a
+            // the program sees EOF; this reaps it rather than leaving a
             // zombie behind every yank. It blocks a worker thread, which
             // is what worker threads are for.
             let _ = child.wait_with_output();
         });
     }
+}
+
+/// What sets the clipboard for a terminal that ignores OSC 52: `pbcopy` on
+/// macOS, and Windows' `clip.exe` under WSL, for ASCII text only. clip.exe
+/// reads its input in the console's code page rather than as UTF-8, so a
+/// path with a non-ASCII name in it would land mangled, over the copy OSC
+/// 52 had already made right in a terminal that reads the sequence.
+pub(super) fn clipboard_program(text: &str, wsl: bool) -> Option<&'static str> {
+    if cfg!(target_os = "macos") {
+        return Some("pbcopy");
+    }
+    (wsl && text.is_ascii()).then_some("clip.exe")
 }
