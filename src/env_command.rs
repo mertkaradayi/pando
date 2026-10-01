@@ -79,8 +79,7 @@ pub fn words(command: &str) -> Result<Vec<String>, Unclosed> {
 /// that is a file as written is one program, even with a space in its
 /// path; otherwise it is split into [`words`], and one that cannot be is
 /// split on whitespace, as it was before quotes were read. Unset or
-/// empty, the desktop's own opener: `open` on macOS, `xdg-open`
-/// elsewhere.
+/// empty, the desktop's own opener: [`desktop_openers`].
 pub fn browser_commands(browser: Option<&str>, url: &str) -> Vec<Vec<String>> {
     let entries: Vec<&str> = browser
         .unwrap_or_default()
@@ -89,12 +88,7 @@ pub fn browser_commands(browser: Option<&str>, url: &str) -> Vec<Vec<String>> {
         .filter(|entry| !entry.is_empty())
         .collect();
     if entries.is_empty() {
-        let opener = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        return vec![vec![opener.to_string(), url.to_string()]];
+        return desktop_openers(url, crate::wsl::Wsl::here().is_some());
     }
     entries
         .into_iter()
@@ -116,6 +110,38 @@ pub fn browser_commands(browser: Option<&str>, url: &str) -> Vec<Vec<String>> {
             words
         })
         .collect()
+}
+
+/// The desktop's own opener for `url`: `open` on macOS, `xdg-open`
+/// elsewhere.
+///
+/// WSL has no desktop of its own, and Ubuntu on WSL ships no `xdg-open`,
+/// so there the browser is Windows': `wslview` when wslu is installed,
+/// then Windows' URL handler through interop, then `xdg-open` for a
+/// distro that has one set up. The handler is `rundll32.exe
+/// url.dll,FileProtocolHandler` because neither obvious one fits:
+/// `explorer.exe` exits 1 when it has opened the page, so it would read as
+/// a failure, and `cmd.exe /c start` reads an `&` in the URL as the end of
+/// its command.
+fn desktop_openers(url: &str, wsl: bool) -> Vec<Vec<String>> {
+    let command = |words: &[&str]| {
+        words
+            .iter()
+            .map(|word| word.to_string())
+            .chain([url.to_string()])
+            .collect::<Vec<String>>()
+    };
+    if cfg!(target_os = "macos") {
+        return vec![command(&["open"])];
+    }
+    match wsl {
+        true => vec![
+            command(&["wslview"]),
+            command(&["rundll32.exe", "url.dll,FileProtocolHandler"]),
+            command(&["xdg-open"]),
+        ],
+        false => vec![command(&["xdg-open"])],
+    }
 }
 
 #[cfg(test)]
@@ -200,5 +226,26 @@ mod tests {
                 "{unset:?}"
             );
         }
+    }
+
+    // Ubuntu on WSL ships no `xdg-open`, and `pando open` said it could
+    // not run it: the browser there is Windows'. An `&` in the URL stays
+    // in its one argument, which `cmd.exe /c start` would have cut at.
+    #[test]
+    fn under_wsl_the_browser_is_windows() {
+        let url = "http://localhost:3000/?a=1&b=2";
+        if cfg!(target_os = "macos") {
+            assert_eq!(desktop_openers(url, true), vec![owned(&["open", url])]);
+            return;
+        }
+        assert_eq!(
+            desktop_openers(url, true),
+            vec![
+                owned(&["wslview", url]),
+                owned(&["rundll32.exe", "url.dll,FileProtocolHandler", url]),
+                owned(&["xdg-open", url]),
+            ]
+        );
+        assert_eq!(desktop_openers(url, false), vec![owned(&["xdg-open", url])]);
     }
 }
