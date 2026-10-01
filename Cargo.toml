@@ -83,7 +83,8 @@ debug = false
 # How a release is built and published: `dist` (cargo-dist) reads this
 # and generates .github/workflows/release.yml from it. Never edit that file
 # by hand: change this, then run `dist generate`. A pushed `vX.Y.Z` tag
-# builds the four targets (no Windows: pando is Unix-only), publishes a
+# builds the four targets (no Windows: pando is Unix-only, and runs there
+# inside WSL 2 as the Linux binary; build.rs stops a native build), publishes a
 # GitHub Release with checksums, attestations and a shell installer that
 # installs into ~/.local/bin (it is for people without Rust), and pushes the
 # `pando` formula to mertkaradayi/homebrew-tap. release-smoke.yml then

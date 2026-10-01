@@ -130,6 +130,20 @@ those); and doctor's fixes for a stale port and a server with no port
 are commands that work. Nothing of it has run on a real simulator or
 emulator; the tests use stand-ins.
 
+On 2026-10-01 pando was tried on Windows. Natively it does not build,
+and `build.rs` now stops such a build with one line that says to use
+WSL 2. Under WSL 2 the Linux binary works, and pando now knows when it
+is there. `wsl` reads it from the kernel release, and Windows' drives
+from `/proc/mounts`, under `Machine.system` so a test can describe it.
+`pando open` opens Windows' browser. doctor reports a tool found on a
+Windows drive, a repository or worktrees directory on one, and Docker
+Desktop's WSL integration. The TUI copies through `clip.exe`. The
+recorded boot includes init's start time, because a WSL 2 distro, like
+a container, restarts under a kernel that keeps running. The
+integration tests take the Windows half out of their PATH under WSL.
+Proved on fixtures under WSL 2 only; a native port is the next thing
+to plan, in `plans/windows-support.md`.
+
 What is left is not a phase. `plans/open-follow-ups.md` carries the known
 edges, each with who found it and where it belongs, and the rest of the
 launch checklist in `docs/08-roadmap.md` is open: no published crate, no
@@ -243,6 +257,9 @@ database, a prod schema dump, and cookie auth."
   pando `bin` (`common::fake_pnpm`, `common::fake_node`, beside the fake
   docker and cloudflared). A test that passes only with a real tool, or
   only because a shell is slow, is not done.
+- On a Windows machine every gate runs inside WSL 2, with the target
+  directory in WSL's own filesystem and never under `/tmp`, which an
+  idle distro's restart empties.
 - Never run two `cargo test`s at once. Two tests are load-sensitive
   (`plans/open-follow-ups.md`); under a parallel build they fail for
   reasons that have nothing to do with the change. Rerun a readiness or

@@ -16,12 +16,42 @@ may change behaviour.
   as `[ui] sort` in `~/.pando/config.toml`. A worktree's last start is
   kept in its state record through a stop, so last run first still
   knows after a stop when a worktree last ran.
+- pando runs on Windows inside WSL 2, as the Linux binary, and knows
+  when it is there:
+  - `pando open` and the TUI's `o` open Windows' browser: `wslview` when
+    wslu is installed, otherwise Windows' own URL handler. They used to
+    say they could not run `xdg-open`, which Ubuntu on WSL does not ship.
+  - `pando doctor` treats a tool found on a Windows drive as seriously as
+    a missing one. WSL puts Windows' PATH after Linux's, so with no Linux
+    npm the shell finds the script Node's Windows installer leaves, and
+    with no Linux docker the one Docker Desktop leaves. The fix says to
+    install the tool inside WSL, or to turn on Docker Desktop's WSL
+    integration.
+  - It notes a repository, or a worktrees directory, on a Windows drive
+    (`/mnt/c`). git is several times slower there, and an edit sends no
+    file event, so dev servers do not reload.
+  - When the Docker daemon does not answer, the fix names Docker
+    Desktop's WSL integration.
+  - The TUI's copy keys fall back to `clip.exe` for a terminal that
+    ignores OSC 52, for ASCII text, which `clip.exe` cannot mangle.
+- A build for anything but macOS or Linux stops with one line that says
+  to use WSL 2, rather than dozens of compile errors.
 
 ### Fixed
 
 - The TUI reads the pull requests the last fetch cached, so a relaunch
   shows their chips on its first frame rather than once `gh` answers.
   The cache was written for this and never read.
+- A WSL 2 distro, or a container, that restarted under a kernel that
+  kept running left pando trusting the pids it had recorded before. The
+  kernel's boot id stays the same through such a restart, so `status`
+  could call a dead dev server running, and `stop` could signal another
+  process's group. On Linux the boot pando records now includes when
+  init started, which changes with every such restart. Worktrees that
+  are running when pando is upgraded are kept.
+- The test suite passes with a git older than 2.41, such as Ubuntu
+  22.04's, and on a WSL machine whose Windows side has npm or Docker
+  Desktop on PATH.
 
 ## 0.6.2 — 2026-09-30
 
