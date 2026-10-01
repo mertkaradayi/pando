@@ -10,7 +10,7 @@
   <a href="LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-ebc34b?style=flat-square"></a>
   <a href="https://github.com/mertkaradayi/pando/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/mertkaradayi/pando/ci.yml?branch=main&style=flat-square&label=ci"></a>
   <img alt="Rust 2024 edition" src="https://img.shields.io/badge/rust-2024_edition-e6963c?style=flat-square&logo=rust">
-  <img alt="Platform: macOS and Linux" src="https://img.shields.io/badge/platform-macOS_|_Linux-6e9beb?style=flat-square">
+  <img alt="Platform: macOS, Linux and WSL 2" src="https://img.shields.io/badge/platform-macOS_|_Linux_|_WSL_2-6e9beb?style=flat-square">
   <img alt="Version 0.6.2, pre-release" src="https://img.shields.io/badge/version-0.6.2_pre--release-b482e6?style=flat-square">
   <a href="CONTRIBUTING.md"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-50c878?style=flat-square"></a>
   <a href="https://github.com/mertkaradayi/pando/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/mertkaradayi/pando?style=flat-square&logo=github&color=ebc34b"></a>
@@ -518,6 +518,17 @@ pando runs on macOS (Apple silicon and Intel) and Linux (x86_64 and
 arm64). Each release ships a ready-made binary for all four, so none of
 these needs Rust.
 
+On Windows, pando runs inside WSL 2 as the Linux binary: install it in
+your distro any of the ways below. Keep the repository in WSL's own
+filesystem, under `~`, rather than on `/mnt/c`. git is several times
+slower on a Windows drive, and an edit there sends no file event, so dev
+servers do not reload. A worktree's `localhost` URL works from Windows,
+and `pando open` opens it in Windows' browser. Install the tools a
+project runs, Node and Docker among them, inside WSL too (for Docker,
+turn on Docker Desktop's WSL integration); `pando doctor` says when the
+shell finds Windows' copy instead. pando does not build natively on
+Windows yet.
+
 **Homebrew**, on macOS or Linux:
 
 ```bash
@@ -644,7 +655,9 @@ another SDK. What changed in each version is in the [changelog](CHANGELOG.md).
 
 macOS is what it is developed on. CI runs the whole test suite on macOS
 and on Linux for every change, and both pass — but the suite runs on
-fixtures, and nobody has yet used pando on Linux for real work.
+fixtures, and nobody has yet used pando on Linux for real work. Under
+WSL 2 on Windows the suite passes too, and pando has started, stopped
+and opened fixture worktrees there, but not yet a real project.
 
 What that does not mean: there is no crate on crates.io yet, and almost
 every worktree pando has created has been inside a generated fixture

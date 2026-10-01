@@ -236,7 +236,8 @@ pub(super) fn open_apps(
 }
 
 /// Hands `url` to the browser: `$BROWSER` when it is set, the desktop's
-/// own opener otherwise — `open` on macOS, `xdg-open` elsewhere.
+/// own opener otherwise — `open` on macOS, Windows' browser under WSL,
+/// `xdg-open` elsewhere ([`crate::env_command::browser_commands`]).
 pub(super) fn launch(url: &str) -> Result<()> {
     let browser = std::env::var("BROWSER").ok();
     let mut failure = String::new();

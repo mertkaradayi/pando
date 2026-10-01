@@ -573,11 +573,63 @@ fn read_boot_id() -> Option<String> {
     (!id.is_empty()).then_some(id)
 }
 
+/// The kernel's boot id, and when this pid namespace's init started.
+///
+/// The kernel's id alone does not see every restart that hands pids out
+/// again. A WSL 2 distro restarts on a kernel that keeps running (the VM
+/// stays up for Docker Desktop, or for another distro), and so does a
+/// container: the id is the same, while every pid starts again from the
+/// bottom. Init's start time, in clock ticks since the kernel booted,
+/// changes with each such restart and with nothing else. Where `/proc/1`
+/// cannot be read, the kernel's id stands alone.
 #[cfg(target_os = "linux")]
 fn read_boot_id() -> Option<String> {
     let id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
-    let id = id.trim().to_string();
-    (!id.is_empty()).then_some(id)
+    let id = id.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let init = std::fs::read_to_string("/proc/1/stat")
+        .ok()
+        .and_then(|stat| parse_start_time(&stat));
+    Some(match init {
+        Some(ticks) => format!("{id}{INIT_MARK}{ticks}"),
+        None => id.to_string(),
+    })
+}
+
+/// Between the kernel's boot id and init's start time in a recorded boot.
+/// Neither a boot id nor a number contains it.
+const INIT_MARK: char = ':';
+
+/// The start time in a `/proc/<pid>/stat` line: field 22, counted after
+/// the `)` that ends the command name, since a name may hold spaces and
+/// parentheses of its own.
+///
+/// Compiled everywhere so its tests run everywhere; only Linux reads it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_start_time(stat: &str) -> Option<u64> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    // After comm: state is field 3, so field 22 is the 20th.
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// Whether a file written during boot `written` was written during this
+/// one, `now`.
+///
+/// Both with init's start time: they must be the same. One without it — a
+/// file written before pando recorded it, or a machine where `/proc/1`
+/// could not be read — is judged on the kernel's id alone, which is all
+/// it can be judged on: not knowing is not evidence of a restart.
+fn same_boot(written: &str, now: &str) -> bool {
+    match (written.split_once(INIT_MARK), now.split_once(INIT_MARK)) {
+        (Some(_), Some(_)) => written == now,
+        _ => kernel_boot(written) == kernel_boot(now),
+    }
+}
+
+fn kernel_boot(boot: &str) -> &str {
+    boot.split(INIT_MARK).next().unwrap_or(boot)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -604,7 +656,7 @@ fn forget_previous_boot(state: &mut State, written: Option<&str>, now: Option<&s
     let (Some(written), Some(now)) = (written, now) else {
         return;
     };
-    if written == now {
+    if same_boot(written, now) {
         return;
     }
     for record in state.worktrees.values_mut() {
@@ -1576,6 +1628,78 @@ mod tests {
         unmarked.as_object_mut().unwrap().remove("boot");
         std::fs::write(&path, unmarked.to_string()).unwrap();
         assert_eq!(load(&path).unwrap(), state);
+    }
+
+    // A WSL 2 distro restarts on a kernel that keeps running, and so does
+    // a container: the kernel's boot id is the same, and every pid is
+    // handed out again from the bottom. Measured on WSL 2: the boot id
+    // read the same before and after the distro was stopped and started.
+    #[test]
+    fn a_restart_under_a_kernel_that_kept_running_forgets_every_pid() {
+        let mut state = full_state();
+        forget_previous_boot(&mut state, Some("kernel-a:100"), Some("kernel-a:250"));
+        let rec = &state.worktrees["feat+x"];
+        assert!(rec.processes.is_empty(), "{:?}", rec.processes);
+        assert!(rec.share.is_none());
+        assert!(
+            rec.services
+                .iter()
+                .all(|s| s.pid.is_none() && s.pgid.is_none())
+        );
+        assert_eq!(rec.ports, full_state().worktrees["feat+x"].ports);
+
+        let mut same = full_state();
+        forget_previous_boot(&mut same, Some("kernel-a:100"), Some("kernel-a:100"));
+        assert_eq!(same, full_state(), "the same init: the same boot");
+    }
+
+    #[test]
+    fn a_boot_without_inits_start_time_is_judged_on_the_kernel_alone() {
+        assert!(
+            same_boot("kernel-a", "kernel-a:250"),
+            "a file written before init's start time was recorded"
+        );
+        assert!(
+            same_boot("kernel-a:100", "kernel-a"),
+            "a machine where /proc/1 cannot be read now"
+        );
+        assert!(!same_boot("kernel-a", "kernel-b:250"));
+        assert!(!same_boot("kernel-a:100", "kernel-b:100"));
+        assert!(same_boot("kernel-a", "kernel-a"));
+
+        let mut upgraded = full_state();
+        forget_previous_boot(&mut upgraded, Some("kernel-a"), Some("kernel-a:250"));
+        assert_eq!(
+            upgraded,
+            full_state(),
+            "worktrees running when pando is upgraded are not forgotten"
+        );
+    }
+
+    #[test]
+    fn inits_start_time_is_field_22_counted_after_the_command_name() {
+        let stat = "1 (sys temd) x) S 0 1 1 0 -1 4194560 100 200 3 4 5 6 7 8 20 0 1 0 4242 1000 50";
+        assert_eq!(
+            parse_start_time(stat),
+            Some(4242),
+            "a name with ) and a space"
+        );
+        assert_eq!(parse_start_time("1 (init) S 0 1 1"), None, "cut short");
+        assert_eq!(parse_start_time("no command name"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn this_boot_is_the_kernels_with_inits_start_time() {
+        let now = boot_id().expect("Linux says which boot this is");
+        let kernel = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap();
+        assert_eq!(kernel_boot(now), kernel.trim());
+        if let Some(ticks) = std::fs::read_to_string("/proc/1/stat")
+            .ok()
+            .and_then(|stat| parse_start_time(&stat))
+        {
+            assert_eq!(now, format!("{}{INIT_MARK}{ticks}", kernel.trim()));
+        }
     }
 
     #[test]

@@ -41,6 +41,11 @@ cargo fmt --check
 All three checks must be clean before every commit, and CI runs them on
 every pull request.
 
+On Windows, build and test inside WSL 2, on a clone in WSL's own
+filesystem: pando does not build natively there yet. Avoid `/tmp` for
+anything you mean to keep. A distro stops when nothing is running in it,
+and with systemd on, its `/tmp` is emptied at the next start.
+
 The integration tests are modules of one test binary,
 `tests/integration.rs`. Run one file's tests with its module name:
 

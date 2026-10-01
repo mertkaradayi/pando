@@ -109,7 +109,7 @@ pub fn run_on(paths: &PandoPaths, machine: &Machine<'_>) -> Report {
     validate_config(paths, &config, &mut findings);
     portless::portless_findings(paths, &config, &mut findings);
     stale_detection_findings(paths, &config, &config_report, &mut findings);
-    let project = project_report(paths, &config, &mut findings);
+    let project = project_report(paths, &config, machine, &mut findings);
     let runtime = runtime_report(paths, &config, machine, &mut findings);
     let tools = tools_report(paths, &config, machine, &mut findings);
     // Once, and shared: every group's listening sockets are scanned to

@@ -4984,6 +4984,13 @@ fn doctor_json_is_versioned_and_carries_every_section() {
 #[test]
 fn doctor_json_says_the_same_thing_the_text_does() {
     let e = env();
+    // An npm on the PATH, or a machine without one has two problems, as
+    // with pnpm in `doctor_exits_one_for_a_problem_it_printed_and_says_nothing_else`.
+    common::fake_npm(&e.home);
+    e.write_user_config(&format!(
+        "[runtime]\nprelude = 'export PATH=\"{}:$PATH\"'\n",
+        e.home.join("bin").display()
+    ));
     e.write_config("[project]\ninstall = \"npm install\"\n");
     let text = e.pando(&["doctor"]);
     let json = e.pando(&["doctor", "--json"]);
