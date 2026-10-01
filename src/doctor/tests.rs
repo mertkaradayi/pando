@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use crate::actions::Machine;
 use crate::paths::PandoPaths;
 use crate::project::ProjectRef;
-use crate::testutil::{git, init_repo};
+use crate::testutil::{WSL_MOUNTS, WSL_RELEASE, git, init_repo, wsl_system};
 use crate::{ports, state};
 
 use super::*;
@@ -4257,5 +4257,202 @@ fn ci_on_expos_metro_is_a_note_that_says_what_it_turns_off() {
             .is_some_and(|fix| fix.contains("remove CI")),
         "{:?}",
         found[0].fix
+    );
+}
+
+/// `every_tool`, with `program` found at `path` by every probe that asks
+/// for it: docker's and `docker compose`'s ask for the same one.
+fn every_tool_with(program: &'static str, path: &'static str) -> impl Fn(&str) -> Option<String> {
+    move |script: &str| {
+        let answer = every_tool(script)?;
+        let asked = format!("command -v '{program}' ");
+        let found: Vec<String> = script
+            .lines()
+            .filter(|l| l.contains(&asked))
+            .filter_map(|l| l.split(TOOL_PATH_MARK).nth(1))
+            .filter_map(|rest| rest.split(' ').next())
+            .map(|index| format!("{TOOL_PATH_MARK}{index} "))
+            .collect();
+        let mut out = String::new();
+        for line in answer.lines() {
+            match found.iter().find(|mark| line.starts_with(mark.as_str())) {
+                Some(mark) => writeln!(out, "{mark}{path}").unwrap(),
+                None => writeln!(out, "{line}").unwrap(),
+            }
+        }
+        Some(out)
+    }
+}
+
+// Docker Desktop leaves a `docker` script on Windows' PATH that, in a WSL
+// distro without its integration, only says to turn the integration on;
+// and `docker compose` is the same program asked a second question.
+#[test]
+fn under_wsl_docker_desktops_own_script_says_to_turn_the_integration_on_once() {
+    let fx = fixture();
+    wsl_system(&fx.machine_home, WSL_RELEASE, WSL_MOUNTS);
+    let report = report_of(
+        &fx,
+        &every_tool_with(
+            "docker",
+            "/mnt/c/Program Files/Docker/Docker/resources/bin/docker",
+        ),
+    );
+    let found: Vec<&Finding> = report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("Windows' copy"))
+        .collect();
+    assert_eq!(found.len(), 1, "{:?}", messages(&report));
+    assert!(found[0].message.starts_with("docker is Windows' copy"));
+    assert_eq!(
+        found[0].severity,
+        Severity::Note,
+        "nothing in this project runs a container"
+    );
+    let fix = found[0].fix.as_deref().unwrap();
+    assert!(
+        fix.starts_with("turn on Docker Desktop's WSL integration"),
+        "{fix}"
+    );
+}
+
+// Under WSL, Windows' PATH comes after Linux's, and with no Linux pnpm the
+// shell found nvm-windows' shim, which died with `node: not found`. doctor
+// listed it among the tools as if it were fine.
+#[test]
+fn under_wsl_a_tool_found_on_a_windows_drive_is_as_bad_as_missing() {
+    let fx = fixture();
+    write_project_config(
+        &fx,
+        "[project]\ninstall = \"pnpm install --frozen-lockfile\"\n",
+    );
+    let windows = "/mnt/c/Users/me/AppData/Roaming/nvm/v20.19.3/pnpm";
+    let shell = every_tool_with("pnpm", windows);
+    let off_wsl = report_of(&fx, &shell);
+    assert!(
+        !mentions(&off_wsl, "Windows' copy"),
+        "off WSL a path is a path: {:?}",
+        messages(&off_wsl)
+    );
+
+    wsl_system(&fx.machine_home, WSL_RELEASE, WSL_MOUNTS);
+    let report = report_of(&fx, &shell);
+    assert!(!report.healthy(), "{:?}", messages(&report));
+    let finding = report
+        .findings
+        .iter()
+        .find(|f| f.message.starts_with("pnpm is Windows' copy"))
+        .unwrap_or_else(|| panic!("{:?}", messages(&report)));
+    assert_eq!(finding.section, Section::Tools);
+    assert_eq!(
+        finding.severity,
+        Severity::Problem,
+        "every new worktree's install step runs it"
+    );
+    assert!(finding.message.contains(windows), "{}", finding.message);
+    assert!(
+        finding.message.contains("the drive at /mnt/c"),
+        "{}",
+        finding.message
+    );
+    let fix = finding.fix.as_deref().unwrap();
+    assert!(fix.contains("install pnpm inside WSL"), "{fix}");
+    assert!(fix.contains("appendWindowsPath = false"), "{fix}");
+}
+
+// On a Windows drive, git was several times slower and inotify sent no
+// event for an edit, from Windows or from Linux.
+#[test]
+fn under_wsl_a_repository_on_a_windows_drive_is_a_note_with_the_way_out() {
+    let fx = fixture();
+    // The fixture's directory, which holds the repository and pando's
+    // home, mounted as drive C.
+    let drive = fx.root.parent().unwrap().display().to_string();
+    let mounts = format!("C:\\134 {drive} 9p rw,noatime,aname=drvfs;path=C:\\ 0 0\n");
+    wsl_system(&fx.machine_home, "6.8.0-45-generic\n", &mounts);
+    assert!(
+        !mentions(&report(&fx), "Windows drive"),
+        "a 9p mount off WSL is no drive"
+    );
+
+    wsl_system(&fx.machine_home, WSL_RELEASE, &mounts);
+    let report = report(&fx);
+    assert!(
+        report.healthy(),
+        "slow is not broken: {:?}",
+        messages(&report)
+    );
+    let repository = report
+        .findings
+        .iter()
+        .find(|f| {
+            f.message
+                .starts_with("the repository is on the Windows drive")
+        })
+        .unwrap_or_else(|| panic!("{:?}", messages(&report)));
+    assert_eq!(repository.section, Section::Project);
+    assert_eq!(repository.severity, Severity::Note);
+    assert!(
+        repository.message.contains(&format!("drive at {drive}")),
+        "{}",
+        repository.message
+    );
+    assert!(
+        repository.fix.as_deref().unwrap().contains("under ~"),
+        "{:?}",
+        repository.fix
+    );
+    let worktrees = report
+        .findings
+        .iter()
+        .find(|f| {
+            f.message
+                .starts_with("this project's worktrees go on the Windows drive")
+        })
+        .unwrap_or_else(|| panic!("{:?}", messages(&report)));
+    assert!(
+        worktrees.fix.as_deref().unwrap().contains("PANDO_HOME"),
+        "they are under pando's home: {:?}",
+        worktrees.fix
+    );
+}
+
+// Docker Desktop's daemon runs on Windows, and a distro's own `docker`
+// reaches it only with the WSL integration on: "start Docker" said nothing
+// to someone whose Docker Desktop was up the whole time.
+#[test]
+fn under_wsl_a_docker_daemon_that_does_not_answer_names_the_wsl_integration() {
+    let fx = fixture();
+    write_project_config(
+        &fx,
+        "[dev]\ncmd = \"true\"\n\n[[services]]\nkind = \"compose\"\n\
+         file = \"docker-compose.yml\"\ninclude = [\"postgres\"]\n",
+    );
+    write_compose(
+        &fx,
+        "services:\n  postgres:\n    image: postgres:16\n    healthcheck:\n      test: x\n",
+    );
+    wsl_system(&fx.machine_home, WSL_RELEASE, WSL_MOUNTS);
+    let down = report_of(
+        &fx,
+        &daemon_says(
+            1,
+            "failed to connect to the docker API at unix:///var/run/docker.sock",
+        ),
+    );
+    let problem = down
+        .findings
+        .iter()
+        .find(|f| f.message.contains("Docker daemon is not running"))
+        .unwrap_or_else(|| panic!("{:?}", messages(&down)));
+    let fix = problem.fix.as_deref().unwrap();
+    assert!(
+        fix.starts_with("start Docker Desktop with its WSL integration on"),
+        "{fix}"
+    );
+    assert!(
+        fix.contains("prefer = \"native\""),
+        "the way around it stays: {fix}"
     );
 }

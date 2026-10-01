@@ -426,6 +426,8 @@ struct Fixture {
     _dir: TempDir,
     root: PathBuf,
     home: PathBuf,
+    /// Stand-ins for the tools this machine may lack, first on PATH.
+    tools: PathBuf,
 }
 
 fn fixture(kind: Kind) -> Fixture {
@@ -445,9 +447,14 @@ fn fixture(kind: Kind) -> Fixture {
     // The other: whether this machine has the engines the fixture's env
     // example names, which decides whether the services are ticked.
     common::fake_engines(&home);
+    // And whether it has npm, which the npm fixtures install with and
+    // doctor asks for: a stand-in, first on the PATH every run gets.
+    let tools = parent.join("tools");
+    common::fake_npm(&tools);
     Fixture {
         root,
         home,
+        tools: tools.join("bin"),
         _dir: dir,
     }
 }
@@ -473,7 +480,13 @@ impl Fixture {
         if let Some(user) = user {
             command.env("HOME", user);
         }
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let path = std::env::join_paths(
+            std::iter::once(self.tools.clone()).chain(std::env::split_paths(&path)),
+        )
+        .unwrap();
         let mut child = command
+            .env("PATH", path)
             .env("PANDO_HOME", &self.home)
             .current_dir(&self.root)
             .args(args)
