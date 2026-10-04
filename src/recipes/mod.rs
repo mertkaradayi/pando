@@ -143,6 +143,11 @@ pub struct NamespaceRecipe {
     /// Prints the account the server knows the login as, `user@host`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// A `database`'s: the longest name the engine keeps as given, when it
+    /// is shorter than [`crate::namespace::MAX_NAME`] — Postgres's 63.
+    /// Longer than that is refused when the recipe is read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_name: Option<usize>,
     /// What an administrator runs, once, so the login may make and drop
     /// namespaces under this worktree's prefix and nothing else. Printed,
     /// never run. Sees `{prefix_like}` — the prefix as an SQL `LIKE`
@@ -152,6 +157,11 @@ pub struct NamespaceRecipe {
 }
 
 impl NamespaceRecipe {
+    /// The longest database name this engine keeps as given.
+    pub fn max_name(&self) -> usize {
+        self.max_name.unwrap_or(crate::namespace::MAX_NAME)
+    }
+
     /// The shape a kind needs, or what is missing from it.
     fn check(&self) -> Result<()> {
         use crate::state::NamespaceKind;
@@ -178,6 +188,16 @@ impl NamespaceRecipe {
         }
         if self.ping.trim().is_empty() || self.drop.trim().is_empty() {
             bail!("a [namespace] needs `ping` and `drop`");
+        }
+        // Room for `<main>__`, a hash, and one character of the worktree's
+        // name, and no more than the guard on every drop allows.
+        if let Some(max) = self.max_name
+            && !(16..=crate::namespace::MAX_NAME).contains(&max)
+        {
+            bail!(
+                "a [namespace]'s `max_name` is from 16 to {}, not {max}",
+                crate::namespace::MAX_NAME
+            );
         }
         Ok(())
     }
@@ -766,6 +786,11 @@ mod tests {
             (
                 "[namespace]\nkind = \"slot\"\nping = \"\"\ndrop = \"d\"\nsize = \"s\"\nslots = 4\n",
                 "needs `ping` and `drop`",
+            ),
+            (
+                "[namespace]\nkind = \"database\"\nping = \"p\"\ndrop = \"d\"\ncreate = \"c\"\n\
+                 exists = \"e\"\nmax_name = 128\n",
+                "`max_name` is from 16 to 64, not 128",
             ),
         ] {
             let e = format!("{:#}", parse(&format!("{service}{table}")).unwrap_err());

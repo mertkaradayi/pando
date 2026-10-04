@@ -799,7 +799,12 @@ fn ensure_database(
         server.create(&recorded.name, &target.main)?;
         return Ok((record(paths, name, wanted(&recorded.name))?, true));
     }
-    let names = namespace::database_names(&target.main, paths.project_id(), name)?;
+    let names = namespace::database_names(
+        &target.main,
+        paths.project_id(),
+        name,
+        target.namespace.max_name(),
+    )?;
     for candidate in &names {
         // Another worktree's, as state knows it, is not this one's to use.
         if recorded_elsewhere(&store, name, &wanted(candidate)).is_some() {

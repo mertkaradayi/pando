@@ -13389,8 +13389,13 @@ fn a_database_another_start_of_this_worktree_just_made_is_its_own_and_its_only_o
 #[test]
 fn a_database_made_while_another_start_of_this_worktree_recorded_one_is_left_unrecorded() {
     let ns = namespaced_fixture(MAIN_ENV);
-    let [first, second] =
-        crate::namespace::database_names("shop", ns.fx.paths.project_id(), &ns.name).unwrap();
+    let [first, second] = crate::namespace::database_names(
+        "shop",
+        ns.fx.paths.project_id(),
+        &ns.name,
+        crate::namespace::MAX_NAME,
+    )
+    .unwrap();
     // The other start has made the first name, and not yet recorded it.
     std::fs::write(
         ns.fake.join(format!("on-create-{first}")),

@@ -5,7 +5,7 @@ use chrono::Utc;
 // ---- names ------------------------------------------------------------------
 
 fn names(main: &str, worktree: &str) -> [String; 2] {
-    database_names(main, "acme-0000beef", worktree).unwrap()
+    database_names(main, "acme-0000beef", worktree, MAX_NAME).unwrap()
 }
 
 // `pando check`'s worktree is `.pando-check`, a name no branch can have.
@@ -56,8 +56,8 @@ fn a_worktree_name_becomes_lowercase_letters_digits_and_single_underscores() {
 #[test]
 fn the_names_are_the_same_every_time_and_only_the_hashed_one_knows_the_project() {
     assert_eq!(names("shop", "feat+x"), names("shop", "feat+x"));
-    let here = database_names("shop", "acme-0000beef", "feat+x").unwrap();
-    let clone = database_names("shop", "acme-1111cafe", "feat+x").unwrap();
+    let here = database_names("shop", "acme-0000beef", "feat+x", MAX_NAME).unwrap();
+    let clone = database_names("shop", "acme-1111cafe", "feat+x", MAX_NAME).unwrap();
     assert_eq!(
         here[0], clone[0],
         "the readable name is the worktree's alone"
@@ -105,16 +105,19 @@ fn a_worktree_with_nothing_readable_in_its_name_is_named_by_its_hash() {
 #[test]
 fn a_main_name_that_is_not_plain_or_leaves_no_room_is_refused() {
     for main in ["", "shop;drop", "sh`op", "a.b", "shöp", "shop db"] {
-        let e = format!("{:#}", database_names(main, "p", "feat+x").unwrap_err());
+        let e = format!(
+            "{:#}",
+            database_names(main, "p", "feat+x", MAX_NAME).unwrap_err()
+        );
         assert!(e.contains("not a plain name"), "{main:?}: {e}");
     }
     // `<main>__` plus `_`, eight hex digits and one character of the
     // worktree is the least a name can be.
     let longest = "m".repeat(MAX_NAME - MARKER.len() - 1 - 8 - 1);
-    assert!(database_names(&longest, "p", "feat+x").is_ok());
+    assert!(database_names(&longest, "p", "feat+x", MAX_NAME).is_ok());
     let e = format!(
         "{:#}",
-        database_names(&format!("{longest}m"), "p", "feat+x").unwrap_err()
+        database_names(&format!("{longest}m"), "p", "feat+x", MAX_NAME).unwrap_err()
     );
     assert!(e.contains("too long"), "{e}");
 }
@@ -166,6 +169,34 @@ fn every_name_is_inside_the_prefix_never_main_and_always_fits() {
             }
         }
     }
+}
+
+// Postgres keeps 63 bytes of a name and cuts the rest without an error,
+// so a name made at MariaDB's 64 was another database than the one pando
+// recorded. An engine's own limit holds every name, and none goes past
+// pando's.
+#[test]
+fn an_engines_shorter_limit_holds_every_name_and_none_passes_pandos() {
+    for worktree in awkward_worktrees() {
+        for name in database_names("northwind_traders", "p", &worktree, 63).unwrap() {
+            assert!(name.len() <= 63, "{worktree:?}: {name}");
+            assert!(name.starts_with("northwind_traders__"), "{name}");
+        }
+    }
+    let fits = "y".repeat(63 - "shop__".len());
+    assert_eq!(
+        database_names("shop", "p", &fits, 63).unwrap()[0],
+        format!("shop__{fits}")
+    );
+    assert_eq!(
+        database_names("shop", "p", &format!("{fits}y"), 63).unwrap()[0].len(),
+        63
+    );
+    let longest = "m".repeat(63 - MARKER.len() - 1 - 8 - 1);
+    assert!(database_names(&longest, "p", "x", 63).is_ok());
+    assert!(database_names(&format!("{longest}m"), "p", "x", 63).is_err());
+    let wide = database_names("shop", "p", &"z".repeat(200), 200).unwrap();
+    assert!(wide.iter().all(|name| name.len() == MAX_NAME), "{wide:?}");
 }
 
 // ---- the guard --------------------------------------------------------------

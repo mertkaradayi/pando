@@ -2,7 +2,10 @@
 
 use anyhow::{Result, bail};
 
-/// The longest database name MariaDB and MySQL accept, in characters.
+/// The longest database name pando ever makes or drops, in characters:
+/// MariaDB's and MySQL's. A recipe may lower it for its engine —
+/// Postgres's is 63 bytes — and never raise it, so the guard that holds
+/// every drop to it holds for every engine.
 pub const MAX_NAME: usize = 64;
 
 /// What stands between the main database's name and the worktree's, so a
@@ -30,9 +33,12 @@ pub fn is_plain(name: &str) -> bool {
 ///
 /// The first is the one a developer reads: `<main>__<worktree>`, the
 /// worktree's name lowercased with everything but letters and digits made
-/// `_` — `feat+x` is `northwind_traders__feat_x`. Past [`MAX_NAME`] it is
-/// cut and a short hash is put on the end, so it still fits and two long
-/// names that share a beginning still differ.
+/// `_` — `feat+x` is `northwind_traders__feat_x`. Past `max` — the
+/// engine's longest name, at most [`MAX_NAME`] — it is cut and a short
+/// hash is put on the end, so it still fits and two long names that share
+/// a beginning still differ. An engine that cut it itself, as Postgres
+/// does without an error, would make a database of another name than the
+/// one pando records.
 ///
 /// The second always carries the hash, of the project and the worktree
 /// together. It is for when the first is somebody else's already: `feat+x`
@@ -42,8 +48,14 @@ pub fn is_plain(name: &str) -> bool {
 ///
 /// Deterministic: the same main database, project and worktree always give
 /// the same two names. Every name starts with `<main>__`, is longer than
-/// that, and is never `main` itself.
-pub fn database_names(main: &str, project: &str, worktree: &str) -> Result<[String; 2]> {
+/// that, at most `max` long, and is never `main` itself.
+pub fn database_names(
+    main: &str,
+    project: &str,
+    worktree: &str,
+    max: usize,
+) -> Result<[String; 2]> {
+    let max = max.min(MAX_NAME);
     if !is_plain(main) {
         bail!(
             "the main database is called {main:?}, which is not a plain name — pando names a \
@@ -53,10 +65,10 @@ pub fn database_names(main: &str, project: &str, worktree: &str) -> Result<[Stri
     let prefix = format!("{main}{MARKER}");
     // Room for the prefix, a separator, a hash, and at least one character
     // of the worktree's own name in front of it.
-    if prefix.len() + 1 + HASH_LEN + 1 > MAX_NAME {
+    if prefix.len() + 1 + HASH_LEN + 1 > max {
         bail!(
             "the main database's name {main:?} is too long to name a worktree's database after \
-             it — MariaDB allows {MAX_NAME} characters, and `{prefix}` leaves no room for a \
+             it — the server allows {max} characters, and `{prefix}` leaves no room for a \
              worktree"
         );
     }
@@ -68,9 +80,9 @@ pub fn database_names(main: &str, project: &str, worktree: &str) -> Result<[Stri
         false => format!("{prefix}{cut}_{hash}"),
     };
     // What is left for the worktree's own part once the hash is on it.
-    let room = MAX_NAME - prefix.len() - 1 - HASH_LEN;
+    let room = max - prefix.len() - 1 - HASH_LEN;
     let cut = cut_at(&slug, room);
-    let readable = match slug.is_empty() || prefix.len() + slug.len() > MAX_NAME {
+    let readable = match slug.is_empty() || prefix.len() + slug.len() > max {
         true => hashed(cut),
         false => format!("{prefix}{slug}"),
     };
