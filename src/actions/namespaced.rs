@@ -407,9 +407,16 @@ fn services_with_recipes(
                         .as_ref()
                         .and_then(|p| p.services.get(name))
                         .and_then(|s| s.image.as_deref());
+                    // A recipe of the image's own name first, then the
+                    // engine the catalog knows it as: `pgvector/pgvector`
+                    // is a Postgres.
                     let image = reference.map(crate::catalog::images::image_name);
+                    let engine = reference
+                        .and_then(crate::catalog::images::known)
+                        .and_then(|known| known.engine);
                     let recipe = image
                         .into_iter()
+                        .chain(engine)
                         .chain(std::iter::once(name.as_str()))
                         .find_map(|candidate| recipes.get(candidate).ok())
                         .map(|loaded| loaded.recipe.clone());

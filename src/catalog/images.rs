@@ -43,6 +43,11 @@ pub struct Image {
     /// guessing would publish the wrong port and fail much later, inside
     /// the app.
     pub ports: &'static [u16],
+    /// The recipe that knows its engine, by name, when one does: a
+    /// `pgvector/pgvector` or `timescale/timescaledb` container is a
+    /// Postgres, and namespaced mode makes its databases the way the
+    /// `postgres` recipe says.
+    pub engine: Option<&'static str>,
 }
 
 const fn app(
@@ -55,6 +60,20 @@ const fn app(
         role: Role::App,
         env_prefixes,
         ports,
+        engine: None,
+    }
+}
+
+/// An app image whose engine a built-in recipe knows.
+const fn engine(
+    name: &'static str,
+    recipe: &'static str,
+    env_prefixes: &'static [&'static str],
+    ports: &'static [u16],
+) -> Image {
+    Image {
+        engine: Some(recipe),
+        ..app(name, env_prefixes, ports)
     }
 }
 
@@ -66,27 +85,43 @@ const fn utility(name: &'static str, ports: &'static [u16]) -> Image {
         role: Role::Utility,
         env_prefixes: MAIL,
         ports,
+        engine: None,
     }
 }
 
 const POSTGRES: &[&str] = &["DATABASE", "DB", "POSTGRES", "PG", "POSTGRESQL"];
 
 pub const IMAGES: [Image; 21] = [
-    app("postgres", POSTGRES, &[5432]),
-    app("postgis", &["DATABASE", "DB", "POSTGRES", "PG"], &[5432]),
+    engine("postgres", "postgres", POSTGRES, &[5432]),
+    engine(
+        "postgis",
+        "postgres",
+        &["DATABASE", "DB", "POSTGRES", "PG"],
+        &[5432],
+    ),
     // Postgres with an extension built in, or packaged by somebody else:
     // `pgvector/pgvector`, `bitnami/postgresql`, `timescale/timescaledb`.
-    app("pgvector", POSTGRES, &[5432]),
-    app("postgresql", POSTGRES, &[5432]),
-    app("timescaledb", POSTGRES, &[5432]),
-    app("timescaledb-ha", POSTGRES, &[5432]),
-    app("mysql", &["DATABASE", "DB", "MYSQL"], &[3306]),
-    app("mariadb", &["DATABASE", "DB", "MYSQL", "MARIADB"], &[3306]),
-    app("redis", &["REDIS", "CACHE"], &[6379]),
-    app("redis-stack", &["REDIS", "CACHE"], &[6379]),
-    app("redis-stack-server", &["REDIS", "CACHE"], &[6379]),
-    app("valkey", &["REDIS", "VALKEY", "CACHE"], &[6379]),
-    app("mongo", &["MONGO", "MONGODB", "DATABASE"], &[27017]),
+    engine("pgvector", "postgres", POSTGRES, &[5432]),
+    engine("postgresql", "postgres", POSTGRES, &[5432]),
+    engine("timescaledb", "postgres", POSTGRES, &[5432]),
+    engine("timescaledb-ha", "postgres", POSTGRES, &[5432]),
+    engine("mysql", "mariadb", &["DATABASE", "DB", "MYSQL"], &[3306]),
+    engine(
+        "mariadb",
+        "mariadb",
+        &["DATABASE", "DB", "MYSQL", "MARIADB"],
+        &[3306],
+    ),
+    engine("redis", "redis", &["REDIS", "CACHE"], &[6379]),
+    engine("redis-stack", "redis", &["REDIS", "CACHE"], &[6379]),
+    engine("redis-stack-server", "redis", &["REDIS", "CACHE"], &[6379]),
+    engine("valkey", "redis", &["REDIS", "VALKEY", "CACHE"], &[6379]),
+    engine(
+        "mongo",
+        "mongodb",
+        &["MONGO", "MONGODB", "DATABASE"],
+        &[27017],
+    ),
     app(
         "elasticsearch",
         &["ELASTIC", "ELASTICSEARCH", "SEARCH"],
@@ -138,6 +173,28 @@ mod tests {
                 image.name
             );
         }
+    }
+
+    // An engine is named by its recipe's own name, never an alias: a file
+    // a developer drops in under that name is what a namespace then uses.
+    #[test]
+    fn every_engine_an_image_names_is_a_built_in_recipe() {
+        let recipes = crate::recipes::Recipes::built_in();
+        for image in IMAGES {
+            let Some(engine) = image.engine else {
+                continue;
+            };
+            let recipe = recipes
+                .get(engine)
+                .unwrap_or_else(|e| panic!("{}: {e}", image.name));
+            assert_eq!(recipe.recipe.name, engine, "{}", image.name);
+        }
+        let engine = |image: &str| known(image).and_then(|i| i.engine);
+        assert_eq!(engine("pgvector/pgvector:pg16"), Some("postgres"));
+        assert_eq!(engine("timescale/timescaledb-ha:pg16"), Some("postgres"));
+        assert_eq!(engine("mysql:8"), Some("mariadb"));
+        assert_eq!(engine("redis/redis-stack-server"), Some("redis"));
+        assert_eq!(engine("mailpit"), None);
     }
 
     #[test]

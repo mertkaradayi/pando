@@ -11829,6 +11829,35 @@ fn a_stopped_isolated_worktree_is_not_running_to_a_second_stop() {
     assert!(!crate::process::group_alive(pump.pgid));
 }
 
+// A compose service running Postgres with an extension built in is a
+// Postgres to namespaced mode: `pgvector/pgvector` has no recipe of its
+// own name, and was left shared as an engine pando knew nothing about.
+#[test]
+fn a_compose_postgres_image_of_another_name_gets_a_namespace_as_postgres() {
+    let mut fx = compose_fixture(
+        "services:\n  db:\n    image: pgvector/pgvector:pg16\n    ports: [\"5432:5432\"]\n",
+        "PORT=3000\nDATABASE_URL=postgres://acme:acme@localhost:5432/acme\n",
+    );
+    let config: Config = toml::from_str(
+        "[[services]]\nkind = \"compose\"\nfile = \"docker-compose.yml\"\n\
+         include = [\"db\"]\nenv = { DATABASE_URL = \"db\" }\n",
+    )
+    .unwrap();
+    fx.config.services = config.services;
+    let plan = super::namespaced::plan(&fx.paths, &fx.config);
+    assert!(plan.shared.is_empty(), "{:?}", plan.shared);
+    let target = &plan.targets[0];
+    assert_eq!(
+        (
+            target.service.as_str(),
+            target.recipe.as_str(),
+            target.main.as_str()
+        ),
+        ("db", "postgres", "acme")
+    );
+    assert_eq!(target.namespace.max_name(), 63);
+}
+
 // A start asks compose what is already running first, so a failure after
 // it stops only what the start brought up. A `ps` that failed — a Docker
 // too loaded to answer in time — read as "nothing is running", and the
