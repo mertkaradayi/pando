@@ -2260,6 +2260,40 @@ fn a_namespace_login_is_read_from_pandos_own_file_and_nowhere_else() {
     assert!(!format!("{:?}", loaded.config).contains("hunter2"));
 }
 
+// Which keys name the app's database is no secret: a team writes it in
+// the committed file. The login beside it is, and only that goes.
+#[test]
+fn a_committed_namespaced_db_env_is_kept_and_its_login_is_not() {
+    let f = fixture();
+    write_committed(
+        &f,
+        "[namespaced.redis]\ndb_env = [\"REDIS_DB\"]\npassword = \"hunter2\"\n\n\
+         [namespaced.postgres]\nuser = \"app\"\n",
+    );
+    let loaded = load(&f.paths).unwrap();
+    let redis = &loaded.config.namespaced["redis"];
+    assert_eq!(redis.db_env, vec!["REDIS_DB".to_string()]);
+    assert!(!redis.has_login(), "{redis:?}");
+    assert!(
+        !loaded.config.namespaced.contains_key("postgres"),
+        "a table left with nothing in it goes"
+    );
+    assert!(
+        loaded
+            .warnings
+            .iter()
+            .any(|w| w.contains("ignoring [namespaced] logins")),
+        "{:?}",
+        loaded.warnings
+    );
+
+    write_home(&f, "[namespaced.redis]\npassword = \"from-pando\"\n");
+    let loaded = load(&f.paths).unwrap();
+    let redis = &loaded.config.namespaced["redis"];
+    assert_eq!(redis.db_env, vec!["REDIS_DB".to_string()]);
+    assert_eq!(redis.password.as_deref(), Some("from-pando"));
+}
+
 // A file pando prints whole is printed without a login's password,
 // however the login was written, and with everything else as it was.
 #[test]

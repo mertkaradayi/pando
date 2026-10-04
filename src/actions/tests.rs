@@ -1028,6 +1028,106 @@ fn a_namespaced_plan_reads_the_env_files_where_the_processes_run() {
     assert_eq!(plan.targets[0].port, 3308);
 }
 
+// Three Redis roles at split addresses share one slot key, `REDIS_DB`,
+// beside none of them. pando found no slot, kept Redis shared, and one
+// worktree's worker took the jobs another enqueued. `db_env` names it.
+#[test]
+fn a_slot_key_beside_no_address_is_found_through_db_env() {
+    let mut fx = fixture();
+    let services: Config = toml::from_str(
+        "[[services]]\nkind = \"native\"\nname = \"redis\"\n\
+         env = { REDIS_CACHE_PORT = \"redis\", REDIS_QUEUE_PORT = \"redis\", \
+         REDIS_RATE_LIMIT_PORT = \"redis\" }\n",
+    )
+    .unwrap();
+    fx.config.services = services.services;
+    std::fs::write(
+        fx.root.join(".env"),
+        "REDIS_CACHE_HOST=localhost\nREDIS_CACHE_PORT=6379\n\
+         REDIS_QUEUE_HOST=localhost\nREDIS_QUEUE_PORT=6379\n\
+         REDIS_RATE_LIMIT_HOST=localhost\nREDIS_RATE_LIMIT_PORT=6379\nREDIS_DB=2\n",
+    )
+    .unwrap();
+    let plan = super::namespaced::plan(&fx.paths, &fx.config);
+    assert!(plan.targets.is_empty());
+    assert_eq!(
+        plan.shared_lines(),
+        vec!["redis: shared — the app reads no slot setting".to_string()]
+    );
+
+    let settings = |db_env: &[&str]| crate::config::LoginConfig {
+        db_env: db_env.iter().map(|key| key.to_string()).collect(),
+        ..Default::default()
+    };
+    fx.config
+        .namespaced
+        .insert("redis".into(), settings(&["REDIS_DB"]));
+    let plan = super::namespaced::plan(&fx.paths, &fx.config);
+    assert!(plan.shared.is_empty(), "{:?}", plan.shared);
+    let target = &plan.targets[0];
+    assert_eq!((target.main.as_str(), target.port), ("2", 6379));
+    assert_eq!(
+        target.tells,
+        vec![super::namespaced::Tell::Key("REDIS_DB".to_string())]
+    );
+    let record = crate::state::NamespaceRecord {
+        service: "redis".into(),
+        recipe: "redis".into(),
+        kind: crate::state::NamespaceKind::Slot,
+        host: target.host.clone(),
+        port: 6379,
+        name: "5".into(),
+        main: "2".into(),
+        mains: vec!["2".into()],
+        keys: target.keys.clone(),
+        used_at: Utc::now(),
+    };
+    let env = super::namespaced::namespaced_env(&fx.paths, &fx.config, &plan, &[record]).unwrap();
+    assert_eq!(env.get("REDIS_DB").map(String::as_str), Some("5"));
+
+    // What it names has to be there, and be a slot.
+    for (db_env, says) in [
+        (
+            "REDIS_NOPE",
+            "REDIS_NOPE, which the main checkout's env files do not set",
+        ),
+        (
+            "REDIS_CACHE_HOST",
+            "REDIS_CACHE_HOST, whose value is not a slot number",
+        ),
+    ] {
+        fx.config
+            .namespaced
+            .insert("redis".into(), settings(&[db_env]));
+        let plan = super::namespaced::plan(&fx.paths, &fx.config);
+        assert!(plan.targets.is_empty());
+        assert!(plan.shared[0].1.contains(says), "{:?}", plan.shared);
+    }
+}
+
+// `db_env` alone is no login: a namespaced start whose engine needs one
+// still asks for it, and never logs in as nobody.
+#[test]
+fn a_namespaced_table_with_only_db_env_holds_no_login() {
+    let mut config = Config::default();
+    config.namespaced.insert(
+        "postgres".into(),
+        crate::config::LoginConfig {
+            db_env: vec!["POSTGRES_DB".into()],
+            ..Default::default()
+        },
+    );
+    let file = std::path::Path::new("/p/pando.toml");
+    assert_eq!(
+        crate::namespace::login_from_config(&config, "postgres", file),
+        None
+    );
+    assert!(!super::questions::already_answered(
+        crate::detect::Slot::Login,
+        &config
+    ));
+}
+
 #[test]
 fn a_process_that_owns_no_ports_starts_and_reaches_running() {
     let mut fx = fixture();

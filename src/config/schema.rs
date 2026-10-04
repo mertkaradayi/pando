@@ -32,15 +32,19 @@ pub struct Config {
     pub share: ShareSection,
     #[serde(default, skip_serializing_if = "UiSection::is_empty")]
     pub ui: UiSection,
-    /// Who pando connects as to make and drop a worktree's namespaces, by
-    /// `[[services]]` name, for a service the main checkout's env files
-    /// give no login for. Written when a namespaced start asks, and read
-    /// from pando's own project layer only: it is a password.
+    /// Namespaced starts, by `[[services]]` name: who pando connects as
+    /// to make and drop a worktree's namespaces, for a service the main
+    /// checkout's env files give no login for, and the keys that name the
+    /// app's database or slot when pando cannot find them. The login is
+    /// written when a namespaced start asks, and read from pando's own
+    /// project layer only: it is a password. `db_env` is not, and may be
+    /// set in any layer.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub namespaced: BTreeMap<String, LoginConfig>,
 }
 
-/// One service's login for namespaced starts.
+/// One service's settings for namespaced starts: its login, and the keys
+/// that name its database or slot.
 ///
 /// Its `Debug` never prints the password: a config is printed whole in
 /// more than one error path, and a password in a terminal's scrollback is
@@ -52,6 +56,20 @@ pub struct LoginConfig {
     pub user: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+    /// The env keys the app reads which database or slot it uses, when
+    /// none sits beside its address under a name pando knows: one
+    /// `REDIS_DB` for three Redis roles named `REDIS_CACHE_PORT`,
+    /// `REDIS_QUEUE_PORT` and `REDIS_RATE_LIMIT_PORT`. Each is pointed at
+    /// the worktree's own, beside any pando finds itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub db_env: Vec<String>,
+}
+
+impl LoginConfig {
+    /// Whether it holds a login, rather than only `db_env`.
+    pub fn has_login(&self) -> bool {
+        self.user.is_some() || self.password.is_some()
+    }
 }
 
 impl std::fmt::Debug for LoginConfig {
@@ -59,6 +77,7 @@ impl std::fmt::Debug for LoginConfig {
         f.debug_struct("LoginConfig")
             .field("user", &self.user)
             .field("password", &self.password.as_ref().map(|_| "(hidden)"))
+            .field("db_env", &self.db_env)
             .finish()
     }
 }

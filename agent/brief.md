@@ -827,6 +827,13 @@ cannot answer either:
   report the list to the human, who can answer it on a terminal or `rm`
   a worktree they no longer need.
 
+A namespaced start that says a service stays shared because "the app
+reads no slot setting" or "nothing … names its database", when the app
+does read one under a name pando did not guess (one `REDIS_DB` that
+several Redis roles share), is fixed in config, not code:
+`[namespaced.<service>] db_env = ["REDIS_DB"]` in `pando.toml`. It is no
+secret, so the committed file may carry it.
+
 A namespaced start that stops with a `GRANT …` statement on stderr means
 the app's login may not make databases under that prefix. Report the
 statement; running it is the human's, as an administrator of their own

@@ -326,8 +326,14 @@ pub(super) fn plan(paths: &PandoPaths, config: &Config) -> Plan {
                 .as_ref()
                 .and_then(|recipe| recipe.namespace.as_ref())
                 .is_some_and(|namespace| namespace.kind == NamespaceKind::Slot);
+        let db_env = config
+            .namespaced
+            .get(&declared.service)
+            .map(|settings| settings.db_env.as_slice())
+            .unwrap_or_default();
         match target(
             &env,
+            db_env,
             &declared.service,
             declared.recipe.as_ref(),
             declared.keys,
@@ -431,6 +437,7 @@ fn services_with_recipes(
 /// One service as a namespaced start would reach it, or why it cannot.
 fn target(
     env: &EnvFiles,
+    db_env: &[String],
     service: &str,
     recipe: Option<&crate::recipes::Recipe>,
     keys: Vec<String>,
@@ -466,13 +473,17 @@ fn target(
             .map_err(|e| e.to_string())?
             .map_or_else(|| "127.0.0.1".to_string(), |(_, host)| host),
     };
-    let (mains, tells) = match namespace.kind {
-        NamespaceKind::Database => database_main(env, &keys, &urls)?
-            .ok_or("nothing in the main checkout's env files names its database")?,
-        NamespaceKind::Slot => {
-            slot_main(env, &keys, &urls)?.ok_or("the app reads no slot setting")?
-        }
+    let found = match namespace.kind {
+        NamespaceKind::Database => database_main(env, &keys, &urls)?,
+        NamespaceKind::Slot => slot_main(env, &keys, &urls)?,
     };
+    let (mains, tells) =
+        with_db_env(env, service, namespace.kind, db_env, found)?.ok_or(match namespace.kind {
+            NamespaceKind::Database => {
+                "nothing in the main checkout's env files names its database"
+            }
+            NamespaceKind::Slot => "the app reads no slot setting",
+        })?;
     Ok(Target {
         service: service.to_string(),
         recipe: recipe.name.clone(),
@@ -535,6 +546,58 @@ fn slot_main(
     {
         add_main(&mut mains, value);
         tells.push(Tell::Key(key));
+    }
+    Ok((!mains.is_empty()).then_some((mains, tells)))
+}
+
+/// What pando found the app's database or slot by, and the keys
+/// `[namespaced.<service>] db_env` names besides: one `REDIS_DB` that three
+/// Redis roles share sits beside none of their addresses. Each is main's
+/// as much as what pando found, and each is pointed at the worktree's own.
+///
+/// A key it names that the env files do not set, or set to something
+/// that cannot be a database or a slot, is the error that says so: the
+/// developer wrote it down because pando could not find it.
+fn with_db_env(
+    env: &EnvFiles,
+    service: &str,
+    kind: NamespaceKind,
+    db_env: &[String],
+    found: Option<Mains>,
+) -> std::result::Result<Option<Mains>, String> {
+    let (mut mains, mut tells) = found.unwrap_or_default();
+    for key in db_env {
+        let value = env
+            .value(key)
+            .map_err(|e| e.to_string())?
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "[namespaced.{service}] db_env names {key}, which the main checkout's env \
+                     files do not set"
+                )
+            })?;
+        let numbered = value.chars().all(|c| c.is_ascii_digit());
+        match (kind, numbered) {
+            (NamespaceKind::Slot, false) => {
+                return Err(format!(
+                    "[namespaced.{service}] db_env names {key}, whose value is not a slot number"
+                ));
+            }
+            (NamespaceKind::Database, true) => {
+                return Err(format!(
+                    "[namespaced.{service}] db_env names {key}, whose value is a number, not a \
+                     database's name"
+                ));
+            }
+            _ => {}
+        }
+        add_main(&mut mains, value);
+        let tell = Tell::Key(key.clone());
+        if !tells.contains(&tell) {
+            tells.push(tell);
+        }
     }
     Ok((!mains.is_empty()).then_some((mains, tells)))
 }
@@ -729,7 +792,12 @@ pub(super) fn ask_for_logins(
     progress: &dyn Fn(&str),
 ) -> Result<()> {
     for target in plan(paths, config).targets {
-        if !target.namespace.user || config.namespaced.contains_key(&target.service) {
+        if !target.namespace.user
+            || config
+                .namespaced
+                .get(&target.service)
+                .is_some_and(|login| login.has_login())
+        {
             continue;
         }
         let login = namespace_login(

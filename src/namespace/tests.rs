@@ -596,6 +596,7 @@ fn the_login_written_for_pando_is_used_when_the_env_files_have_none_that_will_do
         crate::config::LoginConfig {
             user: Some("root".into()),
             password: Some("hunter2".into()),
+            ..Default::default()
         },
     );
     // Nothing in the env files: the one written down.
@@ -696,6 +697,7 @@ fn a_login_that_holds_a_reference_nothing_sets_is_not_tried() {
         crate::config::LoginConfig {
             user: Some("root".into()),
             password: None,
+            ..Default::default()
         },
     );
     let login = find_login(&at(root.path()), &config, "mariadb", &keys, true, file)
@@ -748,6 +750,7 @@ fn a_password_is_never_in_what_a_login_or_its_config_prints() {
     let config = crate::config::LoginConfig {
         user: Some("app".into()),
         password: Some("hunter2".into()),
+        ..Default::default()
     };
     let shown = format!("{config:?}");
     assert!(!shown.contains("hunter2"), "{shown}");

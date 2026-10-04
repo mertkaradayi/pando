@@ -113,7 +113,10 @@ pub fn from_env_files(env: &EnvFiles, keys: &[String]) -> Result<Option<Login>, 
 /// The login pando was given for this service before — the answer to the
 /// question, in pando's own file for the project.
 pub fn from_config(config: &Config, service: &str, file: &Path) -> Option<Login> {
-    let login = config.namespaced.get(service)?;
+    let login = config
+        .namespaced
+        .get(service)
+        .filter(|login| login.has_login())?;
     Some(Login::new(
         login.user.clone(),
         login.password.clone(),

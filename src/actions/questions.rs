@@ -1932,7 +1932,7 @@ pub fn settled(slot: Slot, config: &Config) -> bool {
 /// Re-read by the resolver on every slot, of a config earlier answers in
 /// the same run have changed; what a reader outside the run wants is
 /// [`settled`].
-fn already_answered(slot: Slot, config: &Config) -> bool {
+pub(super) fn already_answered(slot: Slot, config: &Config) -> bool {
     match slot {
         Slot::Install => config.project.install.is_some(),
         Slot::VersionFiles => !config.runtime.version_files.is_empty(),
@@ -1956,7 +1956,7 @@ fn already_answered(slot: Slot, config: &Config) -> bool {
         Slot::Processes | Slot::DevCmd | Slot::PortEnv => !detect::still_needed(slot, config),
         // Per service, so "any" is the most this can say; the question
         // itself asks about one service and checks that one.
-        Slot::Login => !config.namespaced.is_empty(),
+        Slot::Login => config.namespaced.values().any(|login| login.has_login()),
         // Asked of a server, never of config.
         Slot::FreeSlot => false,
     }

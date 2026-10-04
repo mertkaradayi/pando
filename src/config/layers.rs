@@ -15,7 +15,7 @@ use toml::{Table, Value};
 /// pando writes for one project on one machine.
 const PROJECT_LAYER_ONLY: [&str; 2] = ["root", "worktrees_dir"];
 
-/// The table of logins for namespaced starts, which only pando's own
+/// The table of namespaced starts' settings, whose logins only pando's own
 /// project layer may hold.
 pub(super) const NAMESPACED: &str = "namespaced";
 
@@ -230,8 +230,9 @@ fn read_table(path: &Path, warnings: &mut Vec<String>) -> Option<Table> {
 /// pando's own file may say. `[isolation] none` is a fact about one
 /// repository, so a machine-wide file may not answer it for every
 /// project at once. `[isolation] prefer` is a fact about one laptop, so
-/// a file the team shares may not answer it for everyone's. And
-/// `[namespaced]` holds passwords, which belong in pando's own file.
+/// a file the team shares may not answer it for everyone's. And a
+/// `[namespaced]` login is a password, which belongs in pando's own file;
+/// its `db_env` is not, and stays.
 fn strip_keys_only_pando_may_set(
     table: &mut Table,
     path: &Path,
@@ -272,10 +273,11 @@ fn strip_keys_only_pando_may_set(
         ));
     }
     // A login is a password: kept in pando's own file for the project,
-    // which is 0600 and never committed, and nowhere else.
-    if table.remove(NAMESPACED).is_some() {
+    // which is 0600 and never committed, and nowhere else. Which keys name
+    // the app's database is no secret, and a team may write it down.
+    if strip_logins(table) {
         warnings.push(format!(
-            "ignoring [{NAMESPACED}] in {}: {}",
+            "ignoring [{NAMESPACED}] logins in {}: {}",
             path.display(),
             match layer {
                 LowerLayer::Committed => "a login may not live in a file the team shares",
@@ -283,6 +285,30 @@ fn strip_keys_only_pando_may_set(
             }
         ));
     }
+}
+
+/// Removes every login from a lower layer's `[namespaced]`, keeping each
+/// service's `db_env`; whether there was one to remove. Anything there
+/// that is not a table of tables goes whole.
+fn strip_logins(table: &mut Table) -> bool {
+    let Some(Value::Table(namespaced)) = table.get_mut(NAMESPACED) else {
+        return table.remove(NAMESPACED).is_some();
+    };
+    let mut stripped = false;
+    namespaced.retain(|_, service| {
+        let Value::Table(service) = service else {
+            stripped = true;
+            return false;
+        };
+        for key in ["user", "password"] {
+            stripped |= service.remove(key).is_some();
+        }
+        !service.is_empty()
+    });
+    if namespaced.is_empty() {
+        table.remove(NAMESPACED);
+    }
+    stripped
 }
 
 /// Tables merge per key; everything else, arrays of tables included, is

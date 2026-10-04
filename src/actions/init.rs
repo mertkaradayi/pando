@@ -495,10 +495,15 @@ pub fn slot_value(config: &Config, slot: Slot) -> Option<String> {
         // Nothing config holds.
         Slot::FreeSlot => None,
         // Which services have one, and never what it is.
-        Slot::Login => (!config.namespaced.is_empty()).then(|| {
-            let services: Vec<&str> = config.namespaced.keys().map(String::as_str).collect();
-            format!("a login for {}", services.join(", "))
-        }),
+        Slot::Login => {
+            let services: Vec<&str> = config
+                .namespaced
+                .iter()
+                .filter(|(_, login)| login.has_login())
+                .map(|(service, _)| service.as_str())
+                .collect();
+            (!services.is_empty()).then(|| format!("a login for {}", services.join(", ")))
+        }
     }
 }
 
