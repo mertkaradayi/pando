@@ -1099,6 +1099,11 @@ fn a_missing_client_is_named_before_anything_is_asked() {
     let e = format!("{:#}", db.ping().unwrap_err());
     assert!(e.contains("pando-test-no-such-client"), "{e}");
     assert!(e.contains("not on PATH"), "{e}");
+    // The server in Docker leaves the host no client: what to install.
+    assert!(
+        e.contains("install it (brew install mariadb, or your distribution's mariadb-client)"),
+        "{e}"
+    );
 }
 
 #[test]

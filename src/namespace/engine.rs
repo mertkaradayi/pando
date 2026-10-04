@@ -82,8 +82,12 @@ impl Server<'_> {
     pub fn ping(&self) -> Result<()> {
         let missing = self.missing_binaries();
         if !missing.is_empty() {
+            let install = match &self.recipe.install {
+                Some(how) => format!("install it ({how})"),
+                None => "install it".to_string(),
+            };
             bail!(
-                "namespaced mode reaches {} through {}, and {} not on PATH — install it, or put \
+                "namespaced mode reaches {} through {}, and {} not on PATH — {install}, or put \
                  it in {}",
                 self.service,
                 missing.join(", "),

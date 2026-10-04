@@ -103,6 +103,11 @@ pub struct NamespaceRecipe {
     /// its server.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub binaries: Vec<String>,
+    /// How to get the client alone, said when it is missing: a server in
+    /// Docker leaves the host with no client at all, and the package that
+    /// has the server is more than the client needs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install: Option<String>,
     /// Whether the engine logs in as somebody. MariaDB does; a
     /// development Redis asks for a password, if that.
     #[serde(default)]
@@ -739,6 +744,10 @@ mod tests {
                 "{name} names no password variable"
             );
             assert!(!ns.binaries.is_empty(), "{name} names no client");
+            assert!(
+                ns.install.is_some(),
+                "{name} says not how to get its client"
+            );
             match ns.kind {
                 // A database already there is not one pando made.
                 NamespaceKind::Database => {

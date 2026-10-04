@@ -55,6 +55,7 @@ create = "mariadb --protocol=tcp -h 127.0.0.1 -P {port} -u root -e 'CREATE DATAB
 [namespace]
 kind = "database"
 binaries = ["mariadb"]
+install = "brew install mariadb, or your distribution's mariadb-client"
 user = true
 password_env = "MYSQL_PWD"
 ping = "mariadb --protocol=tcp -h {host} -P {port} -u {user} -N -B -e 'SELECT 1'"

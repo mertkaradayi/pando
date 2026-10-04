@@ -37,6 +37,7 @@ ready = "redis-cli -h 127.0.0.1 -p {port} ping"
 [namespace]
 kind = "slot"
 binaries = ["redis-cli"]
+install = "brew install redis, or your distribution's redis-tools"
 password_env = "REDISCLI_AUTH"
 slots = 16
 ping = "redis-cli -e -h {host} -p {port} ping"
