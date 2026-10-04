@@ -12,7 +12,11 @@ static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 /// check, which looks between every step and every quarter second while
 /// it waits, stops, removes its worktree and records itself interrupted.
 ///
-/// For the CLI, once, before the check. A second signal of the same kind
+/// For the CLI, once, before the check — and before `new`, whose
+/// copy-on-write checkout is pando's own work rather than one `git
+/// worktree add`, which cleans up after itself when told to stop: a `new`
+/// told to stop mid-checkout unwinds what it made instead of leaving a
+/// half-filled worktree. A second signal of the same kind
 /// ends pando at once, as it would have without the handler: somebody
 /// pressing Ctrl-C twice means it, and `pando check` sweeps whatever that
 /// leaves the next time it runs. A hook the check runs in pando's own
@@ -35,7 +39,7 @@ extern "C" fn note_interrupt(_: libc::c_int) {
     INTERRUPTED.store(true, Ordering::SeqCst);
 }
 
-/// Whether the check has been told to stop.
-pub(super) fn interrupted() -> bool {
+/// Whether the check, or a `new` in its checkout, has been told to stop.
+pub(in crate::actions) fn interrupted() -> bool {
     INTERRUPTED.load(Ordering::SeqCst)
 }

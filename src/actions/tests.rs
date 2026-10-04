@@ -9266,6 +9266,106 @@ fn the_probe_never_samples_a_locked_file() {
     assert!(left.is_empty(), "{left:?}");
 }
 
+// The stray check flagged a correct checkout: a branch that makes a
+// directory where main had a file, or a link where main had a directory.
+#[test]
+fn a_branch_that_swaps_a_file_for_a_directory_or_a_directory_for_a_link_checks_out() {
+    let mut fx = fixture_with_tree();
+    std::fs::write(fx.root.join("setup"), "a file in main\n").unwrap();
+    std::fs::create_dir_all(fx.root.join("config")).unwrap();
+    std::fs::write(fx.root.join("config/settings.json"), "{}\n").unwrap();
+    git(&fx.root, &["add", "-A"]);
+    git(&fx.root, &["commit", "--quiet", "-m", "old layout"]);
+    for name in ["feat/layout", "feat/layout-plain"] {
+        let side = fx._dir.path().join(sanitize_branch_to_dir(name));
+        git(
+            &fx.root,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                name,
+                side.to_str().unwrap(),
+            ],
+        );
+        std::fs::remove_file(side.join("setup")).unwrap();
+        std::fs::create_dir_all(side.join("setup")).unwrap();
+        std::fs::write(side.join("setup/run.sh"), "echo run\n").unwrap();
+        std::fs::create_dir_all(side.join("packages")).unwrap();
+        std::fs::rename(side.join("config"), side.join("packages/config")).unwrap();
+        std::os::unix::fs::symlink("packages/config", side.join("config")).unwrap();
+        git(&side, &["add", "-A"]);
+        git(&side, &["commit", "--quiet", "-m", "new layout"]);
+        git(
+            &fx.root,
+            &["worktree", "remove", "--force", side.to_str().unwrap()],
+        );
+    }
+    let (cow, said) = new_saying(&fx, "feat/layout");
+    let cow = fx
+        .worktrees_dir()
+        .join(cow.unwrap_or_else(|e| panic!("{e:#} {said:?}")));
+    fx.config.project.copy_on_write = Some(false);
+    let (plain, _) = new_saying(&fx, "feat/layout-plain");
+    let plain = fx.worktrees_dir().join(plain.unwrap());
+    assert_eq!(checked_out(&cow), checked_out(&plain));
+    assert_eq!(status_of(&cow), "");
+}
+
+// `git worktree add` takes its half-made worktree down when told to stop;
+// a copy-on-write checkout is pando's work, so pando must, under the lock.
+#[test]
+fn a_new_told_to_stop_during_its_checkout_leaves_nothing() {
+    let fx = fixture_with_tree();
+    super::checkout::test_seam::STOP.with(|stop| stop.set(true));
+    let (made, _) = new_saying(&fx, "feat/stopped");
+    super::checkout::test_seam::STOP.with(|stop| stop.set(false));
+    let msg = format!("{:#}", made.unwrap_err());
+    assert!(msg.contains("interrupted during the checkout"), "{msg}");
+    assert!(fx.names().is_empty(), "the worktree was left");
+    assert!(!fx.worktrees_dir().join("feat+stopped").exists());
+    let branch = Command::new("git")
+        .arg("-C")
+        .arg(&fx.root)
+        .args(["branch", "--list", "feat/stopped"])
+        .output()
+        .unwrap();
+    assert!(branch.stdout.is_empty(), "the new branch was left");
+}
+
+// What a stopped `new` leaves says how to clear it.
+#[test]
+fn what_a_stopped_new_leaves_is_refused_with_the_way_past_it() {
+    let fx = fixture_with_tree();
+    std::fs::create_dir_all(fx.worktrees_dir().join("feat+claimed")).unwrap();
+    let (made, _) = new_saying(&fx, "feat/claimed");
+    let msg = format!("{:#}", made.unwrap_err());
+    assert!(
+        msg.contains("empty and not a worktree") && msg.contains("rmdir"),
+        "{msg}"
+    );
+
+    let side = fx.worktrees_dir().join("feat+unrecorded");
+    git(
+        &fx.root,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "feat/unrecorded",
+            side.to_str().unwrap(),
+        ],
+    );
+    let (made, _) = new_saying(&fx, "feat/unrecorded");
+    let msg = format!("{:#}", made.unwrap_err());
+    assert!(
+        msg.contains("pando has no record of it") && msg.contains("pando rm"),
+        "{msg}"
+    );
+}
+
 #[test]
 fn clone_gives_a_new_worktree_the_main_checkouts_dependencies_before_the_install() {
     let mut fx = fixture();

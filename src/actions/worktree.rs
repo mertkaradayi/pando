@@ -133,6 +133,19 @@ fn refuse_taken_target(paths: &PandoPaths, config: &Config, dir_name: &str) -> R
                 found.display_name()
             );
         }
+        // One with no record is either made by hand or a `new` that was
+        // stopped before it recorded it — a TUI quit abandons one in
+        // flight. Either way the way past it is the same command.
+        let recorded = state::load(&paths.state_file())
+            .is_ok_and(|store| store.worktrees.contains_key(dir_name));
+        if !recorded {
+            bail!(
+                "a worktree named {dir_name:?} already exists at {}, and pando has no record of \
+                 it — if a `pando new` was stopped while making it, `pando rm {}` removes it",
+                found.path.display(),
+                found.display_name()
+            );
+        }
         bail!(
             "a worktree named {dir_name:?} already exists at {}",
             found.path.display()
@@ -149,6 +162,18 @@ fn refuse_taken_target(paths: &PandoPaths, config: &Config, dir_name: &str) -> R
 
     let target = config.worktrees_dir(paths).join(dir_name);
     if target.exists() {
+        // `new` claims the target as an empty directory before git runs; a
+        // `new` stopped in between leaves it. Never taken back here: a
+        // `new` running now holds it the same way.
+        let empty = std::fs::read_dir(&target).is_ok_and(|mut entries| entries.next().is_none());
+        if empty {
+            bail!(
+                "{} already exists, empty and not a worktree — a `pando new` stopped before \
+                 git ran leaves one; if none is running, `rmdir {}` and this can run again",
+                target.display(),
+                crate::process::shell_word(&target.display().to_string())
+            );
+        }
         bail!("{} already exists", target.display());
     }
     Ok(target)
@@ -305,7 +330,13 @@ fn create(
             super::checkout::fill(&target, from, progress).err()
         }
         (None, CheckoutPlan::Git) => None,
-    };
+    }
+    // Told to stop during the checkout: what it made goes, as `git
+    // worktree add` takes its own half-made worktree down.
+    .or_else(|| {
+        super::checkout::told_to_stop()
+            .then(|| anyhow::anyhow!("`new` was interrupted during the checkout"))
+    });
     let lock = state::lock(&paths.lock_file()).map_err(undo)?;
     let mut store = state::load(&paths.state_file()).map_err(undo)?;
     // A `start` from another terminal can find the worktree while git is

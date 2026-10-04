@@ -657,6 +657,9 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
         Command::New { branch, base, yes } => {
             tip::first_time_tip(paths, config, stderr_is_terminal(), &notice, &draw);
             let config = &actions::resolve_for_new(paths, config, &everyday_asker(yes), &notice)?;
+            // After the questions, which read a terminal Ctrl-C must still
+            // end: from here a Ctrl-C unwinds a half-made worktree.
+            actions::catch_check_interrupts();
             let name = actions::new(paths, config, &branch, base.as_deref(), &notice)
                 .map_err(|e| with_a_way_past(paths, e))?;
             // The canonical path, the one the state record and `pando path`

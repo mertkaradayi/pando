@@ -164,6 +164,22 @@ fn converts_everything(dir: &Path) -> bool {
         || has_info_attributes(dir)
 }
 
+/// Whether `new` has been told to stop — Ctrl-C, a closed terminal, a
+/// `kill` — while it checks out. `git worktree add` removes its own
+/// half-made worktree when that happens; a copy-on-write checkout is
+/// pando's work, so pando does: the caller unwinds.
+pub(super) fn told_to_stop() -> bool {
+    super::check::interrupted() || test_seam::STOP.with(|stop| stop.get())
+}
+
+/// Lets a test say "stop" to the thread that runs `new`, without the
+/// process-wide signal flag another test could see.
+pub(super) mod test_seam {
+    thread_local! {
+        pub(in crate::actions) static STOP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+}
+
 /// One real clone, from a file of the main checkout into the directory the
 /// worktree will be made in, removed again at once. Whether two paths can
 /// clone depends on both volumes and on the filesystem, and only the
@@ -355,6 +371,10 @@ fn clone_all(worktree: &Path, root: &Path, files: &[(String, bool)]) -> Vec<Stri
 }
 
 fn clone_one(src: &Path, dst: &Path, executable: bool, umask: u32) -> bool {
+    // Told to stop: the rest is left for the unwind, not cloned first.
+    if super::check::interrupted() {
+        return false;
+    }
     let Ok(meta) = src.symlink_metadata() else {
         return false;
     };
@@ -443,8 +463,27 @@ fn stray(worktree: &Path, cloned: &[String]) -> Option<String> {
             let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
                 return false;
             };
-            std::fs::read_dir(dir)
-                .is_ok_and(|entries| entries.flatten().any(|e| e.file_name() == name))
+            // Every directory on the way a real one: a branch can make a
+            // directory where main had a file, or a link where main had a
+            // directory, and `read_dir` would follow that link to files
+            // that are not the clone's. And the entry itself a file, not
+            // the directory the branch made in its place.
+            let real_dirs = dir.strip_prefix(worktree).is_ok_and(|rel| {
+                rel.ancestors()
+                    .filter(|a| !a.as_os_str().is_empty())
+                    .all(|a| {
+                        worktree
+                            .join(a)
+                            .symlink_metadata()
+                            .is_ok_and(|m| m.is_dir())
+                    })
+            });
+            real_dirs
+                && std::fs::read_dir(dir).is_ok_and(|entries| {
+                    entries
+                        .flatten()
+                        .any(|e| e.file_name() == name && e.file_type().is_ok_and(|t| t.is_file()))
+                })
         })
         .cloned()
 }

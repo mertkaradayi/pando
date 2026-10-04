@@ -21,7 +21,10 @@ may change behaviour.
   filesystem that cannot clone, `core.autocrlf`, and a sparse main
   checkout keep git's own checkout; `[project] copy_on_write = false`
   turns it off. `du` still counts each worktree whole: the saving shows
-  as free space.
+  as free space. A `new` stopped by Ctrl-C or a `kill` during the
+  checkout removes what it made, as `git worktree add` does. A pando
+  older than this one refuses `copy_on_write` and `clone` in pando.toml
+  as unknown keys, so going back means removing them.
 - `[project] clone` lists gitignored paths `new` clones from the main
   checkout before the install, such as `node_modules`, so the install
   only fixes what differs: on the same monorepo `npm install` then
