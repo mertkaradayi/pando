@@ -68,6 +68,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --no-fail-fast
+      # ext4 cannot clone, so on Linux the copy-on-write tests above take
+      # git's own checkout and prove only that. Again, on a loop-mounted XFS
+      # with reflinks, where FICLONE works and the copy-on-write checkout
+      # really runs. macOS's runs are on APFS, which clones.
+      - name: copy-on-write tests on a filesystem that clones
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xfsprogs
+          truncate -s 2G "$RUNNER_TEMP/cow.img"
+          mkfs.xfs -q -m reflink=1 "$RUNNER_TEMP/cow.img"
+          sudo mkdir -p /mnt/cow
+          sudo mount -o loop "$RUNNER_TEMP/cow.img" /mnt/cow
+          sudo chown "$(id -u):$(id -g)" /mnt/cow
+          export TMPDIR=/mnt/cow
+          cargo test --locked --no-fail-fast --lib -- cow:: actions::tests::
+          cargo test --locked --no-fail-fast --test integration invariant::
 
   msrv:
     # The oldest Rust pando says it builds with: Cargo.toml's rust-version,
