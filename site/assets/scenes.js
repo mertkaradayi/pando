@@ -128,6 +128,10 @@
       P.fontsReady.then(fitArt);
       window.addEventListener('pando:fonts', fitArt);
     });
+    // A jump to an anchor lays the whole page out first (site.js); the art is
+    // sized then too, or it would change height while the page scrolls past.
+    if (document.documentElement.classList.contains('laid-out')) fitArt();
+    document.addEventListener('click', e => { if (e.target.closest && e.target.closest('a[href^="#"]')) fitArt(); }, true);
     P.loop(setup, now => frame(now));
   }
 
