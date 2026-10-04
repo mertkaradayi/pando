@@ -3,7 +3,7 @@
 //! The dependency direction is inner to outer, with no upward imports:
 //!
 //! ```text
-//! catalog · paths · term · remedy · theme · art · version → compose → project · config · ports · process · runtime · state
+//! catalog · paths · term · remedy · theme · art · version · cow → compose → project · config · ports · process · runtime · state
 //!       · env_command · template · recipes
 //!       → detect · hooks · worktree · cache · log_tail · observe · services
 //!         · native · namespace · decisions · setup
@@ -50,6 +50,7 @@ pub mod catalog;
 pub mod cli;
 pub mod compose;
 pub mod config;
+pub mod cow;
 pub mod decisions;
 pub mod detect;
 pub mod doctor;

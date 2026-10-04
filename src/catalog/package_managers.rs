@@ -369,6 +369,31 @@ pub fn is_unlocked_install(cmd: &str) -> bool {
     })
 }
 
+/// Installs that delete a dependency directory before they install, by
+/// the words that run them, and the directory: `npm ci` removes
+/// `node_modules` first, under each of the names npm gives the command.
+/// Cloning that directory into a worktree before such an install is work
+/// thrown away.
+pub const CLEARING_INSTALLS: [(&[&str], &str); 4] = [
+    (&["npm", "ci"], "node_modules"),
+    (&["npm", "clean-install"], "node_modules"),
+    (&["npm", "ic"], "node_modules"),
+    (&["npm", "install-clean"], "node_modules"),
+];
+
+/// The directory `install` deletes before installing, when it runs one of
+/// [`CLEARING_INSTALLS`] anywhere in it: `cd web && npm ci` counts.
+pub fn cleared_by(install: &str) -> Option<&'static str> {
+    let words: Vec<&str> = install
+        .split(|c: char| c.is_whitespace() || ";&|()".contains(c))
+        .filter(|w| !w.is_empty())
+        .collect();
+    CLEARING_INSTALLS
+        .iter()
+        .find(|(cmd, _)| words.windows(cmd.len()).any(|w| w == *cmd))
+        .map(|(_, dir)| *dir)
+}
+
 /// The frozen install to propose for a lockfile, with the evidence to
 /// write beside it.
 pub fn install_for(lockfile: &str) -> Option<(&'static str, &'static str)> {
@@ -427,6 +452,20 @@ pub fn script_args<'a>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_install_that_clears_node_modules_is_recognised_wherever_it_runs() {
+        use super::cleared_by;
+        assert_eq!(cleared_by("npm ci"), Some("node_modules"));
+        assert_eq!(
+            cleared_by("cd web && npm ci --no-audit"),
+            Some("node_modules")
+        );
+        assert_eq!(cleared_by("npm clean-install"), Some("node_modules"));
+        assert_eq!(cleared_by("npm install"), None);
+        assert_eq!(cleared_by("pnpm install --frozen-lockfile"), None);
+        assert_eq!(cleared_by("echo npm-ci"), None);
+    }
+
     use super::*;
 
     #[test]

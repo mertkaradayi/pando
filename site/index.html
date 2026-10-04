@@ -235,9 +235,9 @@
     <div class="split stack">
       <ol class="num rv">
         <li><strong>Finds the branch.</strong> A local branch is checked out as it is. Otherwise <code>origin/feat/login</code>, fetched if it is missing, never prompting for a password. Otherwise a new branch, forked from the base: <code>--base</code>, then a matching <code>[branches].rules</code> glob, then <code>[project].base</code>, then <code>origin/HEAD</code>, <code>main</code>, <code>master</code>.</li>
-        <li><strong>Checks it out.</strong> <code>git worktree add</code> into <code>~/.pando/projects/&lt;id&gt;/worktrees/feat+login</code>. The project id is the checkout's directory name and eight hex characters of a hash of its path.</li>
+        <li><strong>Checks it out.</strong> <code>git worktree add</code> into <code>~/.pando/projects/&lt;id&gt;/worktrees/feat+login</code>. The project id is the checkout's directory name and eight hex characters of a hash of its path. Where the filesystem can clone (APFS; btrfs, XFS), the main checkout's files are copy-on-write clones that share its disk blocks, and git writes only the files the branch changed, plus any whose checkout converts them (line endings, filters, <code>ident</code>); the files, modes and git state are what git's own checkout makes, and a <code>post-checkout</code> hook runs as it always did. <code>du</code> still counts each worktree whole; free space shows the saving. <code>copy_on_write = false</code> turns it off.</li>
         <li><strong>Provisions.</strong> The gitignored files you listed in <code>provision</code>, such as <code>.env</code>, are linked in from the main checkout. They are symlinks by default; <code>provision_mode = "copy"</code> gives each worktree its own copy. A path the project does not gitignore is refused. A worktree made before <code>provision</code> was answered, or one that lost a file since, gets it at its next <code>start</code>, never over a file that is there.</li>
-        <li><strong>Installs.</strong> The project's install step, such as <code>pnpm install --frozen-lockfile</code>, runs in the new worktree, so its dependencies are its own.</li>
+        <li><strong>Installs.</strong> The project's install step, such as <code>pnpm install --frozen-lockfile</code>, runs in the new worktree, so its dependencies are its own. The gitignored paths in <code>clone</code>, such as <code>node_modules</code>, are cloned from the main checkout first, copy-on-write, so the install only fixes what differs; never as a full copy.</li>
       </ol>
       <div class="rv">
         <div class="term">
@@ -563,7 +563,7 @@ nothing else. Nothing was made.</span></pre>
         </ol>
         <p>Inside <code>.git</code>, only git itself writes: its records of the worktrees, branches and fetches pando asks for.</p>
         <p><strong>Your checkout is read-only to pando.</strong></p>
-        <p class="d" style="font-size:13.5px">Inside a worktree, pando may create or link a file only if the project's own gitignore already ignores that path. <code>.env</code> and <code>.env.local</code> pass. Anything that would show up as untracked in <code>git status</code> is refused.</p>
+        <p class="d" style="font-size:13.5px">Inside a worktree, pando may create or link a file only if the project's own gitignore already ignores that path. <code>.env</code> and <code>.env.local</code> pass. Anything that would show up as untracked in <code>git status</code> is refused. The one exception is the checkout itself: a copy-on-write checkout clones the branch's own tracked files into the new worktree, as <code>git worktree add</code> writes them, and git's own reset decides what each one holds.</p>
       </div>
       <figure class="fig rv" style="margin:0">
 <pre class="code tree-ls"><span class="dir">~/.pando/</span>
@@ -843,6 +843,8 @@ base = <span class="s">"main"</span>                            <span class="c">
 provision = [<span class="s">".env"</span>, <span class="s">".env.local"</span>]       <span class="c"># gitignored files each worktree gets</span>
 provision_mode = <span class="s">"copy"</span>                   <span class="c"># default: a symlink to the main checkout's</span>
 install = <span class="s">"pnpm install --frozen-lockfile"</span>
+copy_on_write = <span class="k">false</span>                     <span class="c"># default: clone the main checkout's files where the disk can</span>
+clone = [<span class="s">"node_modules"</span>]                 <span class="c"># gitignored paths cloned in before the install</span>
 
 <span class="k">[runtime]</span>
 prelude = <span class="s">""</span>                              <span class="c"># e.g. a version manager's init, before every command</span>
@@ -930,7 +932,7 @@ theme = <span class="s">"catppuccin"</span>
       <details><summary>How is this different from plain <code>git worktree</code>?</summary>
         <p><code>git worktree add ../x feat/x</code> gives you a second checkout and nothing else. <code>pando new feat/x</code> runs that same git command, but puts the checkout under <code>~/.pando</code> instead of beside your repository. It links in the gitignored files the project needs, such as <code>.env</code>, runs the project's own install inside the checkout, and records it. <code>pando start</code> then adds what makes it run: ports that do not collide, detached processes, logs and readiness. Optionally it adds private or namespaced services and a public URL, all on one screen. Worktrees you made by hand are managed too.</p></details>
       <details><summary>Does every worktree get its own <code>node_modules</code>? Its own <code>.env</code>?</summary>
-        <p>It gets its own dependencies. pando runs the project's frozen install inside each worktree and never links dependency directories. A later start runs the install again only when a lockfile, a version file or the prelude changed. Local config works differently: gitignored files like <code>.env</code> are symlinked to the main checkout's copy by default, so editing one edits main's. <code>provision_mode = "copy"</code> gives each worktree its own copy.</p></details>
+        <p>It gets its own dependencies. pando runs the project's frozen install inside each worktree and never links dependency directories. With <code>clone = ["node_modules"]</code> the main checkout's are cloned in first, copy-on-write: each worktree's own copy, sharing disk blocks until it changes, so the install only fixes what differs. A later start runs the install again only when a lockfile, a version file or the prelude changed. Local config works differently: gitignored files like <code>.env</code> are symlinked to the main checkout's copy by default, so editing one edits main's. <code>provision_mode = "copy"</code> gives each worktree its own copy.</p></details>
       <details><summary>What survives closing the terminal? A reboot?</summary>
         <p>Closing the terminal, killing the tmux pane or quitting the TUI leaves everything running: each process has its own session and no terminal. A reboot stops them, as it stops anything. pando notices the new boot and forgets the old process ids, but keeps each worktree's ports and mode, so the next start comes back on the same URLs. Nothing restarts by itself: there is no daemon and no supervisor.</p></details>
       <details><summary>My Node from nvm (or fnm, rvm…) is not found.</summary>

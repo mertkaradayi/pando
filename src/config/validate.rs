@@ -100,6 +100,9 @@ pub fn validate(config: &Config, project: &ProjectRef) -> Result<()> {
         validate_repository_relative("provision_from path", destination)?;
         validate_repository_relative("provision_from source", source)?;
     }
+    for entry in &config.project.clone {
+        validate_repository_relative("clone path", entry)?;
+    }
     Ok(())
 }
 

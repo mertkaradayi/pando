@@ -241,6 +241,60 @@ fn every_command_leaves_the_repository_untouched() {
     assert!(!worktree.exists());
 }
 
+// A copy-on-write checkout writes tracked files into a worktree pando just
+// made, as `git worktree add` does, and `clone` writes an ignored tree
+// into it; neither may touch the main checkout it clones from, nor leave
+// anything `git status` shows.
+#[test]
+fn a_copy_on_write_new_with_clones_leaves_the_repository_untouched() {
+    let mut h = harness_with(
+        "[project]\nprovision = [\".env\", \".env.local\"]\nclone = [\"node_modules\"]\n",
+    );
+    let ignore = std::fs::read_to_string(h.root.join(".gitignore")).unwrap_or_default();
+    if !ignore
+        .lines()
+        .any(|l| l.trim_end_matches('/') == "node_modules")
+    {
+        eprintln!("skipping: the fixture does not ignore node_modules");
+        return;
+    }
+    std::fs::create_dir_all(h.root.join("node_modules/dep")).unwrap();
+    std::fs::write(
+        h.root.join("node_modules/dep/index.js"),
+        "module.exports = 1\n",
+    )
+    .unwrap();
+    h.baseline = tree(&h.root);
+
+    let name = actions::new(&h.paths, &h.config, "feat/cow", None, &|_| {}).unwrap();
+    let worktree = h.config.worktrees_dir(&h.paths).join(&name);
+    h.assert_untouched("a copy-on-write new with clones", Some(&worktree));
+    // A clone is the worktree's own: a link or a hard link to main's files
+    // would pass every check above, and fail this one.
+    let dep = worktree.join("node_modules/dep/index.js");
+    if dep.exists() {
+        assert!(
+            worktree
+                .join("node_modules")
+                .symlink_metadata()
+                .unwrap()
+                .is_dir(),
+            "node_modules is a link, not a clone"
+        );
+        std::fs::write(&dep, "module.exports = 2\n").unwrap();
+        assert_eq!(
+            std::fs::read(h.root.join("node_modules/dep/index.js")).unwrap(),
+            b"module.exports = 1\n",
+            "an edit in the worktree's clone reached the main checkout"
+        );
+    }
+    std::fs::write(worktree.join("README.md"), "changed in the worktree\n").unwrap();
+    h.assert_untouched("an edit to a cloned file in the worktree", None);
+
+    actions::rm(&h.paths, &name, true, true, &|_| {}).unwrap();
+    h.assert_untouched("rm", None);
+}
+
 // The refusal path matters just as much: a `new` that cannot proceed must
 // not leave a half-made directory or a stray branch behind.
 #[test]

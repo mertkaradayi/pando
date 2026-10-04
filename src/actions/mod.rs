@@ -5,7 +5,8 @@
 //! worktree are paths the project's own gitignore already ignores, checked
 //! with `git check-ignore` before anything is created.
 //!
-//! One file per concern: worktrees, hooks, questions, `init`, the runtime
+//! One file per concern: worktrees, a worktree's copy-on-write checkout,
+//! hooks, questions, `init`, the runtime
 //! check, start/stop/restart, when a start is ready, private services,
 //! namespaced starts, share, reading state, an app on a device's links
 //! and opening it there, the name its config written as code gives it,
@@ -16,6 +17,7 @@
 
 mod app_config;
 mod check;
+mod checkout;
 mod device;
 pub mod git;
 mod hooks;

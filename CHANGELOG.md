@@ -7,6 +7,38 @@ may change behaviour.
 
 ## Unreleased
 
+### Added
+
+- `new` checks a worktree out by copy-on-write where the filesystem can
+  clone (APFS on macOS; btrfs, XFS and bcachefs on Linux): the main
+  checkout's files are cloned in, sharing their blocks, and git writes
+  only the files that differ from the branch. The files, modes and git
+  state are the ones git's own checkout makes, and git's `reset --hard`
+  makes them; a file whose checkout converts it (CRLF endings, a filter,
+  `ident`) is always written by git, and a `post-checkout` hook runs as
+  it does after `git worktree add`. On a measured web monorepo that is
+  about 285 MB of tracked files a worktree no longer stores. A
+  filesystem that cannot clone, `core.autocrlf`, and a sparse main
+  checkout keep git's own checkout; `[project] copy_on_write = false`
+  turns it off. `du` still counts each worktree whole: the saving shows
+  as free space.
+- `[project] clone` lists gitignored paths `new` clones from the main
+  checkout before the install, such as `node_modules`, so the install
+  only fixes what differs: on the same monorepo `npm install` then
+  rewrote 6 of 19,701 files and took about a second. Never a full copy.
+  Each path must be gitignored, like `provision`'s. Not cloned, each
+  with a line: a path the install deletes first (`npm ci` and
+  `node_modules`), a Python virtualenv, and a tree with a link out of
+  the worktree. `pando check` never clones, so a check still proves the
+  install works from nothing.
+
+### Fixed
+
+- A `new` whose `git worktree add` failed left the branch it made, and,
+  when only the `post-checkout` hook failed, the worktree too, with no
+  record of either. Both are removed now, as for any other refused
+  `new`.
+
 ## 0.7.0 — 2026-10-04
 
 ### Added

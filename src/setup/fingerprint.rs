@@ -35,6 +35,9 @@ pub const FINGERPRINT_VERSION: u32 = 1;
 /// - `root`, `worktrees_dir` and `base`: where things go and which commit
 ///   is tested, not how the project runs. A new commit on main does not
 ///   make a check stale either;
+/// - `copy_on_write` and `clone`: the first changes how many bytes a
+///   checkout takes, never which files it has, and a check never clones,
+///   so the second is not part of what it ran;
 /// - pando's version: `check.json` records it apart, and an upgrade never
 ///   invalidates a test.
 ///

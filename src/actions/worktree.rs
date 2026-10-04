@@ -12,6 +12,7 @@ use crate::paths::PandoPaths;
 use crate::state::{self, WorktreeRecord};
 use crate::worktree::{self, PrInfo, Worktree};
 
+use super::checkout::CheckoutPlan;
 use super::hooks::{HookContext, run_hooks};
 use super::lifecycle::{StopOutcome, stop_recorded, sweep_orphaned_groups};
 use super::namespaced::drop_namespaces;
@@ -69,6 +70,19 @@ pub fn new(
 
     let dir_name = sanitize_branch_to_dir(branch);
     let target = refuse_taken_target(paths, config, &dir_name)?;
+    // `new` only: `pando check` never clones, so a `clone` path is no
+    // reason to refuse one.
+    // A path the main checkout does not have is nothing to clone, and git
+    // cannot say whether a missing `node_modules` is one `node_modules/`
+    // ignores.
+    for rel in config
+        .project
+        .clone
+        .iter()
+        .filter(|rel| is_present(&root.join(rel)))
+    {
+        ensure_gitignored(&root, &as_ignore_query(&root, rel), "clone")?;
+    }
     let source = resolve_create_source(&root, branch, base, config, progress)?;
     create(paths, config, &dir_name, &target, branch, &source, progress)
 }
@@ -130,7 +144,7 @@ fn refuse_taken_target(paths: &PandoPaths, config: &Config, dir_name: &str) -> R
     // worktree gets asked again once it exists, because it may have a
     // different `.gitignore` checked out.
     for rel in config.project.provision_paths() {
-        ensure_gitignored(root, rel)?;
+        ensure_gitignored(root, rel, "provision")?;
     }
 
     let target = config.worktrees_dir(paths).join(dir_name);
@@ -172,6 +186,9 @@ fn create(
     // Not held through the checkout, which runs the repository's filters
     // and hooks — an LFS download takes minutes, and every `ls` and every
     // TUI worker would wait on it.
+    std::fs::create_dir_all(&worktrees_dir)
+        .with_context(|| format!("create {}", worktrees_dir.display()))?;
+    let target_str = target.to_str().context("worktree path is not utf-8")?;
     let left = {
         let _lock = state::lock(&paths.lock_file())?;
         let mut store = state::load(&paths.state_file())?;
@@ -190,17 +207,28 @@ fn create(
         if store != loaded {
             state::save(&paths.state_file(), &store)?;
         }
+        // The target is claimed here, under the lock, as an empty directory
+        // `git worktree add` accepts: a second `new` of the same branch
+        // finds it taken and refuses before git runs, so the one that
+        // loses never unwinds what the winner made.
+        match std::fs::create_dir(&target) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                bail!("{} already exists", target.display())
+            }
+            Err(e) => return Err(e).with_context(|| format!("create {}", target.display())),
+        }
         // What the record under this name is as the lock goes: none, unless
         // a porcelain that could not be read kept a stale one.
         store.worktrees.get(&dir_name).cloned()
     };
 
-    std::fs::create_dir_all(&worktrees_dir)
-        .with_context(|| format!("create {}", worktrees_dir.display()))?;
-
-    let target_str = target.to_str().context("worktree path is not utf-8")?;
+    let checkout = super::checkout::plan(&root, config, &worktrees_dir, progress);
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(&root).args(["worktree", "add"]);
+    if matches!(checkout, CheckoutPlan::CopyOnWrite(_)) {
+        cmd.arg("--no-checkout");
+    }
     match source {
         CreateSource::Local => {
             cmd.args([target_str, branch]);
@@ -223,6 +251,15 @@ fn create(
             cmd.args(["--no-track", "-b", branch, target_str, base]);
         }
     }
+    // What a failed add may delete: a branch `-b` made in this call, and
+    // only while it is still where `-b` put it.
+    let made = match source {
+        CreateSource::Fork { base } => Some(base.clone()),
+        CreateSource::Remote => Some(format!("origin/{branch}")),
+        _ => None,
+    }
+    .filter(|_| !ref_exists(&root, &format!("refs/heads/{branch}")))
+    .and_then(|start| commit_of(&root, &start));
     progress(&format!("checking out {branch}"));
     // Captured, not inherited: `git worktree add` narrates on stdout and
     // stderr, which would paint over the TUI's alternate screen. And never
@@ -230,9 +267,25 @@ fn create(
     // download can ask for a password — over the TUI, whose keys then went
     // nowhere, and for ever.
     cmd.env("GIT_TERMINAL_PROMPT", "0");
-    let out = cmd.output().context("spawn git worktree add")?;
+    let out = match cmd.output() {
+        Ok(out) => out,
+        Err(e) => {
+            let _ = std::fs::remove_dir(&target);
+            return Err(e).context("spawn git worktree add");
+        }
+    };
+    // git removes a worktree whose checkout failed, but keeps the branch
+    // `-b` made for it; and it keeps the worktree itself when only its
+    // `post-checkout` hook failed. A worktree still there is unwound like
+    // any failure after the add — under the lock, below.
+    let mut failed_add = None;
     if !out.status.success() {
-        bail!("git worktree add failed: {}", git_failure_reason(&out));
+        let failed = anyhow::anyhow!("git worktree add failed: {}", git_failure_reason(&out));
+        if !is_registered(&root, &target) {
+            let _ = std::fs::remove_dir(&target);
+            return Err(drop_made_branch(&root, branch, made.as_deref(), failed));
+        }
+        failed_add = Some(failed);
     }
 
     // Past this point the worktree exists, so every failure has something to
@@ -242,6 +295,17 @@ fn create(
     // could record a dev server in the worktree the undo then removes, and
     // the next sweep drops that record as stale with the server running.
     let undo = |e| unwind_new(&root, &target, branch, source, e);
+    // Still part of the checkout, so still without the lock: git writes
+    // the files a copy-on-write checkout could not clone. Its result waits
+    // for the lock, like every other failure here: a failed fill is undone
+    // with the lock held, and never under a record a `start` wrote.
+    let filled = match (failed_add, &checkout) {
+        (Some(failed), _) => Some(failed),
+        (None, CheckoutPlan::CopyOnWrite(from)) => {
+            super::checkout::fill(&target, from, progress).err()
+        }
+        (None, CheckoutPlan::Git) => None,
+    };
     let lock = state::lock(&paths.lock_file()).map_err(undo)?;
     let mut store = state::load(&paths.state_file()).map_err(undo)?;
     // A `start` from another terminal can find the worktree while git is
@@ -250,14 +314,27 @@ fn create(
     // run; unwound, the worktree goes from under them. So neither: the
     // worktree is kept, and so is what that command recorded in it.
     if store.worktrees.get(&dir_name) != left.as_ref() {
-        return Err(refuse_over_raced_record(
-            paths, config, &mut store, &dir_name, branch, &target,
-        ));
+        let refused =
+            refuse_over_raced_record(paths, config, &mut store, &dir_name, branch, &target);
+        return Err(match filled {
+            Some(e) => anyhow::anyhow!("{refused:#}; its checkout did not finish either: {e:#}"),
+            None => refused,
+        });
+    }
+    if let Some(e) = filled {
+        return Err(undo(e));
     }
     if !config.project.provision_paths().is_empty() {
         progress("provisioning");
     }
     provision_worktree_files(paths, config, &target, progress).map_err(undo)?;
+    // The clones themselves come after the lock, but the check that allows
+    // them is made here, where a refusal still unwinds: the worktree's own
+    // gitignore has the last word, and nothing else writes it meanwhile.
+    let clones = clones_for(config, source);
+    for rel in clones.iter().filter(|rel| is_present(&root.join(rel))) {
+        ensure_gitignored(&target, &as_ignore_query(&root, rel), "clone").map_err(undo)?;
+    }
     let canonical = std::fs::canonicalize(&target).unwrap_or_else(|_| target.clone());
     store
         .worktrees
@@ -277,6 +354,13 @@ fn create(
     // wrong number. Almost none do; the install step never does.
     // Said only when there is something to install: a project with no
     // install command and no create hook used to print it anyway.
+    clone_ignored_paths(
+        &root,
+        clones,
+        config.project.install.as_deref(),
+        &target,
+        progress,
+    );
     let installs = has_install_step(config);
     for line in uninitialised_submodules(&target) {
         progress(&line);
@@ -315,6 +399,147 @@ fn has_install_step(config: &Config) -> bool {
             .hooks
             .iter()
             .any(|hook| hook.after == config::HookPoint::Create)
+}
+
+/// The paths `clone` names, for a worktree `new` makes. None for the
+/// worktree `pando check` makes: a check proves the install builds the
+/// dependencies from nothing, and a cloned tree could hide one that no
+/// longer does.
+fn clones_for<'a>(config: &'a Config, source: &CreateSource) -> &'a [String] {
+    match source {
+        CreateSource::Detached { .. } => &[],
+        _ => &config.project.clone,
+    }
+}
+
+/// `rel` as `git check-ignore` must be asked about it: with a trailing
+/// slash when the main checkout has a directory there. `node_modules/` in
+/// a gitignore matches only a directory, and in a new worktree, where
+/// nothing is there yet, git cannot tell that `node_modules` would be one.
+fn as_ignore_query(root: &Path, rel: &str) -> String {
+    let rel = rel.trim_end_matches('/');
+    match root.join(rel).symlink_metadata().is_ok_and(|m| m.is_dir()) {
+        true => format!("{rel}/"),
+        false => rel.to_string(),
+    }
+}
+
+/// Clones each `clone` path from the main checkout into a new worktree,
+/// copy-on-write, so the install that follows only fixes what differs.
+///
+/// Whatever cannot be cloned is left to the install, with a line saying
+/// so — never copied in full, which would cost the disk this exists to
+/// save. Nothing is written over a path the worktree already has, nor
+/// into a directory the branch does not have: a branch made before
+/// `apps/web` was has nothing that reads `apps/web/node_modules`.
+///
+/// Not cloned, each with a line: a path the install deletes before it
+/// installs (`npm ci` and `node_modules`); a Python virtualenv, whose
+/// scripts name the main checkout's interpreter by its absolute path; and
+/// a path the worktree's gitignore stopped ignoring since the check made
+/// under the lock. A cloned directory with a link out of the worktree is
+/// removed again: the worktree would run the main checkout's files
+/// through it, which is the sharing a worktree exists to avoid. npm's
+/// workspace links are relative and resolve inside the worktree, so they
+/// pass.
+fn clone_ignored_paths(
+    root: &Path,
+    clones: &[String],
+    install: Option<&str>,
+    worktree: &Path,
+    progress: &dyn Fn(&str),
+) {
+    let cleared = install.and_then(crate::catalog::package_managers::cleared_by);
+    for rel in clones {
+        let src = root.join(rel);
+        let dst = worktree.join(rel);
+        let Ok(meta) = src.symlink_metadata() else {
+            continue;
+        };
+        if is_present(&dst) || !dst.parent().is_some_and(Path::is_dir) {
+            continue;
+        }
+        if let Some(dir) = cleared
+            && Path::new(rel).file_name() == Some(std::ffi::OsStr::new(dir))
+        {
+            progress(&format!(
+                "not cloning {rel}: the install deletes it before it installs"
+            ));
+            continue;
+        }
+        if meta.is_dir() && src.join("pyvenv.cfg").exists() {
+            progress(&format!(
+                "not cloning {rel}: a virtualenv names the main checkout's paths in its scripts, \
+                 so the install builds it"
+            ));
+            continue;
+        }
+        // Invariant 1, immediately before the write, as provisioning asks.
+        if let Err(e) = ensure_gitignored(worktree, &as_ignore_query(root, rel), "clone") {
+            progress(&format!("not cloning {rel}: {e:#}"));
+            continue;
+        }
+        let cloned = match (meta.is_dir(), meta.is_file()) {
+            (true, _) => crate::cow::clone_tree(&src, &dst),
+            (_, true) => crate::cow::clone_file(&src, &dst),
+            _ => {
+                progress(&format!(
+                    "not cloning {rel}: in the main checkout it is neither a file nor a directory"
+                ));
+                continue;
+            }
+        };
+        match cloned {
+            Ok(()) => {}
+            Err(e) if crate::cow::is_unsupported(&e) => {
+                progress(&format!(
+                    "this filesystem cannot clone {rel}, so the install builds it"
+                ));
+                continue;
+            }
+            Err(e) => {
+                progress(&format!(
+                    "could not clone {rel} ({e}), so the install builds it"
+                ));
+                continue;
+            }
+        }
+        if meta.is_dir() {
+            match crate::cow::link_out_of(&dst, worktree, root) {
+                Ok(None) => {}
+                Ok(Some(link)) => {
+                    if let Err(e) = crate::cow::remove_tree(&dst) {
+                        progress(&format!(
+                            "the clone of {rel} links out of the worktree and could not be \
+                             removed ({e}); remove {} before the install runs",
+                            dst.display()
+                        ));
+                        continue;
+                    }
+                    progress(&format!(
+                        "not cloning {rel}: {} links out of the worktree, so the install builds \
+                         it",
+                        link.strip_prefix(worktree).unwrap_or(&link).display()
+                    ));
+                    continue;
+                }
+                Err(e) => {
+                    let removed = crate::cow::remove_tree(&dst).is_ok();
+                    progress(&format!(
+                        "could not read the clone of {rel} ({e}), so the install builds it{}",
+                        match removed {
+                            true => String::new(),
+                            false => format!("; remove {} first", dst.display()),
+                        }
+                    ));
+                    continue;
+                }
+            }
+        }
+        progress(&format!(
+            "cloned {rel} from the main checkout (copy-on-write)"
+        ));
+    }
 }
 
 /// The refusal `new` gives over a record another command wrote while git
@@ -356,6 +581,11 @@ fn refuse_over_raced_record(
         .provision_paths()
         .iter()
         .filter(|rel| !target.join(rel).exists() && provision_source(paths, config, rel).is_some())
+        .chain(
+            config.project.clone.iter().filter(|rel| {
+                !is_present(&target.join(rel)) && is_present(&paths.root().join(rel))
+            }),
+        )
         .map(String::as_str)
         .collect();
     let lacks = match (missing.is_empty(), has_install_step(config)) {
@@ -522,6 +752,58 @@ fn unwind_new(
         );
     }
     anyhow::anyhow!("{err:#} — the partial worktree and the new branch {branch} were removed")
+}
+
+/// Whether git lists a worktree at `target`.
+fn is_registered(root: &Path, target: &Path) -> bool {
+    worktree::porcelain_paths(root).is_ok_and(|listed| {
+        listed.iter().any(|p| {
+            crate::paths::resolve_for_compare(p) == crate::paths::resolve_for_compare(target)
+        })
+    })
+}
+
+/// Deletes the branch a failed `git worktree add -b` made, when this call
+/// made it: `made` is the commit it started at, known only when the branch
+/// did not exist before. `update-ref -d` with that commit deletes it only
+/// while it is still there, so a branch anything else has moved is kept.
+fn drop_made_branch(
+    root: &Path,
+    branch: &str,
+    made: Option<&str>,
+    err: anyhow::Error,
+) -> anyhow::Error {
+    let Some(start) = made else {
+        return err;
+    };
+    let refname = format!("refs/heads/{branch}");
+    if !ref_exists(root, &refname) {
+        return err;
+    }
+    match git_succeeds(root, &["update-ref", "-d", &refname, start]) {
+        true => anyhow::anyhow!("{err:#} — the new branch {branch} was removed"),
+        false => anyhow::anyhow!(
+            "{err:#} — the new branch {branch} is still there; delete it with `git branch -D \
+             {branch}`"
+        ),
+    }
+}
+
+/// The commit `rev` names, in full.
+fn commit_of(root: &Path, rev: &str) -> Option<String> {
+    let out = crate::project::git(
+        root,
+        [
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{rev}^{{commit}}"),
+        ],
+    )
+    .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 fn git_succeeds(root: &Path, args: &[&str]) -> bool {
@@ -1198,15 +1480,19 @@ fn validate_branch_name(root: &Path, branch: &str) -> Result<()> {
 /// Exit 0 means ignored, 1 means not ignored (including a tracked file),
 /// 128 is a git error worth surfacing. `dir` is whichever checkout has the
 /// last word: the main one for the pre-flight, the new worktree for the
-/// check that actually authorises a write.
-fn ensure_gitignored(dir: &Path, rel: &str) -> Result<()> {
+/// check that actually authorises a write. `key` is the setting that named
+/// the path, `provision` or `clone`.
+fn ensure_gitignored(dir: &Path, rel: &str, key: &str) -> Result<()> {
     let out = crate::project::git(dir, ["check-ignore", "-q", "--", rel])
         .context("run git check-ignore")?;
+    // Named as the config names it: a directory is asked about with a
+    // trailing slash, which is the query's, not the developer's.
+    let rel = rel.trim_end_matches('/');
     match out.status.code() {
         Some(0) => Ok(()),
         Some(1) => bail!(
-            "provision path {rel:?} is not ignored in {} — pando only creates files your project \
-             already ignores. Add it to .gitignore, or drop it from provision.",
+            "{key} path {rel:?} is not ignored in {} — pando only creates files your project \
+             already ignores. Add it to .gitignore, or drop it from {key}.",
             dir.display()
         ),
         Some(128) => bail!(
@@ -1257,7 +1543,7 @@ fn provision_path(
     // Invariant 1, checked in the worktree the file lands in and
     // immediately before the write — a seeded file is no different, and
     // the example it comes from being tracked buys it nothing.
-    ensure_gitignored(worktree, rel)?;
+    ensure_gitignored(worktree, rel, "provision")?;
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create dir {}", parent.display()))?;

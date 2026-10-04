@@ -8487,6 +8487,890 @@ fn new_refuses_a_provision_path_outside_the_repository() {
     );
 }
 
+// ---- copy-on-write checkout ------------------------------------------
+
+/// What `new` says, collected.
+fn new_saying(fx: &Fx, branch: &str) -> (Result<String>, Vec<String>) {
+    let said = std::cell::RefCell::new(Vec::<String>::new());
+    let made = new(&fx.paths, &fx.config, branch, None, &|m: &str| {
+        said.borrow_mut().push(m.to_string())
+    });
+    (made, said.into_inner())
+}
+
+/// Every tracked file of a worktree with its mode and contents, or the
+/// link target for a symlink: what a checkout is, compared whole.
+fn checked_out(worktree: &Path) -> BTreeMap<String, (u32, Vec<u8>)> {
+    use std::os::unix::fs::PermissionsExt;
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(worktree)
+        .args(["ls-files", "-z"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(|rel| {
+            let path = worktree.join(rel);
+            let meta = path.symlink_metadata().unwrap();
+            // A submodule is a directory git leaves empty in a new
+            // worktree; what is in it is not this checkout's.
+            let body = match (meta.file_type().is_symlink(), meta.is_dir()) {
+                (true, _) => std::fs::read_link(&path)
+                    .unwrap()
+                    .into_os_string()
+                    .into_encoded_bytes(),
+                (_, true) => b"<submodule>".to_vec(),
+                _ => std::fs::read(&path).unwrap(),
+            };
+            (rel.to_string(), (meta.permissions().mode() & 0o777, body))
+        })
+        .collect()
+}
+
+fn status_of(worktree: &Path) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(worktree)
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// The fixture with more to check out: nested directories, an executable,
+/// a symlink, and a branch `feat/diverged` that changes one file, deletes
+/// one and adds one.
+fn fixture_with_tree() -> Fx {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture();
+    let root = fx.root.clone();
+    std::fs::create_dir_all(root.join("src/lib")).unwrap();
+    std::fs::write(root.join("src/lib/a.js"), "export const a = 1\n").unwrap();
+    std::fs::write(root.join("src/lib/b.js"), "export const b = 2\n").unwrap();
+    std::fs::write(root.join("src/gone.js"), "bye\n").unwrap();
+    std::fs::write(root.join("run.sh"), "#!/bin/sh\necho run\n").unwrap();
+    std::fs::set_permissions(root.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink("src/lib/a.js", root.join("entry.js")).unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "--quiet", "-m", "tree"]);
+    git(&root, &["branch", "feat/diverged"]);
+    let side = fx._dir.path().join("side");
+    git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            side.to_str().unwrap(),
+            "feat/diverged",
+        ],
+    );
+    std::fs::write(side.join("src/lib/b.js"), "export const b = 3\n").unwrap();
+    std::fs::remove_file(side.join("src/gone.js")).unwrap();
+    std::fs::write(side.join("src/new.js"), "hello\n").unwrap();
+    git(&side, &["add", "-A"]);
+    git(&side, &["commit", "--quiet", "-m", "diverge"]);
+    git(&root, &["worktree", "remove", side.to_str().unwrap()]);
+    fx
+}
+
+// The copy-on-write checkout is only an optimisation: whatever the
+// filesystem, the worktree must be exactly the one git's own checkout
+// makes — every file, mode and link — with nothing in `git status`.
+#[test]
+fn a_copy_on_write_checkout_is_the_tree_gits_own_checkout_makes() {
+    let mut fx = fixture_with_tree();
+    let (cow, _) = new_saying(&fx, "feat/diverged");
+    let cow = fx.worktrees_dir().join(cow.unwrap());
+
+    fx.config.project.copy_on_write = Some(false);
+    git(&fx.root, &["branch", "feat/plain", "feat/diverged"]);
+    let (plain, said) = new_saying(&fx, "feat/plain");
+    let plain = fx.worktrees_dir().join(plain.unwrap());
+    assert!(
+        !said.iter().any(|m| m.contains("copy-on-write")),
+        "copy_on_write = false still cloned: {said:?}"
+    );
+
+    assert_eq!(checked_out(&cow), checked_out(&plain));
+    assert_eq!(status_of(&cow), "");
+    assert!(
+        !cow.join("src/gone.js").exists(),
+        "a file the branch deleted came back"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cow.join("src/lib/b.js")).unwrap(),
+        "export const b = 3\n"
+    );
+}
+
+// The trap a simple version falls into: cloned files and an empty index,
+// and `reset --hard` rewrites every one of them, saving nothing. Only on a
+// filesystem that clones: elsewhere git writes everything, by design.
+#[test]
+fn a_copy_on_write_checkout_leaves_git_only_the_files_that_differ() {
+    let fx = fixture_with_tree();
+    if !crate::cow::can_clone(fx._dir.path()) {
+        return;
+    }
+    let (made, said) = new_saying(&fx, "feat/diverged");
+    made.unwrap();
+    // .gitignore, README.md, run.sh, src/gone.js, src/lib/a.js, src/lib/b.js;
+    // the symlink is git's to write.
+    assert!(
+        said.iter()
+            .any(|m| m == "cloning 6 files from the main checkout (copy-on-write)"),
+        "{said:?}"
+    );
+    // b.js changed, gone.js deleted, new.js added, and the symlink, which
+    // is never cloned.
+    assert!(
+        said.iter()
+            .any(|m| m == "git changed 4 files that differ from the main checkout"),
+        "{said:?}"
+    );
+}
+
+// What is uncommitted in the main checkout is the developer's work in
+// progress there, not the branch's: a staged new file, an edit, and an
+// untracked file all stay where they are.
+#[test]
+fn a_copy_on_write_checkout_takes_nothing_uncommitted_from_the_main_checkout() {
+    let fx = fixture_with_tree();
+    std::fs::write(fx.root.join("staged.js"), "not committed\n").unwrap();
+    git(&fx.root, &["add", "staged.js"]);
+    std::fs::write(fx.root.join("src/lib/a.js"), "edited in main\n").unwrap();
+    std::fs::write(fx.root.join("scratch.txt"), "untracked\n").unwrap();
+
+    let (made, _) = new_saying(&fx, "feat/fresh");
+    let wt = fx.worktrees_dir().join(made.unwrap());
+    assert!(!wt.join("staged.js").exists(), "a staged file came across");
+    assert!(
+        !wt.join("scratch.txt").exists(),
+        "an untracked file came across"
+    );
+    assert_eq!(
+        std::fs::read_to_string(wt.join("src/lib/a.js")).unwrap(),
+        "export const a = 1\n"
+    );
+    assert_eq!(status_of(&wt), "");
+    // And the main checkout is as it was.
+    assert_eq!(
+        std::fs::read_to_string(fx.root.join("src/lib/a.js")).unwrap(),
+        "edited in main\n"
+    );
+}
+
+// `--no-checkout` skips the post-checkout hook, so pando runs it after
+// the copy-on-write checkout, as `git worktree add` would have: in the new
+// worktree, with the null commit, `HEAD` and the branch flag. Excluding
+// repositories with a hook instead turned the feature off for every husky
+// project, which installs a hook that does nothing.
+#[test]
+fn a_post_checkout_hook_runs_after_a_copy_on_write_checkout_as_git_runs_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture_with_tree();
+    let marks = tempdir().unwrap();
+    let hook = fx.root.join(".git/hooks/post-checkout");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\necho \"$1 $2 $3 ${{GIT_DIR-unset}}\" >> '{m}/args'\npwd -P > '{m}/cwd'\n",
+            m = marks.path().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let (made, said) = new_saying(&fx, "feat/hooked");
+    let wt = fx.worktrees_dir().join(made.unwrap());
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&wt)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    // Once, and without `GIT_DIR`, which `worktree add` unsets for it: a
+    // hook running git in another repository must reach that repository.
+    assert_eq!(
+        std::fs::read_to_string(marks.path().join("args"))
+            .unwrap()
+            .trim(),
+        format!("{} {head} 1 unset", "0".repeat(head.len()))
+    );
+    assert_eq!(
+        std::fs::read_to_string(marks.path().join("cwd"))
+            .unwrap()
+            .trim(),
+        wt.canonicalize().unwrap().display().to_string()
+    );
+    if crate::cow::can_clone(fx._dir.path()) {
+        assert!(said.iter().any(|m| m.starts_with("cloning")), "{said:?}");
+    }
+}
+
+// A failing hook fails `git worktree add`; it fails the copy-on-write
+// checkout it stands in for too, and `new` unwinds.
+#[test]
+fn a_failing_post_checkout_hook_fails_new_and_leaves_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture_with_tree();
+    if !crate::cow::can_clone(fx._dir.path()) {
+        return;
+    }
+    let hook = fx.root.join(".git/hooks/post-checkout");
+    std::fs::write(&hook, "#!/bin/sh\necho 'hook says no' >&2\nexit 3\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (made, _) = new_saying(&fx, "feat/refused");
+    let msg = format!("{:#}", made.unwrap_err());
+    assert!(
+        msg.contains("the post-checkout hook failed: hook says no"),
+        "{msg}"
+    );
+    assert!(fx.names().is_empty(), "the worktree was left");
+    let branches = Command::new("git")
+        .arg("-C")
+        .arg(&fx.root)
+        .args(["branch", "--list", "feat/refused"])
+        .output()
+        .unwrap();
+    assert!(branches.stdout.is_empty(), "the new branch was left");
+}
+
+/// Makes `cow` with copy-on-write and `plain` with git's own checkout,
+/// both forked from main, and says whether they are the same tree, byte
+/// for byte and mode for mode. The comparison is of raw files, never of
+/// `git status`: every way a copy-on-write checkout can keep the wrong
+/// bytes leaves `git status` empty.
+fn same_as_plain(fx: &mut Fx, cow: &str, plain: &str) -> (PathBuf, PathBuf) {
+    fx.config.project.copy_on_write = None;
+    let (made, said) = new_saying(fx, cow);
+    let cow = fx.worktrees_dir().join(made.unwrap());
+    fx.config.project.copy_on_write = Some(false);
+    let (made, _) = new_saying(fx, plain);
+    let plain = fx.worktrees_dir().join(made.unwrap());
+    fx.config.project.copy_on_write = None;
+    assert_eq!(checked_out(&cow), checked_out(&plain), "{said:?}");
+    (cow, plain)
+}
+
+/// Commits `.gitattributes` with `attrs` in the main checkout, leaving its
+/// working files as they were: written before the attributes, so not what
+/// a checkout now writes.
+fn commit_attributes(fx: &Fx, attrs: &str) {
+    std::fs::write(fx.root.join(".gitattributes"), attrs).unwrap();
+    git(&fx.root, &["add", ".gitattributes"]);
+    git(&fx.root, &["commit", "--quiet", "-m", "attributes"]);
+}
+
+// git's refresh compares cleaned contents, so an LF clone of a file the
+// branch now checks out with CRLF passed as up to date, and was kept.
+#[test]
+fn a_file_checked_out_with_crlf_endings_is_written_by_git_not_cloned() {
+    let mut fx = fixture_with_tree();
+    std::fs::write(fx.root.join("notes.txt"), "one\ntwo\n").unwrap();
+    git(&fx.root, &["add", "notes.txt"]);
+    git(&fx.root, &["commit", "--quiet", "-m", "notes"]);
+    commit_attributes(&fx, "*.txt text eol=crlf\n");
+    let (cow, _) = same_as_plain(&mut fx, "feat/crlf", "feat/crlf-plain");
+    assert_eq!(
+        std::fs::read(cow.join("notes.txt")).unwrap(),
+        b"one\r\ntwo\r\n"
+    );
+}
+
+// `* text=auto` and a file an editor re-saved with CRLF in the main
+// checkout: git's own refresh normalises it and calls the clone clean.
+#[test]
+fn a_crlf_copy_of_an_lf_file_in_the_main_checkout_is_not_kept() {
+    let mut fx = fixture_with_tree();
+    commit_attributes(&fx, "* text=auto\n");
+    std::fs::write(fx.root.join("src/lib/a.js"), "export const a = 1\r\n").unwrap();
+    let (cow, _) = same_as_plain(&mut fx, "feat/auto", "feat/auto-plain");
+    assert_eq!(
+        std::fs::read(cow.join("src/lib/a.js")).unwrap(),
+        b"export const a = 1\n"
+    );
+}
+
+#[test]
+fn files_under_ident_or_a_filter_are_written_by_git_not_cloned() {
+    let mut fx = fixture_with_tree();
+    std::fs::write(fx.root.join("v.c"), "/* $Id$ */\n").unwrap();
+    std::fs::write(fx.root.join("data.dat"), "secret\n").unwrap();
+    git(&fx.root, &["add", "v.c", "data.dat"]);
+    git(&fx.root, &["commit", "--quiet", "-m", "more"]);
+    git(&fx.root, &["config", "filter.up.smudge", "tr a-z A-Z"]);
+    git(&fx.root, &["config", "filter.up.clean", "tr A-Z a-z"]);
+    commit_attributes(&fx, "*.c ident\n*.dat filter=up\n");
+    let (cow, _) = same_as_plain(&mut fx, "feat/conv", "feat/conv-plain");
+    assert_eq!(std::fs::read(cow.join("data.dat")).unwrap(), b"SECRET\n");
+    assert!(
+        std::fs::read_to_string(cow.join("v.c"))
+            .unwrap()
+            .contains("$Id: "),
+        "ident was not expanded"
+    );
+}
+
+// A smudge filter that fails fails git's own checkout, and must fail this
+// one too: a clone of the main checkout's bytes would have hidden it.
+#[test]
+fn a_required_filter_that_fails_fails_new_and_leaves_nothing() {
+    let fx = fixture_with_tree();
+    git(&fx.root, &["config", "filter.bad.smudge", "false"]);
+    git(&fx.root, &["config", "filter.bad.clean", "cat"]);
+    git(&fx.root, &["config", "filter.bad.required", "true"]);
+    commit_attributes(&fx, "src/lib/b.js filter=bad\n");
+    let (made, _) = new_saying(&fx, "feat/filtered");
+    assert!(made.is_err(), "a failing required filter passed");
+    assert!(fx.names().is_empty(), "the worktree was left");
+}
+
+// `git worktree add` resets with `--no-recurse-submodules`; a reset that
+// recursed failed outright with `submodule.recurse` set.
+#[test]
+fn submodule_recurse_does_not_break_a_copy_on_write_checkout() {
+    let mut fx = fixture_with_tree();
+    let lib = fx._dir.path().join("lib-src");
+    std::fs::create_dir_all(&lib).unwrap();
+    git(&lib, &["init", "--quiet", "--initial-branch=main"]);
+    std::fs::write(lib.join("l.txt"), "lib\n").unwrap();
+    git(&lib, &["add", "."]);
+    git(&lib, &["commit", "--quiet", "-m", "lib"]);
+    git(
+        &fx.root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "--quiet",
+            lib.to_str().unwrap(),
+            "vendor/lib",
+        ],
+    );
+    git(&fx.root, &["commit", "--quiet", "-m", "submodule"]);
+    git(&fx.root, &["config", "submodule.recurse", "true"]);
+    let (cow, _) = same_as_plain(&mut fx, "feat/sub", "feat/sub-plain");
+    assert_eq!(status_of(&cow), "");
+}
+
+// A clone carries its source's permission bits; git writes 0666 or 0777
+// less the umask, and compares only the executable bit, so a main file's
+// 0600 would have passed into the worktree unseen.
+#[test]
+fn a_cloned_file_gets_the_mode_git_writes_not_the_main_checkouts() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut fx = fixture_with_tree();
+    std::fs::set_permissions(
+        fx.root.join("README.md"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    same_as_plain(&mut fx, "feat/mode", "feat/mode-plain");
+}
+
+// Finder's Locked flag is copied by a clone, and a locked clone can be
+// neither replaced by git's reset nor removed by `git worktree remove`.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_locked_file_in_the_main_checkout_is_written_by_git_not_cloned() {
+    let mut fx = fixture_with_tree();
+    let locked = fx.root.join("src/lib/a.js");
+    let path = std::ffi::CString::new(locked.to_str().unwrap()).unwrap();
+    // SAFETY: a NUL-terminated path that outlives the call.
+    assert_eq!(
+        unsafe { libc::chflags(path.as_ptr(), libc::UF_IMMUTABLE) },
+        0
+    );
+    let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (cow, _) = same_as_plain(&mut fx, "feat/locked", "feat/locked-plain");
+        rm(&fx.paths, "feat+locked", true, false).unwrap();
+        cow
+    }));
+    // SAFETY: as above; unlocked so the temp directory can be removed.
+    unsafe { libc::chflags(path.as_ptr(), 0) };
+    assert!(!made.unwrap().exists(), "the worktree could not be removed");
+}
+
+#[test]
+fn clone_skips_node_modules_when_the_install_deletes_it_first() {
+    let mut fx = fixture();
+    std::fs::create_dir_all(fx.root.join("node_modules/x")).unwrap();
+    std::fs::write(fx.root.join("node_modules/x/i.js"), "x\n").unwrap();
+    fx.config.project.clone = vec!["node_modules".into()];
+    // `true` stands in for npm, which the tests never run; the words that
+    // follow are what pando reads.
+    fx.config.project.install = Some("true && npm ci || true".into());
+    let (made, said) = new_saying(&fx, "feat/ci");
+    let wt = fx.worktrees_dir().join(made.unwrap());
+    assert!(
+        said.iter()
+            .any(|m| m == "not cloning node_modules: the install deletes it before it installs"),
+        "{said:?}"
+    );
+    assert!(!wt.join("node_modules").exists());
+}
+
+#[test]
+fn clone_never_takes_a_virtualenv() {
+    let mut fx = fixture();
+    std::fs::write(fx.root.join(".gitignore"), ".env\nnode_modules/\n.venv/\n").unwrap();
+    git(&fx.root, &["commit", "--quiet", "-am", "ignore .venv"]);
+    std::fs::create_dir_all(fx.root.join(".venv/bin")).unwrap();
+    std::fs::write(fx.root.join(".venv/pyvenv.cfg"), "home = /usr/bin\n").unwrap();
+    fx.config.project.clone = vec![".venv".into()];
+    let (made, said) = new_saying(&fx, "feat/py");
+    let wt = fx.worktrees_dir().join(made.unwrap());
+    assert!(!wt.join(".venv").exists());
+    assert!(
+        said.iter()
+            .any(|m| m.starts_with("not cloning .venv: a virtualenv")),
+        "{said:?}"
+    );
+}
+
+// `pando check` never clones, so a `clone` path its project does not
+// ignore is no reason to refuse it.
+#[test]
+fn a_clone_path_that_is_not_ignored_does_not_stop_a_check() {
+    let mut fx = fixture();
+    std::fs::create_dir_all(fx.root.join("vendor")).unwrap();
+    fx.config.project.clone = vec!["vendor".into()];
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&fx.root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    new_detached(&fx.paths, &fx.config, &head, &noop).unwrap();
+}
+
+// git removes a worktree whose checkout failed but keeps the branch `-b`
+// made for it, and keeps the whole worktree when only its hook failed;
+// `new` left both behind, with no record of either.
+#[test]
+fn a_failed_git_checkout_leaves_no_branch_and_no_worktree() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut fx = fixture_with_tree();
+    fx.config.project.copy_on_write = Some(false);
+    git(&fx.root, &["config", "filter.bad.smudge", "false"]);
+    git(&fx.root, &["config", "filter.bad.clean", "cat"]);
+    git(&fx.root, &["config", "filter.bad.required", "true"]);
+    commit_attributes(&fx, "src/lib/b.js filter=bad\n");
+    let branch_left = |name: &str| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&fx.root)
+            .args(["branch", "--list", name])
+            .output()
+            .unwrap();
+        !out.stdout.is_empty()
+    };
+    let (made, _) = new_saying(&fx, "feat/smudged");
+    let msg = format!("{:#}", made.unwrap_err());
+    assert!(msg.contains("git worktree add failed"), "{msg}");
+    assert!(
+        !branch_left("feat/smudged"),
+        "the new branch was left: {msg}"
+    );
+
+    commit_attributes(&fx, "");
+    let hook = fx.root.join(".git/hooks/post-checkout");
+    std::fs::write(&hook, "#!/bin/sh\nexit 3\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (made, _) = new_saying(&fx, "feat/hook-says-no");
+    assert!(made.is_err());
+    assert!(fx.names().is_empty(), "the worktree was left");
+    assert!(!branch_left("feat/hook-says-no"), "the new branch was left");
+}
+
+// husky v9: `core.hooksPath = .husky/_`, relative and gitignored, so the
+// hook exists in the main checkout only. `worktree add` resolves it there,
+// and so must the copy-on-write checkout — once, not twice.
+#[test]
+fn a_relative_hooks_path_runs_the_main_checkouts_hook_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture_with_tree();
+    std::fs::write(
+        fx.root.join(".gitignore"),
+        ".env\nnode_modules/\n.husky/_/\n",
+    )
+    .unwrap();
+    git(
+        &fx.root,
+        &["commit", "--quiet", "-am", "ignore husky's own"],
+    );
+    let marks = tempdir().unwrap();
+    let hooks = fx.root.join(".husky/_");
+    std::fs::create_dir_all(&hooks).unwrap();
+    std::fs::write(
+        hooks.join("post-checkout"),
+        format!("#!/bin/sh\necho ran >> '{}/runs'\n", marks.path().display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        hooks.join("post-checkout"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    git(&fx.root, &["config", "core.hooksPath", ".husky/_"]);
+    let (made, _) = new_saying(&fx, "feat/husky");
+    made.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(marks.path().join("runs")).unwrap(),
+        "ran\n"
+    );
+}
+
+// Two `new`s of one branch at once: the one that loses must not unwind
+// the worktree and branch the winner made.
+#[test]
+fn a_second_new_of_the_same_branch_at_once_never_removes_the_firsts() {
+    let fx = fixture_with_tree();
+    let results = std::thread::scope(|scope| {
+        let a = scope.spawn(|| new(&fx.paths, &fx.config, "feat/race", None, &noop));
+        let b = scope.spawn(|| new(&fx.paths, &fx.config, "feat/race", None, &noop));
+        [a.join().unwrap(), b.join().unwrap()]
+    });
+    let won = results.iter().filter(|r| r.is_ok()).count();
+    assert_eq!(won, 1, "{results:?}");
+    let wt = fx.worktrees_dir().join("feat+race");
+    assert!(wt.join("README.md").exists(), "the winner's worktree went");
+    assert_eq!(status_of(&wt), "");
+    let branch = Command::new("git")
+        .arg("-C")
+        .arg(&fx.root)
+        .args(["rev-parse", "--verify", "--quiet", "refs/heads/feat/race"])
+        .output()
+        .unwrap();
+    assert!(branch.status.success(), "the winner's branch went");
+}
+
+// `clone` names what a worktree should get when the main checkout has it;
+// a main checkout that never installed is the common case, not an error.
+#[test]
+fn clone_of_a_path_the_main_checkout_lacks_does_not_stop_new() {
+    let mut fx = fixture();
+    fx.config.project.clone = vec!["node_modules".into()];
+    let (made, said) = new_saying(&fx, "feat/fresh-clone");
+    let wt = fx.worktrees_dir().join(made.unwrap());
+    assert!(!wt.join("node_modules").exists());
+    assert!(!said.iter().any(|m| m.contains("node_modules")), "{said:?}");
+}
+
+// The attributes that decide a checkout are the branch's: main has none,
+// the branch adds `eol=crlf`. Asked of main's index, git would say LF.
+#[test]
+fn attributes_only_the_branch_has_decide_what_is_cloned() {
+    let mut fx = fixture_with_tree();
+    std::fs::write(fx.root.join("notes.txt"), "one\ntwo\n").unwrap();
+    git(&fx.root, &["add", "notes.txt"]);
+    git(&fx.root, &["commit", "--quiet", "-m", "notes"]);
+    for name in ["feat/crlf-branch", "feat/crlf-branch-plain"] {
+        let side = fx._dir.path().join(sanitize_branch_to_dir(name));
+        git(
+            &fx.root,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                name,
+                side.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(side.join(".gitattributes"), "*.txt text eol=crlf\n").unwrap();
+        git(&side, &["add", ".gitattributes"]);
+        git(&side, &["commit", "--quiet", "-m", "crlf here only"]);
+        git(
+            &fx.root,
+            &["worktree", "remove", "--force", side.to_str().unwrap()],
+        );
+    }
+    let (cow, _) = new_saying(&fx, "feat/crlf-branch");
+    let cow = fx.worktrees_dir().join(cow.unwrap());
+    fx.config.project.copy_on_write = Some(false);
+    let (plain, _) = new_saying(&fx, "feat/crlf-branch-plain");
+    let plain = fx.worktrees_dir().join(plain.unwrap());
+    assert_eq!(checked_out(&cow), checked_out(&plain));
+    assert_eq!(
+        std::fs::read(cow.join("notes.txt")).unwrap(),
+        b"one\r\ntwo\r\n"
+    );
+}
+
+// git reads `[core] autocrlf` with no value, and `2`, as true.
+#[test]
+fn autocrlf_written_any_way_git_reads_as_true_keeps_gits_checkout() {
+    let mut fx = fixture_with_tree();
+    std::fs::write(fx.root.join("notes.txt"), "one\ntwo\n").unwrap();
+    git(&fx.root, &["add", "notes.txt"]);
+    git(&fx.root, &["commit", "--quiet", "-m", "notes"]);
+    let config = fx.root.join(".git/config");
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("[core]\n\tautocrlf\n");
+    std::fs::write(&config, text).unwrap();
+    let (cow, _) = same_as_plain(&mut fx, "feat/bare-key", "feat/bare-key-plain");
+    assert_eq!(
+        std::fs::read(cow.join("notes.txt")).unwrap(),
+        b"one\r\ntwo\r\n"
+    );
+}
+
+// Config can depend on the branch checked out: `includeIf "onbranch:…"`.
+// The main checkout's says nothing; the new worktree's turns CRLF on.
+#[test]
+fn config_only_the_branch_turns_on_is_read_in_the_new_worktree() {
+    let mut fx = fixture_with_tree();
+    std::fs::write(fx.root.join("notes.txt"), "one\ntwo\n").unwrap();
+    git(&fx.root, &["add", "notes.txt"]);
+    git(&fx.root, &["commit", "--quiet", "-m", "notes"]);
+    let include = fx._dir.path().join("crlf.inc");
+    std::fs::write(&include, "[core]\n\tautocrlf = true\n").unwrap();
+    git(
+        &fx.root,
+        &[
+            "config",
+            "includeIf.onbranch:feat/**.path",
+            include.to_str().unwrap(),
+        ],
+    );
+    let (cow, _) = same_as_plain(&mut fx, "feat/inc", "feat/inc-plain");
+    assert_eq!(
+        std::fs::read(cow.join("notes.txt")).unwrap(),
+        b"one\r\ntwo\r\n"
+    );
+}
+
+// `attr.tree` makes checkout read attributes from a fixed tree.
+#[test]
+fn attr_tree_keeps_gits_checkout() {
+    let mut fx = fixture_with_tree();
+    std::fs::write(fx.root.join("notes.txt"), "one\ntwo\n").unwrap();
+    git(&fx.root, &["add", "notes.txt"]);
+    git(&fx.root, &["commit", "--quiet", "-m", "notes"]);
+    let side = fx._dir.path().join("attrs");
+    git(
+        &fx.root,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "attrs",
+            side.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(side.join(".gitattributes"), "*.txt text eol=crlf\n").unwrap();
+    git(&side, &["add", ".gitattributes"]);
+    git(&side, &["commit", "--quiet", "-m", "attrs"]);
+    git(
+        &fx.root,
+        &["worktree", "remove", "--force", side.to_str().unwrap()],
+    );
+    git(&fx.root, &["config", "attr.tree", "refs/heads/attrs"]);
+    let (cow, _) = same_as_plain(&mut fx, "feat/attr-tree", "feat/attr-tree-plain");
+    assert_eq!(
+        std::fs::read(cow.join("notes.txt")).unwrap(),
+        b"one\r\ntwo\r\n"
+    );
+}
+
+// A name with a space and one outside ASCII, and on macOS one committed
+// decomposed: git shows that one as untracked after any checkout, and the
+// copy-on-write checkout must not call it a file of its own.
+#[test]
+fn paths_with_spaces_and_unicode_check_out_the_same() {
+    let mut fx = fixture_with_tree();
+    std::fs::create_dir_all(fx.root.join("dir with space")).unwrap();
+    std::fs::write(fx.root.join("dir with space/über.txt"), "u\n").unwrap();
+    git(&fx.root, &["add", "-A"]);
+    git(&fx.root, &["commit", "--quiet", "-m", "names"]);
+    #[cfg(target_os = "macos")]
+    {
+        git(&fx.root, &["config", "core.precomposeunicode", "false"]);
+        std::fs::write(fx.root.join("cafe\u{301}.txt"), "nfd\n").unwrap();
+        git(&fx.root, &["add", "-A"]);
+        git(&fx.root, &["commit", "--quiet", "-m", "nfd"]);
+        git(&fx.root, &["config", "core.precomposeunicode", "true"]);
+    }
+    same_as_plain(&mut fx, "feat/names", "feat/names-plain");
+}
+
+// A remote-only branch is checked out with `--track -b`: the same tree,
+// copy-on-write or not.
+#[test]
+fn a_remote_branch_checks_out_the_same_by_copy_on_write() {
+    let mut fx = fixture_with_origin(&["feat/remote-a", "feat/remote-b"]);
+    let (cow, _) = new_saying(&fx, "feat/remote-a");
+    let cow = fx.worktrees_dir().join(cow.unwrap());
+    fx.config.project.copy_on_write = Some(false);
+    let (plain, _) = new_saying(&fx, "feat/remote-b");
+    let plain = fx.worktrees_dir().join(plain.unwrap());
+    assert_eq!(checked_out(&cow), checked_out(&plain));
+    assert_eq!(
+        upstream_of(&fx.root, "feat/remote-a").as_deref(),
+        Some("origin/feat/remote-a")
+    );
+}
+
+// Where the disk cannot clone, a developer who asked for copy-on-write by
+// name is told why it did not happen; everyone else hears nothing.
+#[test]
+fn a_disk_that_cannot_clone_is_said_only_to_who_asked_for_copy_on_write() {
+    let mut fx = fixture_with_tree();
+    if crate::cow::can_clone(fx._dir.path()) {
+        return;
+    }
+    let (_, said) = new_saying(&fx, "feat/quiet");
+    assert!(!said.iter().any(|m| m.contains("cannot clone")), "{said:?}");
+    fx.config.project.copy_on_write = Some(true);
+    let (_, said) = new_saying(&fx, "feat/told");
+    assert!(said.iter().any(|m| m.contains("cannot clone")), "{said:?}");
+}
+
+// A clone copies Finder's Locked flag, and a locked probe could never be
+// removed: one left in pando's worktrees directory for every `new`.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_probe_never_samples_a_locked_file() {
+    let fx = fixture_with_tree();
+    let first = fx.root.join(".gitignore");
+    let path = std::ffi::CString::new(first.to_str().unwrap()).unwrap();
+    // SAFETY: a NUL-terminated path that outlives the call.
+    assert_eq!(
+        unsafe { libc::chflags(path.as_ptr(), libc::UF_IMMUTABLE) },
+        0
+    );
+    let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        new_saying(&fx, "feat/probe").0.unwrap()
+    }));
+    // SAFETY: as above; unlocked so the temp directory can be removed.
+    unsafe { libc::chflags(path.as_ptr(), 0) };
+    made.unwrap();
+    let left: Vec<_> = std::fs::read_dir(fx.worktrees_dir())
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".pando-clone-probe")
+        })
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
+fn clone_gives_a_new_worktree_the_main_checkouts_dependencies_before_the_install() {
+    let mut fx = fixture();
+    std::fs::create_dir_all(fx.root.join("node_modules/left-pad")).unwrap();
+    std::fs::write(fx.root.join("node_modules/left-pad/index.js"), "pad\n").unwrap();
+    fx.config.project.clone = vec!["node_modules".into()];
+    // The install sees what was cloned.
+    fx.config.project.install =
+        Some("test -f node_modules/left-pad/index.js && echo seen > .seen || true".into());
+    std::fs::write(fx.root.join(".gitignore"), ".env\nnode_modules/\n.seen\n").unwrap();
+    git(&fx.root, &["commit", "--quiet", "-am", "ignore .seen"]);
+
+    let (made, said) = new_saying(&fx, "feat/deps");
+    let wt = fx.worktrees_dir().join(made.unwrap());
+    if crate::cow::can_clone(fx._dir.path()) {
+        assert!(
+            said.iter()
+                .any(|m| m == "cloned node_modules from the main checkout (copy-on-write)"),
+            "{said:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(wt.join("node_modules/left-pad/index.js")).unwrap(),
+            "pad\n"
+        );
+        assert!(
+            wt.join(".seen").exists(),
+            "the install ran before the clone"
+        );
+    } else {
+        assert!(
+            said.iter().any(|m| m == "this filesystem cannot clone node_modules, so the install builds it"),
+            "{said:?}"
+        );
+        assert!(!wt.join("node_modules").exists(), "a full copy was made");
+    }
+    assert_eq!(status_of(&wt), "");
+}
+
+#[test]
+fn a_clone_path_the_project_does_not_ignore_is_refused_before_anything_is_made() {
+    let mut fx = fixture();
+    std::fs::create_dir_all(fx.root.join("vendor")).unwrap();
+    fx.config.project.clone = vec!["vendor".into()];
+    let (made, _) = new_saying(&fx, "feat/vendored");
+    let msg = format!("{:#}", made.unwrap_err());
+    assert!(
+        msg.contains("clone path \"vendor\" is not ignored"),
+        "{msg}"
+    );
+    assert!(msg.contains("drop it from clone"), "{msg}");
+    assert!(fx.names().is_empty(), "a worktree was left behind");
+}
+
+#[test]
+fn a_cloned_tree_with_a_link_into_the_main_checkout_is_left_to_the_install() {
+    let mut fx = fixture();
+    if !crate::cow::can_clone(fx._dir.path()) {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(fx.root.join("node_modules/ro")).unwrap();
+    std::os::unix::fs::symlink(
+        fx.root.join("README.md"),
+        fx.root.join("node_modules/readme"),
+    )
+    .unwrap();
+    // A clone keeps modes: a read-only directory must not stop the
+    // clone being taken away again.
+    std::fs::write(fx.root.join("node_modules/ro/f"), "f").unwrap();
+    std::fs::set_permissions(
+        fx.root.join("node_modules/ro"),
+        std::fs::Permissions::from_mode(0o555),
+    )
+    .unwrap();
+    fx.config.project.clone = vec!["node_modules".into()];
+    let (made, said) = new_saying(&fx, "feat/linked");
+    let wt = fx.worktrees_dir().join(made.unwrap());
+    assert!(!wt.join("node_modules").exists(), "the clone was kept");
+    assert!(
+        said.iter().any(|m| m.starts_with(
+            "not cloning node_modules: node_modules/readme links out of the worktree"
+        )),
+        "{said:?}"
+    );
+}
+
+// A check proves the install builds the dependencies from nothing; a
+// cloned tree could pass a check whose install no longer works.
+#[test]
+fn the_check_worktree_is_never_given_cloned_dependencies() {
+    let mut fx = fixture();
+    std::fs::create_dir_all(fx.root.join("node_modules/x")).unwrap();
+    std::fs::write(fx.root.join("node_modules/x/i.js"), "x\n").unwrap();
+    fx.config.project.clone = vec!["node_modules".into()];
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&fx.root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+    let name = new_detached(&fx.paths, &fx.config, &head, &noop).unwrap();
+    assert!(!fx.worktrees_dir().join(name).join("node_modules").exists());
+}
+
 #[test]
 fn provisioned_files_are_symlinked_by_default_and_copied_on_request() {
     let mut fx = fixture();

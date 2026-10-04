@@ -99,6 +99,20 @@ pub struct ProjectSection {
     pub provision_mode: ProvisionMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install: Option<String>,
+    /// Whether `new` fills a worktree with copy-on-write clones of the main
+    /// checkout's files, letting git write only the ones that differ.
+    /// `None` is on: the result is the same tree git would write, git
+    /// checks it, and a filesystem that cannot clone gets git's checkout.
+    /// `Some(false)` always checks out with git.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_on_write: Option<bool>,
+    /// Ignored paths `new` clones from the main checkout, copy-on-write,
+    /// before the install runs, so the install only fixes what differs:
+    /// `node_modules`, and a gitignored lockfile with it. Never written as
+    /// a full copy: a filesystem that cannot clone leaves them to the
+    /// install. Every entry must be gitignored, like `provision`'s.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clone: Vec<String>,
 }
 
 impl ProjectSection {
@@ -110,6 +124,11 @@ impl ProjectSection {
     /// purpose" both reading as the empty list.
     pub fn provision_paths(&self) -> &[String] {
         self.provision.as_deref().unwrap_or_default()
+    }
+
+    /// Whether `new` may check out by copy-on-write.
+    pub fn copy_on_write(&self) -> bool {
+        self.copy_on_write.unwrap_or(true)
     }
 }
 

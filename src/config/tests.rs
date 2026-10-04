@@ -1369,6 +1369,8 @@ base = "main"
 provision = [".env", ".env.local"]
 provision_mode = "copy"
 install = "pnpm install --frozen-lockfile"
+copy_on_write = false
+clone = ["node_modules"]
 
 [runtime]
 prelude = ""
@@ -1419,6 +1421,8 @@ auth_cmd = "./scripts/dev-cookie.sh"
     let loaded = load(&f.paths).unwrap();
     let c = &loaded.config;
     assert_eq!(c.project.provision_mode, ProvisionMode::Copy);
+    assert!(!c.project.copy_on_write());
+    assert_eq!(c.project.clone, vec!["node_modules".to_string()]);
     assert_eq!(c.runtime.version_files, vec![".nvmrc".to_string()]);
     assert_eq!(c.services.len(), 2);
     assert!(matches!(c.services[0], ServiceConfig::Compose { .. }));
@@ -1725,6 +1729,36 @@ fn arrays_of_tables_are_replaced_whole_not_merged() {
         &loaded.config.services[0],
         ServiceConfig::Compose { file, .. } if file == "only.yml"
     ));
+}
+
+#[test]
+fn clone_paths_must_stay_inside_the_repository() {
+    let f = fixture();
+    for bad in ["/usr/lib/node_modules", "../node_modules", ""] {
+        write_home(&f, &format!("[project]\nclone = [\"{bad}\"]\n"));
+        assert!(
+            load(&f.paths).is_err(),
+            "clone path {bad:?} should be refused"
+        );
+    }
+    write_home(
+        &f,
+        "[project]\nclone = [\"node_modules\", \"apps/web/node_modules\"]\n",
+    );
+    assert!(load(&f.paths).is_ok());
+}
+
+// Unset is on, and a config that says nothing writes nothing: the key
+// appears in pando.toml only when a developer sets it.
+#[test]
+fn copy_on_write_is_on_until_turned_off_and_never_written_unset() {
+    let f = fixture();
+    write_home(&f, "[project]\ninstall = \"true\"\n");
+    let loaded = load(&f.paths).unwrap();
+    assert!(loaded.config.project.copy_on_write());
+    let text = toml::to_string(&loaded.config).unwrap();
+    assert!(!text.contains("copy_on_write"), "{text}");
+    assert!(!text.contains("clone"), "{text}");
 }
 
 #[test]
