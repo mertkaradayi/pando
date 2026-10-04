@@ -670,26 +670,78 @@ pub fn sibling_value<'a>(
     keys: impl IntoIterator<Item = &'a str>,
     suffixes: &[&str],
 ) -> Result<Option<(String, String)>, Unresolved> {
-    let files = read_env_files(dir);
-    for key in keys {
-        let Some(prefix) = ["_PORT", "_HOST", "_URL"]
-            .iter()
-            .find_map(|suffix| key.strip_suffix(suffix))
-        else {
-            continue;
-        };
-        for suffix in suffixes {
-            let sibling = format!("{prefix}{suffix}");
-            let Some((_, value)) = value_in_files(&files, &sibling)? else {
+    EnvFiles::read(dir, &[]).sibling(keys, suffixes)
+}
+
+/// The env files of the main checkout, read once, in the order a key is
+/// looked up in: the root's, then those of each of `dirs` below it — the
+/// directories the processes run in — the order [`env_value_below`] reads
+/// them in. The first file that sets a key wins.
+///
+/// What namespaced mode reads a server's address, its database and its
+/// login from. A project whose root has no manifest keeps them beside its
+/// apps, in `backend/.env`, where a lookup at the root alone found no
+/// port and left the database shared.
+///
+/// No `Debug`: the values are passwords as often as not.
+#[derive(Default)]
+pub struct EnvFiles {
+    files: Vec<(String, ParsedEnv)>,
+}
+
+impl EnvFiles {
+    pub fn read(root: &Path, dirs: &[String]) -> EnvFiles {
+        let mut files = Vec::new();
+        let mut seen: Vec<&str> = Vec::new();
+        for dir in std::iter::once("").chain(dirs.iter().map(String::as_str)) {
+            let dir = dir.trim_start_matches("./").trim_end_matches('/');
+            if seen.contains(&dir) {
                 continue;
-            };
-            let value = value.trim();
-            if !value.is_empty() {
-                return Ok(Some((sibling, value.to_string())));
+            }
+            seen.push(dir);
+            for (name, env) in read_env_files(&root.join(dir)) {
+                let name = match dir {
+                    "" | "." => name,
+                    dir => format!("{dir}/{name}"),
+                };
+                files.push((name, env));
             }
         }
+        EnvFiles { files }
     }
-    Ok(None)
+
+    /// A key's value, as [`value_in_env`] reads it.
+    pub fn value(&self, key: &str) -> Result<Option<String>, Unresolved> {
+        Ok(value_in_files(&self.files, key)?.map(|(_, value)| value.to_string()))
+    }
+
+    /// Something kept beside a service's address, as [`sibling_value`]
+    /// reads it.
+    pub fn sibling<'a>(
+        &self,
+        keys: impl IntoIterator<Item = &'a str>,
+        suffixes: &[&str],
+    ) -> Result<Option<(String, String)>, Unresolved> {
+        for key in keys {
+            let Some(prefix) = ["_PORT", "_HOST", "_URL"]
+                .iter()
+                .find_map(|suffix| key.strip_suffix(suffix))
+            else {
+                continue;
+            };
+            for suffix in suffixes {
+                let sibling = format!("{prefix}{suffix}");
+                let Some((_, value)) = value_in_files(&self.files, &sibling)? else {
+                    continue;
+                };
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Ok(Some((sibling, value.to_string())));
+                }
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// The user and the password a connection URL carries before its `@`,
@@ -870,8 +922,7 @@ pub fn port_in_env_below(root: &Path, dirs: &[String], key: &str) -> Option<(u16
 /// as written, ahead of the app's own loader, the app logged in as a user
 /// called `${DB_USER}`.
 pub fn value_in_env(dir: &Path, key: &str) -> Result<Option<String>, Unresolved> {
-    let files = read_env_files(dir);
-    Ok(value_in_files(&files, key)?.map(|(_, value)| value.to_string()))
+    EnvFiles::read(dir, &[]).value(key)
 }
 
 /// An env key whose value holds a reference, as [`parse_env`] tells one

@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::config::Config;
-use crate::services::Unresolved;
+use crate::services::{EnvFiles, Unresolved};
 
 /// The keys an app keeps its user in, beside its address.
 const USER_SUFFIXES: [&str; 2] = ["_USER", "_USERNAME"];
@@ -78,9 +78,9 @@ impl Login {
 /// The main checkout's, because namespaced mode is its servers: the app in
 /// a worktree logs in the same way, so the login that makes the worktree's
 /// database is the one that will use it.
-pub fn from_env_files(root: &Path, keys: &[String]) -> Result<Option<Login>, Unresolved> {
+pub fn from_env_files(env: &EnvFiles, keys: &[String]) -> Result<Option<Login>, Unresolved> {
     for key in keys {
-        let Some(value) = crate::services::value_in_env(root, key)? else {
+        let Some(value) = env.value(key)? else {
             continue;
         };
         let (user, password) = crate::services::url_userinfo(value.trim());
@@ -93,8 +93,8 @@ pub fn from_env_files(root: &Path, keys: &[String]) -> Result<Option<Login>, Unr
         }
     }
     let keys = keys.iter().map(String::as_str);
-    let user = crate::services::sibling_value(root, keys.clone(), &USER_SUFFIXES)?;
-    let password = crate::services::sibling_value(root, keys, &PASSWORD_SUFFIXES)?;
+    let user = env.sibling(keys.clone(), &USER_SUFFIXES)?;
+    let password = env.sibling(keys, &PASSWORD_SUFFIXES)?;
     if user.is_none() && password.is_none() {
         return Ok(None);
     }
@@ -132,7 +132,7 @@ pub fn from_config(config: &Config, service: &str, file: &Path) -> Option<Login>
 /// files' login holds a reference nothing sets, and with nothing written
 /// down, that is the [`Unresolved`] error.
 pub fn find(
-    root: &Path,
+    env: &EnvFiles,
     config: &Config,
     service: &str,
     keys: &[String],
@@ -141,7 +141,7 @@ pub fn find(
 ) -> Result<Option<Login>, Unresolved> {
     let usable = |login: &Login| !needs_user || login.user.is_some();
     let written_down = || from_config(config, service, file).filter(usable);
-    match from_env_files(root, keys) {
+    match from_env_files(env, keys) {
         Ok(login) => Ok(login.filter(usable).or_else(written_down)),
         Err(unresolved) => written_down().map(Some).ok_or(unresolved),
     }

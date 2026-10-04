@@ -971,6 +971,63 @@ fn a_bare_variable_nothing_pando_reads_sets_is_left_to_the_apps_loader_in_every_
     assert_eq!(plan.shared_data, vec!["postgres".to_string()]);
 }
 
+// A project whose root has no manifest keeps its env files beside its
+// apps. Namespaced mode read the root's alone, found no port, and left the
+// database shared; it reads `backend/.env` now, the server's host from a
+// `_SERVER` key as FastAPI's template names it, and the login beside it.
+#[test]
+fn a_namespaced_plan_reads_the_env_files_where_the_processes_run() {
+    let mut fx = fixture();
+    with_dev(
+        &mut fx,
+        ProcessConfig {
+            cmd: "sleep 30".to_string(),
+            cwd: Some("./backend/".to_string()),
+            ..Default::default()
+        },
+    );
+    let services: Config = toml::from_str(
+        "[[services]]\nkind = \"native\"\nname = \"mariadb\"\n\
+         env = { MYSQL_PORT = \"mariadb\" }\n",
+    )
+    .unwrap();
+    fx.config.services = services.services;
+    std::fs::create_dir_all(fx.root.join("backend")).unwrap();
+    std::fs::write(
+        fx.root.join("backend/.env"),
+        "MYSQL_SERVER=db.internal\nMYSQL_PORT=3307\nMYSQL_DB=shop\n\
+         MYSQL_USER=app\nMYSQL_PASSWORD=pw\n",
+    )
+    .unwrap();
+
+    let plan = super::namespaced::plan(&fx.paths, &fx.config);
+    assert!(plan.shared.is_empty(), "{:?}", plan.shared);
+    let target = &plan.targets[0];
+    assert_eq!(
+        (target.host.as_str(), target.port, target.main.as_str()),
+        ("db.internal", 3307, "shop")
+    );
+    assert_eq!(
+        target.tells,
+        vec![super::namespaced::Tell::Key("MYSQL_DB".to_string())]
+    );
+    let env = super::namespaced::main_env(&fx.paths, &fx.config);
+    let login = crate::namespace::login_from_env_files(&env, &target.keys)
+        .unwrap()
+        .unwrap();
+    assert_eq!(login.user.as_deref(), Some("app"));
+    assert!(login.has_password());
+    assert_eq!(
+        login.from,
+        "MYSQL_USER and MYSQL_PASSWORD in the main checkout's env files"
+    );
+
+    // The root's own files come first, as a shared start's status reads them.
+    std::fs::write(fx.root.join(".env"), "MYSQL_PORT=3308\n").unwrap();
+    let plan = super::namespaced::plan(&fx.paths, &fx.config);
+    assert_eq!(plan.targets[0].port, 3308);
+}
+
 #[test]
 fn a_process_that_owns_no_ports_starts_and_reaches_running() {
     let mut fx = fixture();

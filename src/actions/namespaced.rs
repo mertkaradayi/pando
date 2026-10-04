@@ -8,6 +8,7 @@ use crate::detect::Slot;
 use crate::namespace::{self, Login};
 use crate::paths::PandoPaths;
 use crate::recipes::NamespaceRecipe;
+use crate::services::EnvFiles;
 use crate::state::NamespaceKind;
 
 use super::questions::{Answer, Ask, NeedsAnswer, Question, answered_by};
@@ -35,9 +36,15 @@ pub fn namespace_login(
     progress: &dyn Fn(&str),
 ) -> Result<Login> {
     let file = paths.config_file();
-    if let Some(login) =
-        namespace::find_login(paths.root(), config, service, keys, needs_user, &file)
-            .map_err(|unresolved| unreadable_login(service, &file, unresolved))?
+    if let Some(login) = namespace::find_login(
+        &main_env(paths, config),
+        config,
+        service,
+        keys,
+        needs_user,
+        &file,
+    )
+    .map_err(|unresolved| unreadable_login(service, &file, unresolved))?
     {
         return Ok(login);
     }
@@ -76,6 +83,18 @@ pub fn namespace_login(
         password.map(str::to_string),
         from,
     ))
+}
+
+/// The keys an app keeps its server's host in, beside its address:
+/// `DATABASE_HOST`, and `POSTGRES_SERVER` as FastAPI's template names it.
+const HOST_SUFFIXES: &[&str] = &["_HOST", "_SERVER"];
+
+/// The main checkout's env files, as namespaced mode reads a server's
+/// address, its database and its login from them: the root's, then those
+/// of the directories the processes run in — `backend/.env` in a project
+/// whose root has no manifest.
+pub(super) fn main_env(paths: &PandoPaths, config: &Config) -> EnvFiles {
+    EnvFiles::read(paths.root(), &super::services::env_dirs(config))
 }
 
 /// Why a namespaced start stops when the main checkout's env files hold
@@ -244,9 +263,10 @@ pub(super) fn check_stays_shared(paths: &PandoPaths, config: &Config) -> Option<
         ));
     }
     let file = paths.config_file();
+    let env = main_env(paths, config);
     for target in &plan.targets {
         match namespace::find_login(
-            paths.root(),
+            &env,
             config,
             &target.service,
             &target.keys,
@@ -297,6 +317,7 @@ pub(super) fn check_stays_shared(paths: &PandoPaths, config: &Config) -> Option<
 /// shared, with the reason.
 pub(super) fn plan(paths: &PandoPaths, config: &Config) -> Plan {
     let recipes = crate::recipes::Recipes::load(&paths.recipes_dir());
+    let env = main_env(paths, config);
     let mut out = Plan::default();
     for declared in services_with_recipes(paths, config, &recipes) {
         let data = !declared.helper
@@ -306,7 +327,7 @@ pub(super) fn plan(paths: &PandoPaths, config: &Config) -> Plan {
                 .and_then(|recipe| recipe.namespace.as_ref())
                 .is_some_and(|namespace| namespace.kind == NamespaceKind::Slot);
         match target(
-            paths.root(),
+            &env,
             &declared.service,
             declared.recipe.as_ref(),
             declared.keys,
@@ -409,7 +430,7 @@ fn services_with_recipes(
 
 /// One service as a namespaced start would reach it, or why it cannot.
 fn target(
-    root: &std::path::Path,
+    env: &EnvFiles,
     service: &str,
     recipe: Option<&crate::recipes::Recipe>,
     keys: Vec<String>,
@@ -427,7 +448,7 @@ fn target(
     // it as, and the shared env leaves that key to the app's own loader.
     let mut values: Vec<(String, String)> = Vec::new();
     for key in &keys {
-        let value = crate::services::value_in_env(root, key).map_err(|e| e.to_string())?;
+        let value = env.value(key).map_err(|e| e.to_string())?;
         values.extend(value.map(|value| (key.clone(), value.trim().to_string())));
     }
     let urls: Vec<&(String, String)> = values.iter().filter(|(_, v)| v.contains("://")).collect();
@@ -440,15 +461,16 @@ fn target(
         .find_map(|(_, url)| crate::services::url_host(url))
     {
         Some(host) => host,
-        None => crate::services::sibling_value(root, keys.iter().map(String::as_str), &["_HOST"])
+        None => env
+            .sibling(keys.iter().map(String::as_str), HOST_SUFFIXES)
             .map_err(|e| e.to_string())?
             .map_or_else(|| "127.0.0.1".to_string(), |(_, host)| host),
     };
     let (mains, tells) = match namespace.kind {
-        NamespaceKind::Database => database_main(root, &keys, &urls)?
+        NamespaceKind::Database => database_main(env, &keys, &urls)?
             .ok_or("nothing in the main checkout's env files names its database")?,
         NamespaceKind::Slot => {
-            slot_main(root, &keys, &urls)?.ok_or("the app reads no slot setting")?
+            slot_main(env, &keys, &urls)?.ok_or("the app reads no slot setting")?
         }
     };
     Ok(Target {
@@ -484,7 +506,7 @@ type Mains = (Vec<String>, Vec<Tell>);
 /// another the other. A slot key whose value holds a reference nothing
 /// sets is the error that names it.
 fn slot_main(
-    root: &std::path::Path,
+    env: &EnvFiles,
     keys: &[String],
     urls: &[&(String, String)],
 ) -> std::result::Result<Option<Mains>, String> {
@@ -506,9 +528,9 @@ fn slot_main(
             tells.push(Tell::UrlPath(key.clone()));
         }
     }
-    if let Some((key, value)) =
-        crate::services::sibling_value(root, keys.iter().map(String::as_str), &["_DB"])
-            .map_err(|e| e.to_string())?
+    if let Some((key, value)) = env
+        .sibling(keys.iter().map(String::as_str), &["_DB"])
+        .map_err(|e| e.to_string())?
         && value.chars().all(|c| c.is_ascii_digit())
     {
         add_main(&mut mains, value);
@@ -536,7 +558,7 @@ fn add_main(mains: &mut Vec<String>, main: String) {
 /// `DATABASE_NAME` next to `DATABASE_PORT`. A name key whose value holds
 /// a reference nothing sets is the error that names it.
 fn database_main(
-    root: &std::path::Path,
+    env: &EnvFiles,
     keys: &[String],
     urls: &[&(String, String)],
 ) -> std::result::Result<Option<Mains>, String> {
@@ -557,9 +579,7 @@ fn database_main(
         };
         for suffix in ["_NAME", "_DATABASE", "_DB"] {
             let sibling = format!("{prefix}{suffix}");
-            let Some(value) =
-                crate::services::value_in_env(root, &sibling).map_err(|e| e.to_string())?
-            else {
+            let Some(value) = env.value(&sibling).map_err(|e| e.to_string())? else {
                 continue;
             };
             let value = value.trim();
@@ -666,7 +686,7 @@ pub(super) fn server_for<'a>(
 ) -> Result<namespace::Server<'a>> {
     let file = paths.config_file();
     let login = match namespace::find_login(
-        paths.root(),
+        &main_env(paths, config),
         config,
         &target.service,
         &target.keys,
@@ -1873,7 +1893,7 @@ pub(super) fn namespaced_env(
                 Tell::UrlPath(key) => {
                     let url = match env.get(key) {
                         Some(url) => Some(url.clone()),
-                        None => crate::services::value_in_env(paths.root(), key)?,
+                        None => main_env(paths, config).value(key)?,
                     };
                     let Some(rewritten) = url.and_then(|url| {
                         crate::services::with_url_path(url.trim(), &namespace.name)
@@ -2009,7 +2029,7 @@ pub(super) fn drop_namespaces(
         // a missing one is: the server says whether it needs one, and the
         // line a refusal gets says how to drop it by hand.
         let login = namespace::find_login(
-            paths.root(),
+            &main_env(paths, &config),
             &config,
             &ns.service,
             &keys,
