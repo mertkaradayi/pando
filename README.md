@@ -423,7 +423,7 @@ whatever it runs on. Its mode decides what happens to its data:
 | Mode | Its data lives in | Start it with |
 |---|---|---|
 | **shared** | the main checkout's database and cache, data and all. The default, and the way back from the other two | `start --shared`, or `S` |
-| **namespaced** *(experimental)* | the main checkout's servers, with a database and a Redis slot of the worktree's own in them: `shop__feat_x` beside `shop`, slot 3 beside slot 0 | `start --namespaced`, or the chooser on enter |
+| **namespaced** *(experimental)* | the main checkout's servers, with a database and a Redis slot of the worktree's own in them: `shop__feat_x` beside `shop` in Postgres or MariaDB, slot 3 beside slot 0 | `start --namespaced`, or the chooser on enter |
 | **isolated** | servers of its own on ports of its own: containers from your compose file, or native engines from a recipe | `start --isolated`, or `i` |
 
 A namespaced database is built by the branch's own schema step, never
@@ -436,20 +436,28 @@ another mode until `rm` drops them.
 <br>
 
 - It logs in as your app does, with the user and password beside the
-  address in the main checkout's `.env`. Where there are none it asks
+  address in the main checkout's `.env` — the root's, or the one in the
+  directory a process runs in, such as `backend/.env`. Where there are none it asks
   once, keeps the answer in pando's own config for the project (mode
   0600), and hands it to the database client in its environment, never
   on a command line.
 - That login has to be allowed to make databases named after the main
-  one, and only those. The first start that is not allowed stops with
-  nothing made and prints the grant to run once, as an administrator:
+  one. The first start that is not allowed stops with nothing made and
+  prints the statement to run once, as an administrator. On MariaDB and
+  MySQL it covers those names and nothing else:
 
   ```sql
   GRANT ALL ON `shop\_\_%`.* TO 'app'@'localhost';
   ```
 
+  Postgres cannot grant by name, so there it is `ALTER ROLE "app"
+  CREATEDB;`, and the role can drop only the databases it owns, which
+  are the ones it made. The official image's `POSTGRES_USER` needs
+  neither.
+- The database is made in main's character set or encoding and locale,
+  so a schema written for main runs into it the same way.
 - A Redis slot is given out only where the app reads a slot setting
-  (`REDIS_DB`, or the path of its URL), and only while the slot is empty:
+  (`REDIS_DB` beside its address, or the path of its URL), and only while the slot is empty:
   keys pando did not put there are somebody else's. When all fifteen are
   held, the start asks which stopped worktree gives its slot up.
 - `rm` drops only what pando's records say it made, on the server it made
@@ -457,8 +465,20 @@ another mode until `rm` drops them.
   says. `doctor` lists a database named for a worktree that no record
   holds, with the command that drops it, and never drops it itself.
 
-MariaDB and MySQL databases and Redis slots are what it makes today;
-every other service stays shared, and a namespaced start says so for each.
+- When the app names its database or slot under a key pando does not
+  guess — one `REDIS_DB` that three Redis roles share — name it in
+  `pando.toml`; it is no secret, so the committed file may carry it:
+
+  ```toml
+  [namespaced.redis]
+  db_env = ["REDIS_DB"]
+  ```
+
+Postgres, MariaDB and MySQL databases and Redis slots are what it makes
+today, in a native server or in a container, Postgres images with an
+extension built in (pgvector, PostGIS, TimescaleDB) included. Every other
+service stays shared, and a namespaced start says so for each. It needs
+only the engine's client on the host: `psql`, `mariadb` or `redis-cli`.
 What a namespace is on an engine is a recipe's `[namespace]` table, so
 another engine is a recipe rather than a release.
 
@@ -574,7 +594,7 @@ missing; pando never installs anything on your machine by itself.
 | Docker with Compose | `start --isolated`, when the project's services are in a compose file | Docker Desktop or OrbStack | Docker Engine and its compose plugin |
 | `redis-server`, `redis-cli` | a private Redis without Docker; `redis-cli` alone for `--namespaced` | `brew install redis` | `redis-server`, `redis-tools` |
 | `mariadbd`, `mariadb` | a private MariaDB without Docker; the `mariadb` client alone for `--namespaced` | `brew install mariadb` | `mariadb-server`, `mariadb-client` |
-| `postgres`, `psql` | a private Postgres without Docker | `brew install postgresql@16` | `postgresql` |
+| `postgres`, `psql` | a private Postgres without Docker; the `psql` client alone for `--namespaced` | `brew install postgresql@16`, or `brew install libpq` for `psql` alone (keg-only: put `$(brew --prefix libpq)/bin` on PATH) | `postgresql`, `postgresql-client` |
 | `mongod`, `mongosh` | a private MongoDB without Docker | `brew install mongodb/brew/mongodb-community` | [MongoDB's package](https://www.mongodb.com/docs/manual/administration/install-on-linux/) |
 
 The usual pair on a Mac, for sharing and pull requests:

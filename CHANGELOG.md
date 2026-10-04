@@ -7,6 +7,30 @@ may change behaviour.
 
 ## Unreleased
 
+### Added
+
+- Namespaced mode for Postgres ([#9]): `start --namespaced` gives a
+  worktree a database of its own in the main checkout's Postgres,
+  `shop__feat_x` beside `shop`, made in main's encoding and locale, built
+  by the branch's schema step and dropped by `rm`. A login that may not
+  make databases stops the start with nothing made and the `ALTER ROLE …
+  CREATEDB` to run once. Compose images that are Postgres or Redis under
+  another name — pgvector, PostGIS, TimescaleDB, Redis Stack — get
+  namespaces as the engine they are.
+- `[namespaced.<service>] db_env`: the keys that name the app's database
+  or slot when pando cannot find one beside the address — one `REDIS_DB`
+  shared by several Redis roles. No secret, so a committed `pando.toml`
+  may carry it; a login stays in pando's own file.
+
+### Fixed
+
+- Namespaced mode reads the env files where the processes run, not only
+  the root's: a project whose api keeps its database in `backend/.env`
+  was left shared with "no port". A `_SERVER` key beside the address is
+  its host, as FastAPI's template names it.
+- A missing database client is named with how to install the client
+  alone, since a server in Docker leaves the host with none.
+
 ## 0.8.0 — 2026-10-05
 
 ### Added
@@ -318,6 +342,7 @@ may change behaviour.
 [#4]: https://github.com/mertkaradayi/pando/issues/4
 [#5]: https://github.com/mertkaradayi/pando/issues/5
 [#7]: https://github.com/mertkaradayi/pando/issues/7
+[#9]: https://github.com/mertkaradayi/pando/issues/9
 
 ## 0.5.1 — 2026-09-28
 

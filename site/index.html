@@ -511,8 +511,8 @@ slots = 16</pre>
     <p class="rv">A namespaced start writes into a server that belongs to you, which pando's rule about your repository does not cover. So the mode has rules of its own:</p>
     <div class="grid-2">
       <ul class="dash rv">
-        <li>It logs in the way your app does, with the user and password in the main checkout's <code>.env</code>. If there are none, it asks once. The answer is kept in pando's own config, with file mode 0600, and passed to the database client in its environment, never on a command line.</li>
-        <li>That login must be allowed to create databases named after the main one, and only those. The first start that is not allowed stops with nothing made, and prints the grant to run once as an administrator.</li>
+        <li>It logs in the way your app does, with the user and password in the main checkout's <code>.env</code>, at the root or where a process runs, such as <code>backend/.env</code>. If there are none, it asks once. The answer is kept in pando's own config, with file mode 0600, and passed to the database client in its environment, never on a command line.</li>
+        <li>That login must be allowed to create databases named after the main one. The first start that is not allowed stops with nothing made, and prints the statement to run once as an administrator: a grant of those names and nothing else on MariaDB, <code>ALTER ROLE … CREATEDB</code> on Postgres, which cannot grant by name and lets a role drop only the databases it owns.</li>
         <li>A Redis slot is given only where the app reads a slot setting (<code>REDIS_DB</code>, or the path of its URL), and only if the slot is empty. Keys pando did not put there belong to someone else. Slot 0 and main's own slots are never given out.</li>
       </ul>
       <div class="rv">
@@ -530,7 +530,7 @@ nothing else. Nothing was made.</span></pre>
         </ul>
       </div>
     </div>
-    <p class="rv d">Today, namespaced mode makes MariaDB and MySQL databases and Redis slots. Every other service stays shared, and the start says so for each one. What a namespace is on an engine is the <code>[namespace]</code> table of its recipe, so another engine is a recipe rather than a release.</p>
+    <p class="rv d">Today, namespaced mode makes Postgres, MariaDB and MySQL databases and Redis slots, in a native server or a container, pgvector, PostGIS and TimescaleDB images included. Every other service stays shared, and the start says so for each one. What a namespace is on an engine is the <code>[namespace]</code> table of its recipe, so another engine is a recipe rather than a release.</p>
 
     <h3 class="rv" data-beat="stop and rm">What happens to the data</h3>
     <div class="tbl-scroll rv">
@@ -919,7 +919,7 @@ theme = <span class="s">"catppuccin"</span>
         <tbody>
           <tr><td class="w">worktrees</td><td><code>git</code></td></tr>
           <tr><td class="w">isolated services</td><td>Docker with compose, or the engine a recipe names (<code>postgres</code>, <code>mariadb</code>, <code>redis-server</code>…). pando prints the install command and never runs it.</td></tr>
-          <tr><td class="w">namespaced mode</td><td>a MariaDB/MySQL or Redis server your main checkout already uses, and its client (<code>mariadb</code>, <code>redis-cli</code>)</td></tr>
+          <tr><td class="w">namespaced mode</td><td>a Postgres, MariaDB/MySQL or Redis server your main checkout already uses, and its client (<code>psql</code>, <code>mariadb</code>, <code>redis-cli</code>)</td></tr>
           <tr><td class="w">sharing</td><td><code>cloudflared</code>. No account.</td></tr>
           <tr><td class="w">pull requests</td><td>the GitHub CLI, <code>gh</code>, signed in</td></tr>
         </tbody>
