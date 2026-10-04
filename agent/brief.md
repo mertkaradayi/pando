@@ -834,10 +834,12 @@ several Redis roles share), is fixed in config, not code:
 `[namespaced.<service>] db_env = ["REDIS_DB"]` in `pando.toml`. It is no
 secret, so the committed file may carry it.
 
-A namespaced start that stops with a `GRANT …` statement on stderr means
-the app's login may not make databases under that prefix. Report the
-statement; running it is the human's, as an administrator of their own
-server.
+A namespaced start that stops with a `GRANT …` or `ALTER ROLE …`
+statement on stderr means the app's login may not make the worktree's
+database. Report the statement; running it is the human's, as an
+administrator of their own server. A start that says `psql`, `mariadb` or
+`redis-cli` is not on PATH names what to install: report that too, since
+a server in Docker leaves the host with no client.
 
 `--yes` is not a way past exit 3. It takes the rules' own preferred option,
 which is a decision you are making on the developer's behalf with no

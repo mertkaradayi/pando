@@ -159,6 +159,12 @@ pub struct NamespaceRecipe {
     /// pattern — and `{account_user}`, `{account_host}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<String>,
+    /// What `grant` lets the login do, when it is more than make and drop
+    /// databases under the worktree's prefix: an engine that cannot grant
+    /// by prefix says so, rather than a refusal promising a wall the
+    /// server does not have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_covers: Option<String>,
 }
 
 impl NamespaceRecipe {
@@ -771,7 +777,7 @@ mod tests {
         }
         assert_eq!(
             namespaced,
-            vec!["mariadb", "redis"],
+            vec!["mariadb", "postgres", "redis"],
             "which engines can namespace changed"
         );
     }

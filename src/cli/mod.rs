@@ -214,8 +214,9 @@ Examples:
         /// Experimental: a namespace of its own in each of the project's
         /// own servers.
         ///
-        /// The main checkout's MariaDB and Redis, with a database and a slot
-        /// of this worktree's own in them, built by its own schema step: no
+        /// The main checkout's Postgres, MariaDB and Redis, with a database
+        /// and a slot of this worktree's own in them, built by its own schema
+        /// step: no
         /// server to start, and main's data untouched. Remembered like
         /// `--isolated`; `rm` drops what it made.
         #[arg(long, conflicts_with = "isolated")]

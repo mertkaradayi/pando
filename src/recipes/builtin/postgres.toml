@@ -53,3 +53,54 @@ create = '''
 psql -h 127.0.0.1 -p {port} -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_roles WHERE rolname = '{db_user}'" | grep -q 1 || psql -h 127.0.0.1 -p {port} -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE \"{db_user}\" LOGIN SUPERUSER"
 psql -h 127.0.0.1 -p {port} -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc "SELECT 1 FROM pg_database WHERE datname = '{db_name}'" | grep -q 1 || createdb -h 127.0.0.1 -p {port} -U postgres -O "{db_user}" "{db_name}"
 '''
+
+# Namespaced starts: a database of the worktree's own inside the main
+# checkout's Postgres — the developer's server, never one pando started.
+#
+# - **Every command is `psql -X -w`.** `-X` so the developer's `~/.psqlrc`
+#   cannot change what a command prints; `-w` so a server that wants a
+#   password nobody gave fails at once instead of waiting on a prompt.
+#   The password is read from PGPASSWORD, and `{user}` and `{host}`
+#   arrive shell-quoted. Each connects to the `postgres` maintenance
+#   database, which every cluster has.
+# - **`create` has no way to say `IF NOT EXISTS`**, and does not need
+#   one: a database already there makes it fail, and a start moves to
+#   another name rather than adopt it.
+# - **Names are quoted**, so `Shop__feat_x` is that and not `shop__feat_x`,
+#   and **63 bytes at most**: Postgres cuts a longer name without an
+#   error, and pando would record one the server does not have.
+# - **Postgres cannot grant by prefix.** The fix for a refused `create` is
+#   CREATEDB, which lets the login make any database; it can then drop
+#   only the ones it owns, which are the ones it made. Behind pando's own
+#   guard, that ownership is the server's wall. The image's own
+#   POSTGRES_USER is a superuser, and needs nothing.
+[namespace]
+kind = "database"
+binaries = ["psql"]
+install = "brew install libpq and put $(brew --prefix libpq)/bin on PATH, or your distribution's postgresql-client"
+user = true
+password_env = "PGPASSWORD"
+max_name = 63
+ping = "psql -X -w -h {host} -p {port} -U {user} -d postgres -tAc 'SELECT 1'"
+exists = "psql -X -w -h {host} -p {port} -U {user} -d postgres -tAc \"SELECT datname FROM pg_database WHERE datname = '{namespace}'\""
+list = "psql -X -w -h {host} -p {port} -U {user} -d postgres -tAc \"SELECT datname FROM pg_database WHERE datname LIKE '{prefix_like}'\""
+# Made in main's shape: its encoding, collation and character type, read
+# from pg_database, from template0 — the one template a CREATEDB login may
+# copy with another encoding. `\gexec` runs the statement the query
+# builds, and quotes the name as it does. Where main cannot be seen, the
+# server's default.
+create = '''
+psql -X -w -q -v ON_ERROR_STOP=1 -h {host} -p {port} -U {user} -d postgres <<'PANDO_SQL'
+SELECT format('CREATE DATABASE %I TEMPLATE template0 ENCODING %L LC_COLLATE %L LC_CTYPE %L', '{namespace}', pg_encoding_to_char(encoding), datcollate, datctype) FROM pg_database WHERE datname = '{main}'
+UNION ALL
+SELECT format('CREATE DATABASE %I', '{namespace}') WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '{main}')
+\gexec
+PANDO_SQL
+'''
+# `WITH (FORCE)` (Postgres 13 and later) ends a session still open on the
+# worktree's database — a shell left in it — which would otherwise keep
+# `rm` from dropping it.
+drop = "psql -X -w -v ON_ERROR_STOP=1 -h {host} -p {port} -U {user} -d postgres -c 'DROP DATABASE IF EXISTS \"{namespace}\" WITH (FORCE)'"
+denied = ["permission denied to create database", "must be owner of database", "permission denied to drop database"]
+grant = '''ALTER ROLE "{account_user}" CREATEDB;'''
+grant_covers = "make databases, and drop only the ones it made"

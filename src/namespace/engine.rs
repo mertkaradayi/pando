@@ -321,10 +321,16 @@ impl Server<'_> {
             self.address()
         );
         match (self.grant(main), self.recipe.kind) {
-            (Some(grant), NamespaceKind::Database) => format!(
-                "{head} — run this once as an administrator of that server:\n\n    {grant}\n\nIt \
-                 lets that login {scope} and nothing else. Nothing was {done}."
-            ),
+            (Some(grant), NamespaceKind::Database) => {
+                let covers = match &self.recipe.grant_covers {
+                    Some(covers) => covers.clone(),
+                    None => format!("{scope} and nothing else"),
+                };
+                format!(
+                    "{head} — run this once as an administrator of that server:\n\n    \
+                     {grant}\n\nIt lets that login {covers}. Nothing was {done}."
+                )
+            }
             (Some(grant), NamespaceKind::Slot) => format!(
                 "{head} — run this once as an administrator of that server:\n\n    {grant}\n\n\
                  Nothing was {done}."

@@ -3,8 +3,10 @@
 //! Namespaced mode writes into a server the developer owns, so what a fake
 //! client cannot honestly claim is pinned here, against throwaway servers
 //! this test starts itself: a MariaDB with its grant tables on, where a
-//! login really is refused until the printed grant is run, and a Redis
-//! with a password, where emptying one slot really leaves slot 0 alone.
+//! login really is refused until the printed grant is run, a Postgres
+//! with password authentication, where it is refused until the printed
+//! `ALTER ROLE` is, and a Redis with a password, where emptying one slot
+//! really leaves slot 0 alone.
 //!
 //! Everything is inside a temporary directory, on ports the kernel handed
 //! out, and stopped when the test ends — never the developer's own
@@ -656,4 +658,343 @@ fn a_real_namespaced_check_proves_the_schema_step_and_leaves_only_main() {
         "main never saw the schema step"
     );
     assert!(said.iter().all(|l| !l.contains("p@ss")), "{said:#?}");
+}
+
+// ---- Postgres -----------------------------------------------------------------
+
+const PG_ADMIN_PASSWORD: &str = "admin p@ss";
+
+/// A Postgres with password authentication on, holding the main
+/// checkout's database `shop` — LATIN1, where the server's default is
+/// UTF8 — owned by an app login that may not make databases, as the
+/// app's role on a developer's own server is.
+fn postgres() -> Throwaway {
+    let dir = TempDir::new().unwrap();
+    let data = dir.path().join("data");
+    let pwfile = dir.path().join("pw");
+    std::fs::write(&pwfile, PG_ADMIN_PASSWORD).unwrap();
+    let init = Command::new("initdb")
+        .arg("-D")
+        .arg(&data)
+        .args(["-U", "postgres", "--auth=scram-sha-256", "-E", "UTF8"])
+        .args(["--no-locale", "--pwfile"])
+        .arg(&pwfile)
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let port = free_port();
+    // `-k ''`: no Unix socket, so nothing but this TCP port reaches it.
+    let child = Command::new("postgres")
+        .arg("-D")
+        .arg(&data)
+        .args(["-p", &port.to_string(), "-k", ""])
+        .args(["-c", "listen_addresses=127.0.0.1"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let server = Throwaway { dir, port, child };
+    wait_for("postgres", || admin_sql(&server, "SELECT 1").is_ok());
+    admin_sql(
+        &server,
+        &format!(
+            "CREATE ROLE app LOGIN PASSWORD '{}'",
+            APP_PASSWORD.replace('\'', "''")
+        ),
+    )
+    .unwrap();
+    admin_sql(
+        &server,
+        "CREATE DATABASE shop OWNER app TEMPLATE template0 ENCODING 'LATIN1' \
+         LC_COLLATE 'C' LC_CTYPE 'C'",
+    )
+    .unwrap();
+    server
+}
+
+/// SQL as the cluster's superuser.
+fn admin_sql(server: &Throwaway, sql: &str) -> Result<String, String> {
+    admin_sql_in(server, "postgres", sql)
+}
+
+fn admin_sql_in(server: &Throwaway, database: &str, sql: &str) -> Result<String, String> {
+    let out = Command::new("psql")
+        .env("PGPASSWORD", PG_ADMIN_PASSWORD)
+        .args([
+            "-X",
+            "-w",
+            "-h",
+            "127.0.0.1",
+            "-p",
+            &server.port.to_string(),
+        ])
+        .args(["-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1"])
+        .args(["-tAc", sql])
+        .output()
+        .unwrap();
+    match out.status.success() {
+        true => Ok(String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        false => Err(String::from_utf8_lossy(&out.stderr).to_string()),
+    }
+}
+
+fn pg_server<'a>(recipe: &'a NamespaceRecipe, db: &Throwaway, bin: &Path) -> Server<'a> {
+    Server {
+        service: "postgres",
+        ..app_server(recipe, db, bin)
+    }
+}
+
+const PG_SHAPE: &str = "SELECT pg_encoding_to_char(encoding), datcollate, datctype \
+                        FROM pg_database WHERE datname = ";
+
+// Issue #9, at the engine: the app's role is refused until the printed
+// `ALTER ROLE … CREATEDB` is run, the database is then made in main's
+// encoding and locale, a name of 63 bytes is kept whole, and the drop
+// leaves main alone. Postgres cannot grant by prefix, so the refusal says
+// what CREATEDB covers, and ownership is the wall: a database the role did
+// not make is refused on the server's side too.
+#[test]
+fn a_real_postgres_makes_a_worktrees_database_once_the_printed_alter_role_is_run() {
+    if skip(&["initdb", "postgres", "psql"]) {
+        return;
+    }
+    let db = postgres();
+    let recipe = recipe("postgres");
+    let bin = db.dir.path().join("bin");
+    let server = pg_server(&recipe, &db, &bin);
+    server.ping().expect("the app login answers");
+
+    let refused = format!("{:#}", server.create("shop__feat_x", "shop").unwrap_err());
+    assert!(refused.contains("Nothing was made"), "{refused}");
+    assert!(
+        refused.contains("It lets that login make databases, and drop only the ones it made."),
+        "{refused}"
+    );
+    assert!(!refused.contains("p@ss"), "{refused}");
+    let grant = refused
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ALTER ROLE "))
+        .unwrap_or_else(|| panic!("no grant in: {refused}"))
+        .to_string();
+    assert_eq!(grant, "ALTER ROLE \"app\" CREATEDB;");
+    assert_eq!(
+        admin_sql(
+            &db,
+            r"SELECT datname FROM pg_database WHERE datname LIKE 'shop\_\_%'"
+        )
+        .unwrap(),
+        ""
+    );
+
+    admin_sql(&db, &grant).expect("the statement pando printed runs as written");
+    assert!(!server.exists("shop__feat_x").unwrap());
+    assert_eq!(
+        server.create("shop__feat_x", "shop").unwrap(),
+        Created::Made
+    );
+    assert!(server.exists("shop__feat_x").unwrap());
+    assert_eq!(
+        server.create("shop__feat_x", "shop").unwrap(),
+        Created::AlreadyThere
+    );
+    assert_eq!(
+        admin_sql(&db, &format!("{PG_SHAPE}'shop__feat_x'")).unwrap(),
+        "LATIN1|C|C",
+        "made in main's shape, not the server's UTF8"
+    );
+
+    // A main pando cannot see leaves the server's default.
+    assert_eq!(
+        server.create("shop__feat_y", "not_there").unwrap(),
+        Created::Made
+    );
+    assert_eq!(
+        admin_sql(&db, &format!("{PG_SHAPE}'shop__feat_y'")).unwrap(),
+        "UTF8|C|C"
+    );
+
+    // The longest name the recipe allows is the name the server keeps.
+    let longest = format!("shop__{}", "x".repeat(recipe.max_name() - "shop__".len()));
+    assert_eq!(longest.len(), 63);
+    assert_eq!(server.create(&longest, "shop").unwrap(), Created::Made);
+    assert!(server.exists(&longest).unwrap());
+    let mut listed = server.list("shop").unwrap();
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec!["shop__feat_x", "shop__feat_y", longest.as_str()]
+    );
+
+    // Ownership is the server's wall: one the role did not make stays.
+    admin_sql(&db, "CREATE DATABASE shop__theirs").unwrap();
+    let e = format!("{:#}", server.drop("shop__theirs", "shop").unwrap_err());
+    assert!(e.contains("does not let"), "{e}");
+    assert!(server.exists("shop__theirs").unwrap());
+
+    // A session the app left open on the worktree's database — a shell,
+    // a test runner — does not keep the drop from happening.
+    let mut session = Command::new("psql")
+        .env("PGPASSWORD", APP_PASSWORD)
+        .args(["-X", "-w", "-h", "127.0.0.1", "-p", &db.port.to_string()])
+        .args([
+            "-U",
+            "app",
+            "-d",
+            "shop__feat_x",
+            "-c",
+            "SELECT pg_sleep(60)",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_for("a session on shop__feat_x", || {
+        admin_sql(
+            &db,
+            "SELECT count(*) FROM pg_stat_activity WHERE datname = 'shop__feat_x'",
+        )
+        .is_ok_and(|n| n == "1")
+    });
+    server.drop("shop__feat_x", "shop").unwrap();
+    let _ = session.kill();
+    let _ = session.wait();
+    assert!(!server.exists("shop__feat_x").unwrap());
+    assert_eq!(
+        admin_sql(
+            &db,
+            "SELECT datname FROM pg_database WHERE datname = 'shop'"
+        )
+        .unwrap(),
+        "shop",
+        "the main database is where it was"
+    );
+
+    let mut wrong = pg_server(&recipe, &db, &bin);
+    wrong.login = Login::new(Some("app".into()), Some("nope".into()), "a wrong password");
+    let e = format!("{:#}", wrong.ping().unwrap_err());
+    assert!(
+        e.contains("password authentication failed") && e.contains("a wrong password"),
+        "{e}"
+    );
+}
+
+// Issue #9's project, end to end: no manifest at the root, the api in
+// `backend/` with its Postgres as split keys in `backend/.env` —
+// `POSTGRES_SERVER`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`,
+// `POSTGRES_DB`. A namespaced start makes the worktree's own database, the
+// schema step builds its table there and not in main, and `rm` drops it.
+#[test]
+fn a_real_namespaced_start_gives_a_backend_dir_its_own_postgres_database() {
+    if skip(&["initdb", "postgres", "psql"]) {
+        return;
+    }
+    let db = postgres();
+    admin_sql(&db, "ALTER ROLE app CREATEDB").unwrap();
+    admin_sql_in(
+        &db,
+        "shop",
+        "CREATE TABLE main_only (x int); ALTER TABLE main_only OWNER TO app",
+    )
+    .unwrap();
+
+    let dir = TempDir::new().unwrap();
+    let root = common::fixture_repo(dir.path());
+    std::fs::create_dir_all(root.join("backend")).unwrap();
+    std::fs::write(root.join("backend/app.py"), "# the api\n").unwrap();
+    common::git(&root, &["add", "backend/app.py"]);
+    common::git(&root, &["commit", "--quiet", "-m", "backend"]);
+    std::fs::write(
+        root.join("backend/.env"),
+        format!(
+            "POSTGRES_SERVER=127.0.0.1\nPOSTGRES_PORT={}\nPOSTGRES_USER=app\n\
+             POSTGRES_PASSWORD={APP_PASSWORD}\nPOSTGRES_DB=shop\n",
+            db.port
+        ),
+    )
+    .unwrap();
+    let paths = common::paths_for(&dir.path().join("pando-home"), &root);
+    std::fs::create_dir_all(paths.project_dir()).unwrap();
+    // The schema step reads the address and the password the way the app
+    // would, from the main checkout's `backend/.env`, and builds its table
+    // in whichever database POSTGRES_DB names.
+    let read = |key: &str| format!(r#"$(sed -n "s/^{key}=//p" "$PANDO_ROOT/backend/.env")"#);
+    std::fs::write(
+        paths.config_file(),
+        format!(
+            r#"[dev]
+cmd = '''{}'''
+cwd = "backend"
+ports = {{ PORT = "web" }}
+
+[[services]]
+kind = "native"
+name = "postgres"
+env = {{ POSTGRES_PORT = "postgres" }}
+
+[[hooks]]
+name = "schema"
+after = "services"
+cwd = "backend"
+cmd = '''PGPASSWORD="{}" psql -X -w -h 127.0.0.1 -p "{}" -U app -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c 'CREATE TABLE worktree_only (x int)' '''
+"#,
+            common::listener_on_port_env(),
+            read("POSTGRES_PASSWORD"),
+            read("POSTGRES_PORT"),
+        ),
+    )
+    .unwrap();
+    let config = pando::config::load(&paths).unwrap().config;
+    let _started = Started(paths.clone());
+
+    let name = pando::actions::new(&paths, &config, "feat/one", None, &|_| {}).unwrap();
+    let said = std::cell::RefCell::new(Vec::<String>::new());
+    pando::actions::start(
+        &paths,
+        &config,
+        &name,
+        None,
+        pando::actions::Mode::Namespaced,
+        &|line| said.borrow_mut().push(line.to_string()),
+    )
+    .unwrap_or_else(|e| panic!("start namespaced: {e:#}\n{:#?}", said.borrow()));
+    let said = said.into_inner();
+    assert!(
+        said.iter()
+            .any(|l| l == "postgres: own database shop__feat_one, made just now"),
+        "{said:#?}"
+    );
+    assert!(said.iter().all(|l| !l.contains("p@ss")), "{said:#?}");
+    let tables = "SELECT tablename FROM pg_tables WHERE schemaname = 'public'";
+    assert_eq!(
+        admin_sql_in(&db, "shop__feat_one", tables).unwrap(),
+        "worktree_only"
+    );
+    assert_eq!(
+        admin_sql(&db, &format!("{PG_SHAPE}'shop__feat_one'")).unwrap(),
+        "LATIN1|C|C"
+    );
+    let store = pando::state::load(&paths.state_file()).unwrap();
+    assert_eq!(store.worktrees[&name].namespaces[0].name, "shop__feat_one");
+
+    pando::actions::rm(&paths, &name, true, true, &|_| {}).unwrap();
+    assert_eq!(
+        admin_sql(
+            &db,
+            "SELECT datname FROM pg_database WHERE datname LIKE 'shop%'"
+        )
+        .unwrap(),
+        "shop",
+        "the worktree's database is gone, and main's is there"
+    );
+    assert_eq!(
+        admin_sql_in(&db, "shop", tables).unwrap(),
+        "main_only",
+        "main never saw the schema step"
+    );
 }
