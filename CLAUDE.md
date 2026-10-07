@@ -261,9 +261,12 @@ kernel's id alone so 0.9.0 still reads it), because a WSL 2 distro,
 like a container, restarts under a kernel that keeps running. The
 integration tests take the Windows half out of their PATH under WSL.
 Proved on fixtures under WSL 2 by the contributor; nobody has run a real
-project there. A native Windows port has no plan file yet: write one in
-`plans/` before starting it, beginning at the backends that say "not
-yet".
+project there. The next day, 2026-10-08, 0.10.0 was built and tagged
+with both and the post-merge review's fixes (`pando open` also asks for
+`/mnt/c`'s `rundll32.exe`; the Docker-down fix under WSL names the
+distro's own service). A native Windows port has no plan file yet:
+write one in `plans/` before starting it, beginning at the backends that
+say "not yet".
 
 What is left is not a phase. `plans/open-follow-ups.md` carries the known
 edges, each with who found it and where it belongs, and the rest of the
