@@ -25,7 +25,8 @@ may change behaviour.
     (`/mnt/c`). git is several times slower there, and an edit sends no
     file event, so dev servers do not reload.
   - When the Docker daemon does not answer, the fix names Docker
-    Desktop's WSL integration.
+    Desktop's WSL integration, and the distro's own docker service for
+    Docker installed inside it.
   - The TUI's copy keys fall back to `clip.exe` for a terminal that
     ignores OSC 52, for ASCII text, which `clip.exe` cannot mangle.
 

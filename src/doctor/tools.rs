@@ -272,12 +272,14 @@ fn daemon_check(
         // Under WSL, Docker Desktop's daemon runs on Windows and answers
         // in a distro only once its WSL integration is on for it: until
         // then the distro's own `docker` reaches for a socket nobody
-        // serves, with Docker Desktop up the whole time.
+        // serves, with Docker Desktop up the whole time. Docker installed
+        // in the distro itself is a service of the distro's.
         let start = match machine.host.wsl {
             Some(_) => {
-                "start Docker Desktop with its WSL integration on for this distro (Settings → \
-                 Resources → WSL integration), since a daemon on Windows answers in WSL only \
-                 through it"
+                "start Docker: Docker Desktop with its WSL integration on for this distro \
+                 (Settings → Resources → WSL integration), since a daemon on Windows answers in \
+                 WSL only through it, or, for Docker installed inside the distro, its service \
+                 (`sudo service docker start`)"
             }
             None => "start Docker",
         };

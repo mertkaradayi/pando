@@ -4461,8 +4461,12 @@ fn under_wsl_a_docker_daemon_that_does_not_answer_names_the_wsl_integration() {
         .unwrap_or_else(|| panic!("{:?}", messages(&down)));
     let fix = problem.fix.as_deref().unwrap();
     assert!(
-        fix.starts_with("start Docker Desktop with its WSL integration on"),
+        fix.starts_with("start Docker: Docker Desktop with its WSL integration on"),
         "{fix}"
+    );
+    assert!(
+        fix.contains("sudo service docker start"),
+        "Docker installed inside the distro is started there: {fix}"
     );
     assert!(
         fix.contains("prefer = \"native\""),
