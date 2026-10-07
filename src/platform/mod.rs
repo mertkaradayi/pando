@@ -16,8 +16,10 @@
 //! alone until a native port, so a parser a Windows backend asks for sits
 //! in the facade, where they run too (`files::as_seen_from`).
 //!
-//! What the OS is, is [`Host`]: a value handed down from where pando meets
-//! the outside, so a test can choose it.
+//! What the OS is, and what pando finds at run time, is [`Host`]: a value
+//! handed down from where pando meets the outside, read once for this
+//! machine or from files under a root a test chooses. Whether a Linux is
+//! Windows' own, [`Wsl`], is one of those findings.
 
 pub mod boot;
 pub mod cow;
@@ -29,8 +31,10 @@ pub mod process;
 pub mod shell;
 pub mod signals;
 pub mod terminal;
+pub mod wsl;
 
 pub use host::{Host, Os};
+pub use wsl::Wsl;
 
 /// What pando does first, before any thread starts: reads the umask, which
 /// means setting it process-wide for a moment, and makes a fork safe on a

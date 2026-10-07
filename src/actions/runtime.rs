@@ -32,6 +32,9 @@ pub struct Machine<'a> {
     /// shell's: where the binary they get by hand is, learnt without
     /// reading their profile. Empty in a test.
     pub path: Vec<PathBuf>,
+    /// The OS, and what pando found at run time: read once, so a section
+    /// of doctor that asks never reads the machine again.
+    pub host: crate::platform::Host,
 }
 
 impl<'a> Machine<'a> {
@@ -50,6 +53,7 @@ impl<'a> Machine<'a> {
                 home: empty.clone(),
                 system: empty,
                 path: Vec::new(),
+                host: crate::platform::Host::here().clone(),
             }
         }
         #[cfg(not(test))]
@@ -60,6 +64,7 @@ impl<'a> Machine<'a> {
             path: std::env::var_os("PATH")
                 .map(|path| std::env::split_paths(&path).collect())
                 .unwrap_or_default(),
+            host: crate::platform::Host::here().clone(),
         }
     }
 
@@ -69,6 +74,7 @@ impl<'a> Machine<'a> {
     pub fn at(shell: crate::runtime::Shell<'a>, home: PathBuf) -> Machine<'a> {
         Machine {
             shell,
+            host: crate::platform::Host::at(&home),
             system: home.clone(),
             home,
             path: Vec::new(),

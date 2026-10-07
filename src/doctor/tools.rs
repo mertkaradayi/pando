@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::path::Path;
 
 use crate::actions::{self, Machine};
 use crate::catalog::{package_managers, tools};
@@ -89,6 +90,7 @@ pub(super) fn tools_report(
         None => {}
     }
     let mut out = Vec::new();
+    let mut windows_programs: Vec<String> = Vec::new();
     for (index, probe) in probes.iter().enumerate() {
         let entry = found.get(&index);
         let present = entry.is_some_and(|f| f.path.is_some());
@@ -129,6 +131,15 @@ pub(super) fn tools_report(
                 fix: Some(fix),
             });
         }
+        // Once per program: `docker compose` is docker found again.
+        if let Some(wsl) = &machine.host.wsl
+            && let Some(path) = entry.and_then(|f| f.path.as_deref())
+            && let Some(drive) = wsl.drive_of(Path::new(path))
+            && !windows_programs.contains(&probe.program)
+        {
+            windows_programs.push(probe.program.clone());
+            findings.push(windows_side(probe, path, drive));
+        }
         out.push(ToolReport {
             name: probe.name.clone(),
             path: entry.and_then(|f| f.path.clone()),
@@ -146,6 +157,42 @@ pub(super) fn tools_report(
         daemon_check(paths, config, machine, &mut out, findings);
     }
     out
+}
+
+/// A tool found on a Windows drive under WSL, which appends Windows' PATH
+/// to its own: with no Linux copy installed, the shell finds Windows'.
+/// That is a shell script Windows' installers leave for Git Bash — Node's
+/// `npm`, nvm-windows' `pnpm` — which runs Windows' files from Linux and,
+/// with no Linux node, ends in `node: not found`; or Docker Desktop's
+/// `docker`, which only says to turn on its WSL integration. It is as good
+/// as missing, so it is as serious as missing would be.
+fn windows_side(probe: &ToolProbe, path: &str, drive: &Path) -> Finding {
+    let name = &probe.name;
+    let install = match (name.as_str(), tools::how_to_get(name)) {
+        ("docker", _) => "turn on Docker Desktop's WSL integration for this distro (Settings → \
+                          Resources → WSL integration), which puts its Linux docker first"
+            .to_string(),
+        (_, Some(get)) => {
+            format!("install {name} inside WSL ({get}), so the Linux one comes first")
+        }
+        (_, None) => format!("install {name} inside WSL, so the Linux one comes first"),
+    };
+    Finding {
+        section: Section::Tools,
+        severity: probe
+            .missing
+            .as_ref()
+            .map_or(Severity::Note, |(severity, _)| *severity),
+        message: format!(
+            "{name} is Windows' copy, on the drive at {} ({path}): WSL appends Windows' PATH to \
+             its own, and no Linux {name} comes before it",
+            drive.display()
+        ),
+        fix: Some(format!(
+            "{install}; or keep Windows' PATH out of WSL with `appendWindowsPath = false` under \
+             `[interop]` in /etc/wsl.conf, then `wsl --shutdown` from Windows"
+        )),
+    }
 }
 
 /// The assignment that gives a script the PATH pando itself was started
@@ -220,6 +267,18 @@ fn daemon_check(
         None => state.to_string(),
     });
     if let Daemon::Down(reason) = answer {
+        // Under WSL, Docker Desktop's daemon runs on Windows and answers
+        // in a distro only once its WSL integration is on for it: until
+        // then the distro's own `docker` reaches for a socket nobody
+        // serves, with Docker Desktop up the whole time.
+        let start = match machine.host.wsl {
+            Some(_) => {
+                "start Docker Desktop with its WSL integration on for this distro (Settings → \
+                 Resources → WSL integration), since a daemon on Windows answers in WSL only \
+                 through it"
+            }
+            None => "start Docker",
+        };
         findings.push(Finding::problem(
             Section::Tools,
             format!(
@@ -229,7 +288,7 @@ fn daemon_check(
             // `prefer` alone changes nothing here: it only settles the
             // services question, and the compose entries have answered it.
             format!(
-                "start Docker; or run the services without it: remove the `[[services]] kind = \
+                "{start}; or run the services without it: remove the `[[services]] kind = \
                  \"compose\"` entries from {} and set `[isolation] prefer = \"native\"` in {}, \
                  so the next `start --isolated` settles them again on pando's recipes where it \
                  has them; or {}",

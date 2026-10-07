@@ -958,7 +958,7 @@ theme = <span class="s">"catppuccin"</span>
       <details><summary>Logged in on one worktree, logged in on all of them?</summary>
         <p>Browsers keep cookies per host, not per port, so every <code>http://localhost:&lt;port&gt;</code> shares them. That is how the web works, and pando does not change it. When two branches' sessions get in each other's way, use a private window for one of them.</p></details>
       <details><summary>Linux? Windows?</summary>
-        <p>macOS is where pando is developed. On Linux, CI runs the whole test suite for every change and it must pass, but nobody has used pando there for real work yet. It does not run natively on Windows yet: a Windows build compiles, but starting and stopping processes is written for Unix only so far, and the build says so when run.</p></details>
+        <p>macOS is where pando is developed. On Linux, CI runs the whole test suite for every change and it must pass, but nobody has used pando there for real work yet. On Windows, run it inside WSL 2: the Linux binary works there, a worktree's <code>localhost</code> URL works from Windows, and <code>pando open</code> opens Windows' browser. Keep the repository under <code>~</code> in WSL rather than on <code>/mnt/c</code>, where git is several times slower and dev servers never hear of an edit. A native Windows build compiles, but runs nothing yet: starting and stopping processes is written for Unix only so far.</p></details>
       <details><summary>Does pando use AI, or phone home?</summary>
         <p>No and no. Detection is rules and data tables, and the runtime never calls a model. The agent in the first run is your own coding agent, which pando never launches: the setup screen only copies a prompt for you to paste. There is no telemetry in the code. pando itself connects only to this machine: <code>pando check</code> asks your app for <code>/</code> on localhost, and the share proxy forwards to it. What reaches the network are the programs it runs: <code>git</code>, <code>gh</code>, <code>cloudflared</code>, <code>docker</code>, your install and hook commands, and in namespaced mode the database clients.</p></details>
     </div>
@@ -1021,7 +1021,7 @@ theme = <span class="s">"catppuccin"</span>
         <h4>What there is not, yet</h4>
         <ul class="no">
           <li>No crate on crates.io yet (the binaries, the install script and the Homebrew tap are here)</li>
-          <li>Nobody has used pando on Linux for real work yet: the suite that passes there runs on fixtures. Windows is not a target</li>
+          <li>Nobody has used pando on Linux for real work yet: the suite that passes there runs on fixtures. On Windows it runs inside WSL 2, not natively</li>
           <li>pando has met only a handful of real projects: the monorepo it was built for, where it is now used daily, and the apps of the people who opened its first issues. Each found something no fixture had, all fixed since</li>
           <li>Namespaced mode is experimental</li>
         </ul>

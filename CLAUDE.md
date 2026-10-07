@@ -237,6 +237,25 @@ behind a stand-in `docker`; no real container has been used, and the
 prefix engines have no real-server test. `docs/02-principles.md` says
 what holds the grant pando now runs.
 
+On 2026-10-01 pando was tried on Windows: natively it did not build,
+and under WSL 2 the Linux binary worked with rough edges. On 2026-10-05
+everything pando asks of the OS moved behind one layer, `src/platform`
+(the branch `platform-layer`), with a Windows backend for each concern
+that compiles, CI's `windows` job holding it to that, and refuses to
+run: most of it says "not yet". On top of it, the branch `wsl2-support`
+(#10) made WSL 2 work. `Host.wsl` says pando is there, from the kernel
+release, and which directories are Windows' drives, from
+`/proc/mounts`, read under a root a test chooses. WSL is a desktop row
+of its own: `pando open` opens Windows' browser, and the TUI copies
+through `clip.exe`. doctor reports a tool found on a Windows drive, a
+repository or worktrees directory on one, and Docker Desktop's WSL
+integration. The recorded boot includes init's start time, because a
+WSL 2 distro, like a container, restarts under a kernel that keeps
+running. The integration tests take the Windows half out of their PATH
+under WSL. Proved on fixtures under WSL 2 only; a native port is the
+next thing to plan, in `plans/windows-support.md`, and starts at the
+backends that say "not yet".
+
 What is left is not a phase. `plans/open-follow-ups.md` carries the known
 edges, each with who found it and where it belongs, and the rest of the
 launch checklist in `docs/08-roadmap.md` is open: no published crate on
@@ -306,8 +325,9 @@ add each kind of thing. Keep to its shape:
   contract over a backend per OS. Nothing else names `nix`, `libc`,
   `std::os` or an OS `cfg`, reads `HOME`, or starts `sh` or `bash` by
   name, and `platform/tests.rs` fails if anything does. A decision that
-  depends on the OS takes a `platform::Host`, read once where pando meets
-  the outside, so a test can choose it.
+  depends on the OS, or on whether this Linux is WSL, takes a
+  `platform::Host`, read once where pando meets the outside, so a test
+  can choose it.
 
 ## Releases
 
@@ -395,6 +415,9 @@ database, a prod schema dump, and cookie auth."
   pando `bin` (`common::fake_pnpm`, `common::fake_node`, beside the fake
   docker and cloudflared). A test that passes only with a real tool, or
   only because a shell is slow, is not done.
+- On a Windows machine every gate runs inside WSL 2, with the target
+  directory in WSL's own filesystem and never under `/tmp`, which an
+  idle distro's restart empties.
 - Never run two `cargo test`s at once. Two tests are load-sensitive
   (`plans/open-follow-ups.md`); under a parallel build they fail for
   reasons that have nothing to do with the change. Rerun a readiness or

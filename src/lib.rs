@@ -32,6 +32,7 @@
 //! | a program pando runs itself, and how to get it | a row in [`catalog::tools::TOOLS`] |
 //! | anything pando asks of the operating system | a function in its concern under `platform/`, a facade over a backend per OS; nothing outside `platform` names an OS, `nix`, `libc` or `std::os`, which `platform/tests.rs` holds |
 //! | what a desktop opens a URL or copies with, or calls dark mode | a field in [`platform::desktop::DESKTOPS`] |
+//! | a fact about the machine read at run time | a field of [`platform::Host`], read in `Host::at` |
 //! | a language or version manager | `runtime/languages.rs` |
 //! | a native service (postgres, redis…) | a TOML file in `recipes/builtin/`, and a row in [`recipes::BUILT_IN`] |
 //! | an engine namespaced mode should know, that pando never starts | a TOML file in `recipes/builtin/` with a `[namespace]` or `[prefix]` and no `[service]`, a row in [`recipes::BUILT_IN`], and its images' `engine` in [`catalog::images::IMAGES`] |

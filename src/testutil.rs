@@ -393,3 +393,22 @@ pub fn wait_until(timeout: std::time::Duration, ready: impl Fn() -> bool) -> boo
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
 }
+
+/// Makes `system` look like WSL's: its kernel release and its mount table
+/// under `proc/`, where [`crate::platform::Host::at`] reads them.
+pub fn wsl_system(system: &Path, release: &str, mounts: &str) {
+    let kernel = system.join("proc/sys/kernel");
+    std::fs::create_dir_all(&kernel).unwrap();
+    std::fs::write(kernel.join("osrelease"), release).unwrap();
+    std::fs::write(system.join("proc/mounts"), mounts).unwrap();
+}
+
+/// A WSL 2 mount table with drive C at `/mnt/c`, as Ubuntu reads it.
+pub const WSL_MOUNTS: &str = "\
+drivers /usr/lib/wsl/drivers 9p ro,nosuid,nodev,noatime,aname=drivers;fmask=222;dmask=222,cache=0x5,access=client,msize=65536,trans=fd,rfd=8,wfd=8 0 0
+/dev/sdc / ext4 rw,relatime,discard,errors=remount-ro,data=ordered 0 0
+C:\\134 /mnt/c 9p rw,noatime,aname=drvfs;path=C:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=6,wfd=6 0 0
+";
+
+/// The kernel release WSL 2 reports.
+pub const WSL_RELEASE: &str = "6.18.40.1-microsoft-standard-WSL2\n";

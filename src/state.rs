@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::platform::boot::Boot;
 use crate::platform::process::Group;
 
 pub const STATE_VERSION: u32 = 2;
@@ -504,20 +505,32 @@ pub fn load(path: &Path) -> Result<State> {
             path.display(),
         );
     }
-    let OnDisk { mut state, boot } = serde_json::from_str(&text)
+    let OnDisk {
+        mut state,
+        boot,
+        boot_pids_since,
+    } = serde_json::from_str(&text)
         .with_context(|| format!("parse state file {}", path.display()))?;
-    forget_previous_boot(&mut state, boot.as_deref(), crate::platform::boot::id());
+    let written = boot.as_deref().map(|id| Boot {
+        id,
+        pids_since: boot_pids_since,
+    });
+    forget_previous_boot(&mut state, written, crate::platform::boot::now());
     Ok(state)
 }
 
 /// The state file as it is written: the state, and the boot it was
-/// written during.
+/// written during, in two fields: `boot` is compared whole by every pando
+/// before `boot_pids_since` was recorded, so it stays the system's id
+/// alone.
 #[derive(Deserialize)]
 struct OnDisk {
     #[serde(flatten)]
     state: State,
     #[serde(default)]
     boot: Option<String>,
+    #[serde(default)]
+    boot_pids_since: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -526,6 +539,8 @@ struct Saving<'a> {
     state: &'a State,
     #[serde(skip_serializing_if = "Option::is_none")]
     boot: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boot_pids_since: Option<u64>,
 }
 
 /// Forgets every pid a state file recorded during an earlier boot.
@@ -543,7 +558,7 @@ struct Saving<'a> {
 ///
 /// A file with no boot recorded, or a system that cannot say, keeps them:
 /// not knowing is not evidence of a restart.
-fn forget_previous_boot(state: &mut State, written: Option<&str>, now: Option<&str>) {
+fn forget_previous_boot(state: &mut State, written: Option<Boot<'_>>, now: Option<Boot<'_>>) {
     let (Some(written), Some(now)) = (written, now) else {
         return;
     };
@@ -567,9 +582,11 @@ pub fn save(path: &Path, state: &State) -> Result<()> {
         std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let tmp = path.with_extension("json.tmp");
+    let now = crate::platform::boot::now();
     let json = serde_json::to_string_pretty(&Saving {
         state,
-        boot: crate::platform::boot::id(),
+        boot: now.map(|boot| boot.id),
+        boot_pids_since: now.and_then(|boot| boot.pids_since),
     })
     .context("serialize state")?;
     std::fs::write(&tmp, json).with_context(|| format!("write tmp state {}", tmp.display()))?;
@@ -1574,7 +1591,7 @@ mod tests {
     // process group and `start` calls a dead dev server "already running".
     #[test]
     fn a_state_file_from_an_earlier_boot_keeps_what_outlives_a_restart_and_no_pid() {
-        let Some(now) = crate::platform::boot::id() else {
+        let Some(now) = crate::platform::boot::now().map(|boot| boot.id) else {
             return; // A system that cannot say which boot this is.
         };
         let dir = tempdir().unwrap();
@@ -1625,6 +1642,64 @@ mod tests {
         unmarked.as_object_mut().unwrap().remove("boot");
         std::fs::write(&path, unmarked.to_string()).unwrap();
         assert_eq!(load(&path).unwrap(), state);
+    }
+
+    // A WSL 2 distro restarts on a kernel that keeps running, and so does
+    // a container: the kernel's boot id is the same, and every pid is
+    // handed out again from the bottom. Measured on WSL 2: the boot id
+    // read the same before and after the distro was stopped and started.
+    #[test]
+    fn a_restart_under_a_kernel_that_kept_running_forgets_every_pid() {
+        let boot = |pids_since| {
+            Some(Boot {
+                id: "kernel-a",
+                pids_since,
+            })
+        };
+        let mut state = full_state();
+        forget_previous_boot(&mut state, boot(Some(100)), boot(Some(250)));
+        let rec = &state.worktrees["feat+x"];
+        assert!(rec.processes.is_empty(), "{:?}", rec.processes);
+        assert!(rec.share.is_none());
+        assert!(
+            rec.services
+                .iter()
+                .all(|s| s.pid.is_none() && s.pgid.is_none())
+        );
+        assert_eq!(rec.ports, full_state().worktrees["feat+x"].ports);
+
+        let mut same = full_state();
+        forget_previous_boot(&mut same, boot(Some(100)), boot(Some(100)));
+        assert_eq!(same, full_state(), "the same init: the same boot");
+
+        let mut upgraded = full_state();
+        forget_previous_boot(&mut upgraded, boot(None), boot(Some(250)));
+        assert_eq!(
+            upgraded,
+            full_state(),
+            "worktrees running when pando is upgraded are not forgotten"
+        );
+    }
+
+    // Every pando before `boot_pids_since` compares `boot` whole. Folded
+    // into it as `<id>:<ticks>`, a worktree started by this pando read as
+    // stopped to 0.9.0, whose `stop` then left its listeners running.
+    #[test]
+    fn the_boot_an_older_pando_compares_is_the_systems_id_alone() {
+        let Some(now) = crate::platform::boot::now() else {
+            return; // A system that cannot say which boot this is.
+        };
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        save(&path, &full_state()).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(json["boot"], now.id);
+        assert_eq!(
+            json.get("boot_pids_since")
+                .and_then(serde_json::Value::as_u64),
+            now.pids_since
+        );
     }
 
     #[test]

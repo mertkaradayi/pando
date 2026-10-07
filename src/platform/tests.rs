@@ -7,7 +7,12 @@ use super::*;
 
 /// Where [`Host::here`] may be read: where pando meets the outside. Every
 /// module below them is handed a `&Host`.
-const HOST_EDGES: &[&str] = &["tui/app/launch.rs", "cli/open.rs", "theme/select.rs"];
+const HOST_EDGES: &[&str] = &[
+    "actions/runtime.rs",
+    "tui/app/launch.rs",
+    "cli/open.rs",
+    "theme/select.rs",
+];
 
 fn src() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
@@ -307,17 +312,164 @@ fn only_a_native_windows_build_refuses_to_run() {
     assert_eq!(unsupported().is_some(), Os::HERE == Os::Windows);
 }
 
+#[test]
+fn no_test_sees_the_machine_it_runs_on() {
+    assert_eq!(Host::here(), &Host::default());
+    assert_eq!(Host::here().os, Os::HERE);
+    assert_eq!(Host::here().wsl, None, "not even a test run in WSL");
+}
+
+// ---- wsl -------------------------------------------------------------
+
+fn wsl_at(release: &str, mounts: &str) -> Option<Wsl> {
+    let system = tempfile::tempdir().unwrap();
+    crate::testutil::wsl_system(system.path(), release, mounts);
+    Wsl::at(system.path())
+}
+
+fn drive(wsl: &Wsl, path: &str) -> Option<PathBuf> {
+    wsl.drive_of(Path::new(path)).map(Path::to_path_buf)
+}
+
+#[test]
+fn wsl_is_read_from_the_kernel_release_and_its_drives_from_the_mounts() {
+    use crate::testutil::{WSL_MOUNTS, WSL_RELEASE};
+    let second = "D:\\134 /mnt/d 9p rw,noatime,aname=drvfs;path=D:\\;uid=1000 0 0\n";
+    let wsl2 = wsl_at(WSL_RELEASE, &format!("{WSL_MOUNTS}{second}")).expect("a WSL 2 kernel");
+    assert_eq!(drive(&wsl2, "/mnt/c/app"), Some(PathBuf::from("/mnt/c")));
+    assert_eq!(drive(&wsl2, "/mnt/d/app"), Some(PathBuf::from("/mnt/d")));
+    assert_eq!(
+        drive(&wsl2, "/usr/lib/wsl/drivers/x"),
+        None,
+        "the drivers mount is 9p but not a drive"
+    );
+    assert!(wsl_at("4.4.0-19041-Microsoft", "").is_some(), "WSL 1");
+    assert_eq!(wsl_at("6.8.0-45-generic", WSL_MOUNTS), None);
+    let nothing = tempfile::tempdir().unwrap();
+    assert_eq!(Wsl::at(nothing.path()), None, "macOS has no /proc");
+}
+
+#[test]
+fn a_host_read_under_a_root_carries_the_wsl_found_there() {
+    let system = tempfile::tempdir().unwrap();
+    assert_eq!(Host::at(system.path()), Host::default());
+    let wsl = crate::testutil::WSL_RELEASE;
+    crate::testutil::wsl_system(system.path(), wsl, crate::testutil::WSL_MOUNTS);
+    let host = Host::at(system.path());
+    assert_eq!(host.os, Os::HERE);
+    assert!(host.wsl.is_some());
+}
+
+#[test]
+fn a_path_is_on_the_drive_whose_mount_it_is_under() {
+    let mounts = "C:\\134 /mnt/c 9p aname=drvfs 0 0\nD:\\134 /mnt/c/Data 9p aname=drvfs 0 0\n";
+    let wsl = wsl_at(crate::testutil::WSL_RELEASE, mounts).unwrap();
+    assert_eq!(drive(&wsl, "/mnt/c/Users/me/app"), Some("/mnt/c".into()));
+    assert_eq!(
+        drive(&wsl, "/mnt/c/Data/app"),
+        Some("/mnt/c/Data".into()),
+        "the deepest mount"
+    );
+    assert_eq!(
+        drive(&wsl, "/mnt/cache/app"),
+        None,
+        "a prefix of the name is not the mount"
+    );
+    assert_eq!(drive(&wsl, "/home/me/app"), None);
+}
+
+#[test]
+fn wsl_1_mounts_drvfs_itself_and_a_mount_point_may_be_escaped() {
+    let mounts = "C: /mnt/c drvfs rw,noatime 0 0\n\
+                  E: /mnt/my\\040drive drvfs rw 0 0\n\
+                  F: /mnt/a\\134b\\011c drvfs rw 0 0\n\
+                  G: /mnt/trailing\\04 drvfs rw 0 0\n";
+    let wsl = wsl_at("4.4.0-19041-Microsoft", mounts).unwrap();
+    assert_eq!(drive(&wsl, "/mnt/c/x"), Some("/mnt/c".into()));
+    assert_eq!(drive(&wsl, "/mnt/my drive/x"), Some("/mnt/my drive".into()));
+    assert_eq!(drive(&wsl, "/mnt/a\\b\tc/x"), Some("/mnt/a\\b\tc".into()));
+    assert_eq!(
+        drive(&wsl, "/mnt/trailing\\04/x"),
+        Some("/mnt/trailing\\04".into()),
+        "too short to be an escape"
+    );
+}
+
 // ---- boot ------------------------------------------------------------
 
 #[test]
 fn this_boot_has_an_id_that_stays_the_same_and_matches_itself() {
-    let Some(now) = boot::id() else {
+    let Some(now) = boot::now() else {
         return; // A sandbox with no /proc or sysctl cannot say.
     };
-    assert!(!now.is_empty());
-    assert_eq!(boot::id(), Some(now), "read once");
+    assert!(!now.id.is_empty());
+    assert_eq!(boot::now(), Some(now), "read once");
     assert!(boot::same(now, now));
-    assert!(!boot::same("an-earlier-boot", now));
+    let earlier = boot::Boot {
+        id: "an-earlier-boot",
+        ..now
+    };
+    assert!(!boot::same(earlier, now));
+}
+
+#[test]
+fn a_boot_that_does_not_say_when_its_pids_began_is_judged_on_its_id_alone() {
+    let boot = |id, pids_since| boot::Boot { id, pids_since };
+    assert!(
+        !boot::same(boot("kernel-a", Some(100)), boot("kernel-a", Some(250))),
+        "init restarted"
+    );
+    assert!(boot::same(
+        boot("kernel-a", Some(100)),
+        boot("kernel-a", Some(100))
+    ));
+    assert!(
+        boot::same(boot("kernel-a", None), boot("kernel-a", Some(250))),
+        "written before init's start time was recorded"
+    );
+    assert!(
+        boot::same(boot("kernel-a", Some(100)), boot("kernel-a", None)),
+        "a machine where /proc/1 cannot be read now"
+    );
+    assert!(!boot::same(
+        boot("kernel-a", None),
+        boot("kernel-b", Some(250))
+    ));
+    assert!(!boot::same(
+        boot("kernel-a", Some(100)),
+        boot("kernel-b", Some(100))
+    ));
+    assert!(boot::same(boot("kernel-a", None), boot("kernel-a", None)));
+}
+
+#[test]
+fn inits_start_time_is_field_22_counted_after_the_command_name() {
+    let stat = "1 (sys temd) x) S 0 1 1 0 -1 4194560 100 200 3 4 5 6 7 8 20 0 1 0 4242 1000 50";
+    assert_eq!(
+        boot::parse_start_time(stat),
+        Some(4242),
+        "a name with ) and a space"
+    );
+    assert_eq!(
+        boot::parse_start_time("1 (init) S 0 1 1"),
+        None,
+        "cut short"
+    );
+    assert_eq!(boot::parse_start_time("no command name"), None);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_linux_boot_is_the_kernels_with_inits_start_time() {
+    let Some(now) = boot::now() else {
+        return; // A sandbox with no /proc cannot say.
+    };
+    let kernel = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap();
+    assert_eq!(now.id, kernel.trim());
+    let init = std::fs::read_to_string("/proc/1/stat")
+        .ok()
+        .and_then(|stat| boot::parse_start_time(&stat));
+    assert_eq!(now.pids_since, init);
 }
 
 // ---- files -----------------------------------------------------------
@@ -414,7 +566,7 @@ fn a_relative_target_is_seen_from_the_links_directory() {
 // ---- desktop ---------------------------------------------------------
 
 fn on(os: Os) -> Host {
-    Host { os }
+    Host { os, wsl: None }
 }
 
 #[test]
@@ -423,6 +575,7 @@ fn every_desktop_has_one_row() {
         desktop::Desktop::MacOs,
         desktop::Desktop::Linux,
         desktop::Desktop::Windows,
+        desktop::Desktop::Wsl,
     ] {
         let rows = desktop::DESKTOPS
             .iter()
@@ -433,6 +586,40 @@ fn every_desktop_has_one_row() {
     for os in [Os::MacOs, Os::Linux, Os::Windows] {
         assert_eq!(desktop::row(&on(os)).desktop, desktop::Desktop::of(&on(os)));
     }
+}
+
+fn wsl_host() -> Host {
+    let system = tempfile::tempdir().unwrap();
+    crate::testutil::wsl_system(
+        system.path(),
+        crate::testutil::WSL_RELEASE,
+        crate::testutil::WSL_MOUNTS,
+    );
+    Host::at(system.path())
+}
+
+// Ubuntu on WSL ships no `xdg-open`, and `pando open` said it could not
+// run it: the browser there is Windows'. clip.exe through interop reads
+// the console's code page, so it is handed ASCII only.
+#[test]
+fn under_wsl_the_browser_and_the_clipboard_are_windows() {
+    let wsl = wsl_host();
+    assert_eq!(desktop::Desktop::of(&wsl), desktop::Desktop::Wsl);
+    let url = "http://localhost:3000/?a=1&b=2";
+    let words = |words: &[&str]| words.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        desktop::url_openers(&wsl, url),
+        vec![
+            words(&["wslview", url]),
+            words(&["rundll32.exe", "url.dll,FileProtocolHandler", url]),
+            words(&["xdg-open", url]),
+        ]
+    );
+    assert_eq!(desktop::clipboard(&wsl, url), Some("clip.exe"));
+    assert_eq!(desktop::clipboard(&wsl, "/home/me/çalışma"), None);
+    assert!(!desktop::starts_simulators(&wsl));
+    assert_eq!(desktop::is_dark(&wsl), None);
+    assert_eq!(desktop::fallback_shell(&wsl), "/bin/sh");
 }
 
 // Windows' URL handler takes the URL as one argument; `cmd /c start`

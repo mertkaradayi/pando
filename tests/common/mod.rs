@@ -46,6 +46,7 @@ pub fn git(cwd: &Path, args: &[&str]) {
 
 pub fn git_raw(cwd: &Path, args: &[&str]) -> std::process::Output {
     hermetic_home();
+    hermetic_path();
     no_auto_maintenance();
     Command::new("git")
         .args(FIXTURE_IDENTITY)
@@ -75,6 +76,34 @@ pub fn hermetic_home() {
         // std::env read and with Command's spawn, and nothing in these
         // tests reads the environment through libc behind std's back.
         unsafe { std::env::set_var("HOME", &home) };
+    });
+}
+
+/// Takes the Windows half out of this test binary's PATH under WSL, once,
+/// before its first fixture: every fixture is made through [`git_raw`],
+/// which calls this. Anywhere else there is no such half, and PATH is
+/// left as it is.
+///
+/// WSL appends Windows' PATH to the Linux one, so what the developer
+/// installed on Windows is on it: Node's installer leaves an `npm` shell
+/// script, Docker Desktop a `docker` one. `doctor` reports a tool found on
+/// a Windows drive, and its tests, which expect a report about the
+/// fixture, got one about the laptop.
+pub fn hermetic_path() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let Some(wsl) = pando::platform::Host::at(Path::new("/")).wsl else {
+            return;
+        };
+        let Some(path) = std::env::var_os("PATH") else {
+            return;
+        };
+        let linux: Vec<PathBuf> = std::env::split_paths(&path)
+            .filter(|dir| wsl.drive_of(dir).is_none())
+            .collect();
+        let joined = std::env::join_paths(linux).unwrap();
+        // SAFETY: as for HOME above.
+        unsafe { std::env::set_var("PATH", joined) };
     });
 }
 
@@ -127,10 +156,23 @@ pub fn no_auto_maintenance() {
 /// script with `sh`, the way pnpm does. Every call is appended to
 /// `<home>/bin/pnpm.calls`.
 pub fn fake_pnpm(home: &Path) {
+    fake_package_manager(home, "pnpm");
+}
+
+/// [`fake_pnpm`]'s stand-in as `npm`, for fixtures whose install step is
+/// npm's. doctor asks for the program an install step runs, and whether
+/// this machine has Node is not what those tests are about: they passed
+/// only where npm was installed, and under WSL only because Windows' npm
+/// was on PATH.
+pub fn fake_npm(home: &Path) {
+    fake_package_manager(home, "npm");
+}
+
+fn fake_package_manager(home: &Path, name: &str) {
     use std::os::unix::fs::PermissionsExt;
     let bin = home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    let path = bin.join("pnpm");
+    let path = bin.join(name);
     std::fs::write(
         &path,
         r#"#!/bin/sh
@@ -142,11 +184,12 @@ esac
 script=$1
 shift
 body=$(python3 -c 'import json, sys; print(json.load(open("package.json"))["scripts"][sys.argv[1]])' "$script" 2>/dev/null) || {
-  echo "pnpm: no script named $script in package.json" >&2
+  echo "NAME: no script named $script in package.json" >&2
   exit 1
 }
-exec sh -c "$body \"\$@\"" pnpm "$@"
-"#,
+exec sh -c "$body \"\$@\"" NAME "$@"
+"#
+        .replace("NAME", name),
     )
     .unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();

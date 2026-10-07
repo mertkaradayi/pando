@@ -9,11 +9,19 @@ pub enum Desktop {
     MacOs,
     Linux,
     Windows,
+    /// A WSL distro, which has no desktop of its own and reaches Windows'.
+    Wsl,
 }
 
 impl Desktop {
     /// The desktop `host` has.
+    ///
+    /// A host described as WSL has WSL's on any build, so a test of it
+    /// runs on every runner; a real one is always a Linux build.
     pub fn of(host: &Host) -> Desktop {
+        if host.wsl.is_some() {
+            return Desktop::Wsl;
+        }
         match host.os {
             Os::MacOs => Desktop::MacOs,
             Os::Linux => Desktop::Linux,
@@ -58,7 +66,7 @@ pub struct DarkModeProbe {
     pub dark: &'static str,
 }
 
-pub const DESKTOPS: [DesktopRow; 3] = [
+pub const DESKTOPS: [DesktopRow; 4] = [
     DesktopRow {
         desktop: Desktop::MacOs,
         open_url: &[&["open"]],
@@ -107,6 +115,27 @@ pub const DESKTOPS: [DesktopRow; 3] = [
         }),
         starts_simulators: false,
         shell: "cmd.exe",
+    },
+    DesktopRow {
+        desktop: Desktop::Wsl,
+        // Ubuntu on WSL ships no `xdg-open`, so the browser is Windows':
+        // `wslview` when wslu is installed, then Windows' own URL handler
+        // through interop, then `xdg-open` for a distro that has one set
+        // up.
+        open_url: &[
+            &["wslview"],
+            &["rundll32.exe", "url.dll,FileProtocolHandler"],
+            &["xdg-open"],
+        ],
+        // Windows' clip.exe through interop, which reads its input in the
+        // console's code page, not as UTF-8.
+        clipboard: Some(Clipboard {
+            program: "clip.exe",
+            ascii_only: true,
+        }),
+        dark_mode: None,
+        starts_simulators: false,
+        shell: "/bin/sh",
     },
 ];
 

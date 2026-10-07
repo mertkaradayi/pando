@@ -3,8 +3,10 @@
 
 use std::path::Path;
 
+use crate::actions::Machine;
 use crate::config::{Config, HIDDEN, is_password};
 use crate::paths::PandoPaths;
+use crate::platform::Wsl;
 use crate::{ports, state};
 
 use super::report::{ConfigReport, Finding, KeyReport, LayerReport, ProjectReport, Section};
@@ -12,8 +14,12 @@ use super::report::{ConfigReport, Finding, KeyReport, LayerReport, ProjectReport
 pub(super) fn project_report(
     paths: &PandoPaths,
     config: &Config,
+    machine: &Machine<'_>,
     findings: &mut Vec<Finding>,
 ) -> ProjectReport {
+    if let Some(wsl) = &machine.host.wsl {
+        windows_drive_findings(paths, config, wsl, findings);
+    }
     let home_mode = mode_of(&paths.home);
     if let Some(mode) = &home_mode
         && mode != "700"
@@ -59,6 +65,62 @@ pub(super) fn project_report(
         base_step: ports::BASE_STEP,
         bases_in_range: ports::BASE_COUNT,
         windows_held,
+    }
+}
+
+/// The repository, or the directory its worktrees go in, on a Windows
+/// drive under WSL. WSL reaches a drive over a network filesystem: on one
+/// fixture `ls` took ten times as long there as in WSL's own, `new` two
+/// and a half, and inotify sent no event at all, for an edit from Windows
+/// or from Linux, so a dev server that reloads on an edit never does. A
+/// note: it all works, slowly.
+fn windows_drive_findings(
+    paths: &PandoPaths,
+    config: &Config,
+    wsl: &Wsl,
+    findings: &mut Vec<Finding>,
+) {
+    let slow = "WSL reaches a Windows drive over a network filesystem, where git is several times \
+                slower and an edit sends no inotify event";
+    if let Some(drive) = wsl.drive_of(paths.root()) {
+        findings.push(
+            Finding::note(
+                Section::Project,
+                format!(
+                    "the repository is on the Windows drive at {} — {slow}, so the main \
+                     checkout's dev server does not reload on an edit",
+                    drive.display()
+                ),
+            )
+            .with_fix(
+                "clone the repository into WSL's own filesystem, under ~, and run pando from \
+                 there",
+            ),
+        );
+    }
+    let worktrees = config.worktrees_dir(paths);
+    if let Some(drive) = wsl.drive_of(&worktrees) {
+        let fix = match config.project.worktrees_dir {
+            Some(_) => "set `[project] worktrees_dir` to a directory under ~ in WSL, or leave it \
+                        unset for pando's home"
+                .to_string(),
+            None => format!(
+                "point PANDO_HOME at a directory under ~ in WSL; pando's home is {}",
+                paths.home.display()
+            ),
+        };
+        findings.push(
+            Finding::note(
+                Section::Project,
+                format!(
+                    "this project's worktrees go on the Windows drive at {} ({}) — {slow}, so a \
+                     worktree's dev server does not reload on an edit",
+                    drive.display(),
+                    worktrees.display()
+                ),
+            )
+            .with_fix(fix),
+        );
     }
 }
 

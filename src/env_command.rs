@@ -189,7 +189,7 @@ mod tests {
             (crate::platform::Os::MacOs, "open"),
             (crate::platform::Os::Linux, "xdg-open"),
         ] {
-            let host = Host { os };
+            let host = Host { os, wsl: None };
             for unset in [None, Some(""), Some(" : ")] {
                 assert_eq!(
                     browser_commands(unset, url, &host),
