@@ -429,3 +429,80 @@ fn a_file_list_says_the_first_two_and_how_many_more() {
     assert_eq!(run::file_list(&files(2)), "f0 and f1");
     assert_eq!(run::file_list(&files(5)), "f0, f1 and 3 more");
 }
+
+/// A worktree with a provisioned, ignored `.env`, and a base that has
+/// started tracking one: every move onto the base would replace it, and
+/// the abort after a conflict would delete it.
+fn ignored_env_and_a_base_that_tracks_one(r: &Repo) -> PathBuf {
+    let wt = r.worktree("feat/env");
+    commit(&wt, ".gitignore", ".env\n", "ignore .env");
+    write(&wt, ".env", "SECRET=mine\n");
+    git(&r.other, &["pull", "--quiet", "--ff-only"]);
+    write(&r.other, ".env", "SECRET=theirs\n");
+    git(&r.other, &["add", "-f", ".env"]);
+    git(&r.other, &["commit", "--quiet", "-m", "track .env"]);
+    git(&r.other, &["push", "--quiet", "origin", "main"]);
+    wt
+}
+
+#[test]
+fn a_move_that_would_overwrite_an_ignored_file_is_refused_before_it_runs() {
+    let r = repo();
+    let wt = ignored_env_and_a_base_that_tracks_one(&r);
+    for action in [GitAction::Rebase, GitAction::Merge] {
+        let before = head(&wt);
+        let err = run_on(&wt, false, action).unwrap_err().to_string();
+        assert!(err.contains(".env"), "{err}");
+        assert!(err.contains("nothing changed"), "{err}");
+        assert_eq!(head(&wt), before, "{action:?} moved HEAD");
+        assert_eq!(
+            std::fs::read_to_string(wt.join(".env")).unwrap(),
+            "SECRET=mine\n",
+            "{action:?} touched the ignored file"
+        );
+    }
+}
+
+#[test]
+fn a_fast_forward_that_would_overwrite_an_ignored_file_is_refused() {
+    let r = repo();
+    write(&r.main, ".env", "SECRET=mine\n");
+    git(&r.main, &["config", "core.excludesFile", "/dev/null"]);
+    std::fs::write(r.main.join(".git/info/exclude"), ".env\n").unwrap();
+    git(&r.other, &["pull", "--quiet", "--ff-only"]);
+    write(&r.other, ".env", "SECRET=theirs\n");
+    git(&r.other, &["add", "-f", ".env"]);
+    git(&r.other, &["commit", "--quiet", "-m", "track .env"]);
+    git(&r.other, &["push", "--quiet", "origin", "main"]);
+    let before = head(&r.main);
+    let err = run_on(&r.main, true, GitAction::Pull)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains(".env"), "{err}");
+    assert_eq!(head(&r.main), before);
+    assert_eq!(
+        std::fs::read_to_string(r.main.join(".env")).unwrap(),
+        "SECRET=mine\n"
+    );
+}
+
+#[test]
+fn an_ignored_directory_counts_and_an_ignored_file_nobody_tracks_does_not() {
+    let r = repo();
+    let wt = r.worktree("feat/dirs");
+    commit(&wt, ".gitignore", "build/\n*.log\n", "ignore");
+    std::fs::create_dir(wt.join("build")).unwrap();
+    write(&wt, "build/out.js", "x");
+    write(&wt, "debug.log", "x");
+    git(&r.other, &["pull", "--quiet", "--ff-only"]);
+    std::fs::create_dir(r.other.join("build")).unwrap();
+    write(&r.other, "build/vendored.js", "y");
+    git(&r.other, &["add", "-f", "build/vendored.js"]);
+    git(&r.other, &["commit", "--quiet", "-m", "vendor"]);
+    git(&r.other, &["push", "--quiet", "origin", "main"]);
+    git(&wt, &["fetch", "--quiet", "origin"]);
+    assert_eq!(
+        run::ignored_in_the_way(&wt, "origin/main"),
+        vec!["build/vendored.js".to_string()]
+    );
+}

@@ -218,6 +218,7 @@ fn pull(
             "{branch} is up to date with {upstream}"
         ))),
         (0, behind) => {
+            refuse_ignored_in_the_way(dir, upstream)?;
             progress(&format!("fast-forwarding to {upstream}"));
             local(dir, &["merge", "--ff-only", "--quiet", upstream], "merge")?;
             Ok(Ran::Moved(format!(
@@ -247,6 +248,73 @@ fn local(dir: &Path, args: &[&str], what: &str) -> Result<()> {
     }
 }
 
+/// Refuses a move onto `target` that would write over a file this
+/// checkout ignores.
+///
+/// `git status` lists no ignored file, so the dirty check passes over a
+/// provisioned `.env`; and git treats an ignored file as expendable, so a
+/// merge, a fast-forward or a rebase onto a commit that starts tracking
+/// that path replaces it — and the abort after a conflict then deletes
+/// it. Checked before anything runs, so "nothing changed" stays true.
+fn refuse_ignored_in_the_way(dir: &Path, target: &str) -> Result<()> {
+    let in_the_way = ignored_in_the_way(dir, target);
+    if in_the_way.is_empty() {
+        return Ok(());
+    }
+    let (is, them) = match in_the_way.len() {
+        1 => ("is", "it"),
+        _ => ("are", "them"),
+    };
+    bail!(
+        "{target} tracks {}, which {is} ignored here and would be overwritten — move {them} \
+         aside first; nothing changed",
+        file_list(&in_the_way)
+    )
+}
+
+/// The paths `target` tracks and HEAD does not that are ignored files,
+/// or under ignored directories, in `dir`.
+pub(super) fn ignored_in_the_way(dir: &Path, target: &str) -> Vec<String> {
+    let lines = |args: &[&str]| -> Vec<String> {
+        text(dir, args)
+            .map(|t| t.lines().map(str::to_string).collect())
+            .unwrap_or_default()
+    };
+    let added = lines(&[
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--diff-filter=A",
+        "HEAD",
+        target,
+        "--",
+    ]);
+    if added.is_empty() {
+        return Vec::new();
+    }
+    // `--directory` keeps an ignored `node_modules` one line.
+    let ignored = lines(&[
+        "-c",
+        "core.quotePath=false",
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+    ]);
+    added
+        .into_iter()
+        .filter(|path| {
+            ignored.iter().any(|entry| match entry.strip_suffix('/') {
+                Some(dir) => path.starts_with(entry.as_str()) || path == dir,
+                None => path == entry,
+            })
+        })
+        .collect()
+}
+
 fn move_onto(
     dir: &Path,
     branch: &str,
@@ -270,6 +338,7 @@ fn move_onto(
             "{branch} is already on top of {base}"
         )));
     }
+    refuse_ignored_in_the_way(dir, base)?;
     let before = text(dir, &["rev-parse", "HEAD"]);
     let (op, args): (InProgress, &[&str]) = match action {
         GitAction::Rebase => {
