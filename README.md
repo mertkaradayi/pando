@@ -33,7 +33,8 @@
 
 ## Get started
 
-**1. Install pando.** On macOS or Linux, no Rust needed:
+**1. Install pando.** On macOS or Linux, or Windows inside WSL 2, no Rust
+needed:
 
 ```bash
 brew install mertkaradayi/tap/pando
@@ -741,7 +742,7 @@ taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Status
 
-Version 0.8.3, released as binaries for macOS and Linux. Every command above is
+Version 0.9.0, released as binaries for macOS and Linux. Every command above is
 implemented and covered by tests, in this order: worktrees and their
 lifecycle; detached dev servers with their own ports, logs and readiness;
 several processes per worktree; the log viewer; private per-worktree
@@ -793,7 +794,9 @@ macOS is what it is developed on. CI runs the whole test suite on macOS
 and on Linux for every change, and both pass — but the suite runs on
 fixtures, and nobody has yet used pando on Linux for real work. Under
 WSL 2 on Windows the suite passes too, and pando has started, stopped
-and opened fixture worktrees there, but not yet a real project.
+and opened fixture worktrees there, but not yet a real project. CI also
+builds pando natively on Windows, so its Windows half keeps compiling;
+that build runs nothing yet and says to use WSL 2.
 
 What that does not mean: there is no crate on crates.io yet, and pando
 has met only a handful of real projects — the monorepo it was built

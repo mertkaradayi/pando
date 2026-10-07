@@ -39,7 +39,14 @@ cargo fmt --check
 ```
 
 All three checks must be clean before every commit, and CI runs them on
-every pull request.
+every pull request. CI also builds pando natively on Windows, so the
+Windows half of `src/platform` keeps compiling. After a change there,
+check it on your own machine first:
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+cargo clippy --locked --target x86_64-pc-windows-msvc --lib --bins -- -D warnings
+```
 
 On Windows, build and test inside WSL 2, on a clone in WSL's own
 filesystem: a native build compiles but runs nothing yet. Avoid `/tmp`
@@ -139,7 +146,7 @@ merges or releases.
 
 [`src/lib.rs`](src/lib.rs) is the map: the dependency direction between
 modules, inner to outer with no upward imports, and a table of where to
-add each kind of thing. Read it first. Three rules hold the shape:
+add each kind of thing. Read it first. Four rules hold the shape:
 
 - **One fact, one row.** What pando knows about the ecosystem is data:
   package managers, frameworks and service images in `src/catalog/`,
@@ -155,6 +162,14 @@ add each kind of thing. Read it first. Three rules hold the shape:
 - **Contracts have tests.** A JSON shape `agent/json.md` documents, a
   setup slot name, a CLI verb, a TUI key: each is held to the code by a
   test. Adding one without its test is not done.
+- **The OS is `src/platform`'s.** Process groups and signals, locks and
+  permission bits, the shell a command string runs in, the boot, what the
+  desktop opens and copies with: one file per concern under
+  `src/platform/`, a facade over a backend per OS. Nothing else names
+  `nix`, `libc`, `std::os` or an OS `cfg`, reads `HOME`, or starts `sh`
+  or `bash` by name, and `src/platform/tests.rs` fails if anything does.
+  A decision that depends on the OS, or on whether this Linux is WSL,
+  takes a `platform::Host`, so a test can choose it.
 
 ## The two promises
 
@@ -198,6 +213,9 @@ Every change keeps these, and the tests enforce both:
 | a native service | a TOML file in `src/recipes/builtin/`, and a row in `recipes::BUILT_IN` |
 | an engine namespaced mode should know | a TOML file in `src/recipes/builtin/` with a `[namespace]` or `[prefix]` and no `[service]`, a row in `recipes::BUILT_IN`, and the image's `engine` in `IMAGES` |
 | a colour theme | a TOML file in `src/theme/builtin/`, and a row in `theme::BUILT_IN` |
+| anything pando asks of the operating system | a function in its concern under `src/platform/`, with a backend for each OS (Windows' may say "not yet") |
+| what a desktop opens a URL or copies with, or calls dark mode | a field in `DESKTOPS` in `src/platform/desktop.rs` |
+| a fact about the machine read at run time | a field of `platform::Host`, read in `Host::at` from files under the root it is given |
 | a CLI verb | `src/cli/mod.rs`, its output under `src/cli/`, its behaviour in `src/actions/`, and the README's command list, which a test holds to clap |
 | a TUI key | `src/tui/app/`, with its row in `src/tui/app/keymap.rs`, which a test holds to the handler |
 

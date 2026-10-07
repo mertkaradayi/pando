@@ -970,12 +970,12 @@ theme = <span class="s">"catppuccin"</span>
   <div class="wrap">
     <div class="eyebrow rv"><span class="n">10</span><span class="dot">·</span><span class="nm">Install</span><span class="bt">// one line</span></div>
     <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt">Install it. Run it.</span><span class="cur" aria-hidden="true"></span></h2>
-    <p class="sub rv">a ready-made binary for macOS (Apple silicon and Intel) and Linux (x86_64 and arm64): no Rust needed</p>
+    <p class="sub rv">a ready-made binary for macOS (Apple silicon and Intel) and Linux (x86_64 and arm64), and on Windows the Linux one inside WSL 2: no Rust needed</p>
     <div class="split wide-left">
       <ol class="install-steps rv">
         <li>
           <div class="is-h"><span class="hs-n">1</span>Install it</div>
-          <p class="is-note">With Homebrew, on macOS or Linux:</p>
+          <p class="is-note">With Homebrew, on macOS or Linux (WSL 2 included):</p>
           <div class="term">
             <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="grow">Homebrew</span><button class="copy hs-copy" type="button" data-copy="brew install mertkaradayi/tap/pando" aria-label="Copy the Homebrew command">copy</button></div>
 <pre class="wrap-cmd"><span class="p">$</span> brew install mertkaradayi/tap/pando</pre>
@@ -1012,9 +1012,9 @@ theme = <span class="s">"catppuccin"</span>
       <div class="panel rv">
         <h4>What there is</h4>
         <ul class="yes">
-          <li>Every command on this page is implemented on <code>main</code> and covered by tests. 0.8.3 is the last release; what is marked new says the version it came in</li>
+          <li>Every command on this page is implemented on <code>main</code> and covered by tests. 0.9.0 is the last release; what is marked new says the version it came in</li>
           <li>Tests that read no developer's shell profile and need none of their tools; databases in the tests are throwaway servers the tests start themselves</li>
-          <li>Developed on macOS. For every change, CI checks formatting and runs clippy and the whole test suite on macOS and on Linux, and all of it must pass</li>
+          <li>Developed on macOS. For every change, CI checks formatting and runs clippy and the whole test suite on macOS and on Linux, builds pando natively on Windows, and all of it must pass</li>
         </ul>
       </div>
       <div class="panel rv">
