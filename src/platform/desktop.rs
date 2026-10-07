@@ -121,10 +121,17 @@ pub const DESKTOPS: [DesktopRow; 4] = [
         // Ubuntu on WSL ships no `xdg-open`, so the browser is Windows':
         // `wslview` when wslu is installed, then Windows' own URL handler
         // through interop, then `xdg-open` for a distro that has one set
-        // up.
+        // up. The handler is found on the Windows half of PATH, which
+        // `appendWindowsPath = false` takes away (doctor suggests it for a
+        // tool found on a Windows drive), so it is also asked for where
+        // WSL mounts drive C by default.
         open_url: &[
             &["wslview"],
             &["rundll32.exe", "url.dll,FileProtocolHandler"],
+            &[
+                "/mnt/c/Windows/System32/rundll32.exe",
+                "url.dll,FileProtocolHandler",
+            ],
             &["xdg-open"],
         ],
         // Windows' clip.exe through interop, which reads its input in the

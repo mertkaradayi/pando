@@ -190,7 +190,9 @@ fn windows_side(probe: &ToolProbe, path: &str, drive: &Path) -> Finding {
         ),
         fix: Some(format!(
             "{install}; or keep Windows' PATH out of WSL with `appendWindowsPath = false` under \
-             `[interop]` in /etc/wsl.conf, then `wsl --shutdown` from Windows"
+             `[interop]` in /etc/wsl.conf, then `wsl --shutdown` from Windows — which also takes \
+             clip.exe off PATH, so the TUI copies through the terminal alone, and `pando open` \
+             finds Windows' browser only at /mnt/c or through wslu's `wslview`"
         )),
     }
 }

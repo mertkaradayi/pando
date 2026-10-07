@@ -12,7 +12,8 @@ may change behaviour.
 - pando runs on Windows inside WSL 2, as the Linux binary, and knows
   when it is there:
   - `pando open` and the TUI's `o` open Windows' browser: `wslview` when
-    wslu is installed, otherwise Windows' own URL handler. They used to
+    wslu is installed, otherwise Windows' own URL handler, found at
+    `/mnt/c` too when Windows' PATH is kept out of WSL. They used to
     say they could not run `xdg-open`, which Ubuntu on WSL does not ship.
   - `pando doctor` treats a tool found on a Windows drive as seriously as
     a missing one. WSL puts Windows' PATH after Linux's, so with no Linux

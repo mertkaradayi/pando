@@ -4368,6 +4368,10 @@ fn under_wsl_a_tool_found_on_a_windows_drive_is_as_bad_as_missing() {
     let fix = finding.fix.as_deref().unwrap();
     assert!(fix.contains("install pnpm inside WSL"), "{fix}");
     assert!(fix.contains("appendWindowsPath = false"), "{fix}");
+    assert!(
+        fix.contains("clip.exe off PATH"),
+        "what the setting also takes away is said: {fix}"
+    );
 }
 
 // On a Windows drive, git was several times slower and inotify sent no

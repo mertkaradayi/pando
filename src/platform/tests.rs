@@ -612,6 +612,11 @@ fn under_wsl_the_browser_and_the_clipboard_are_windows() {
         vec![
             words(&["wslview", url]),
             words(&["rundll32.exe", "url.dll,FileProtocolHandler", url]),
+            words(&[
+                "/mnt/c/Windows/System32/rundll32.exe",
+                "url.dll,FileProtocolHandler",
+                url
+            ]),
             words(&["xdg-open", url]),
         ]
     );
