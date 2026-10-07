@@ -563,6 +563,11 @@ impl<'a> Run<'a> {
         }
         let began = Instant::now();
         if let Err(e) = new_detached(self.paths, config, commit, self.say.detail) {
+            // A Ctrl-C reaches the install too, which then fails: that is
+            // the interruption, not the settings.
+            if interrupted() {
+                return CheckOutcome::Interrupted;
+            }
             let text = format!("{e:#}");
             if text.contains(CREATED_BUT_INSTALL_FAILED) {
                 self.failed_in(
@@ -592,6 +597,7 @@ impl<'a> Run<'a> {
                 self.step("making the check's own database in your servers");
                 match prepare(self.paths, config, CHECK_WORKTREE, self.say.detail) {
                     Ok(ready) => Some(ready),
+                    Err(_) if interrupted() => return CheckOutcome::Interrupted,
                     Err(e) => return failed(FailureKind::Machine, &format!("{e:#}")),
                 }
             }
@@ -613,6 +619,9 @@ impl<'a> Run<'a> {
             namespaces,
             self.say.detail,
         ) {
+            if interrupted() {
+                return CheckOutcome::Interrupted;
+            }
             let text = format!("{e:#}");
             // A hook after the services that failed is the settings' — the
             // schema step `init --answers -` sets — and its log says why.

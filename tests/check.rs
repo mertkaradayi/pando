@@ -769,6 +769,39 @@ fn a_signal_ends_a_check_through_its_teardown() {
     e.assert_nothing_left(&branches);
 }
 
+// A terminal's Ctrl-C reaches the whole foreground group, so the install
+// dies of it too: the check was interrupted, not failed by its settings.
+#[test]
+fn a_ctrl_c_during_the_install_records_the_check_interrupted() {
+    use std::os::unix::process::CommandExt;
+    let e =
+        env(&config_running("sleep 600", "")
+            .replace("install = \"true\"", "install = \"sleep 600\""));
+    let branches = e.git(&["branch", "--list"]);
+    let child = e
+        .command(&["check"])
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn pando");
+    e.wait_for_step("installing");
+    // The install is under way, not merely announced.
+    assert!(wait_until(Duration::from_secs(30), || {
+        e.paths.log_file(CHECK_WORKTREE, "install").exists()
+    }));
+    nix::sys::signal::killpg(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(e.record().unwrap().outcome, CheckOutcome::Interrupted);
+    assert_eq!(e.setup_state(), SetupState::Interrupted);
+    e.assert_nothing_left(&branches);
+}
+
 // What a SIGKILL leaves — a worktree with a server still running in it —
 // is in no list, is a problem `doctor` reports, and is swept by the next
 // check before it starts anything.
