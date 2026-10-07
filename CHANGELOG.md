@@ -7,6 +7,8 @@ may change behaviour.
 
 ## Unreleased
 
+## 0.10.0 — 2026-10-08
+
 ### Added
 
 - pando runs on Windows inside WSL 2, as the Linux binary, and knows

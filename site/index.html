@@ -957,7 +957,7 @@ theme = <span class="s">"catppuccin"</span>
         <p>No. Anyone with the link reaches the app until you unshare, stop or remove the worktree. The link does not expire, and every share gets a new random host. With <code>auth_cmd</code>, every visitor gets the same session, because the proxy replaces their Cookie header with the one your command printed.</p></details>
       <details><summary>Logged in on one worktree, logged in on all of them?</summary>
         <p>Browsers keep cookies per host, not per port, so every <code>http://localhost:&lt;port&gt;</code> shares them. That is how the web works, and pando does not change it. When two branches' sessions get in each other's way, use a private window for one of them.</p></details>
-      <details><summary>Linux? Windows?</summary>
+      <details><summary>Linux? Windows? <span class="tag-new">new in 0.10.0</span></summary>
         <p>macOS is where pando is developed. On Linux, CI runs the whole test suite for every change and it must pass, but nobody has used pando there for real work yet. On Windows, run it inside WSL 2: the Linux binary works there, a worktree's <code>localhost</code> URL works from Windows, and <code>pando open</code> opens Windows' browser. Keep the repository under <code>~</code> in WSL rather than on <code>/mnt/c</code>, where git is several times slower and dev servers never hear of an edit. A native Windows build compiles, but runs nothing yet: starting and stopping processes is written for Unix only so far.</p></details>
       <details><summary>Does pando use AI, or phone home?</summary>
         <p>No and no. Detection is rules and data tables, and the runtime never calls a model. The agent in the first run is your own coding agent, which pando never launches: the setup screen only copies a prompt for you to paste. There is no telemetry in the code. pando itself connects only to this machine: <code>pando check</code> asks your app for <code>/</code> on localhost, and the share proxy forwards to it. What reaches the network are the programs it runs: <code>git</code>, <code>gh</code>, <code>cloudflared</code>, <code>docker</code>, your install and hook commands, and in namespaced mode the database clients.</p></details>
@@ -1012,7 +1012,7 @@ theme = <span class="s">"catppuccin"</span>
       <div class="panel rv">
         <h4>What there is</h4>
         <ul class="yes">
-          <li>Every command on this page is implemented on <code>main</code> and covered by tests. 0.9.0 is the last release; what is marked new says the version it came in</li>
+          <li>Every command on this page is implemented on <code>main</code> and covered by tests. 0.10.0 is the last release; what is marked new says the version it came in</li>
           <li>Tests that read no developer's shell profile and need none of their tools; databases in the tests are throwaway servers the tests start themselves</li>
           <li>Developed on macOS. For every change, CI checks formatting and runs clippy and the whole test suite on macOS and on Linux, builds pando natively on Windows, and all of it must pass</li>
         </ul>
