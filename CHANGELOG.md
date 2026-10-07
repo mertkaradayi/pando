@@ -90,6 +90,11 @@ may change behaviour.
 
 ### Fixed
 
+- `pando update` said the update failed when Homebrew upgraded pando and
+  then exited 1 over something else: its periodic `brew cleanup`, which
+  runs after the upgrade, refuses a cask from an untrusted tap. Whether
+  the update happened is now read from the installed pando's version, so
+  it reports the new version and says that what failed came after.
 - A panic in the TUI no longer leaves the terminal reporting focus
   changes, which the shell then printed as `^[[I` and `^[[O`.
 - `ls`, `status`, `open`, `start --wait` and the TUI no longer wait for

@@ -14,6 +14,12 @@ const RUNNING: &str = env!("CARGO_PKG_VERSION");
 /// moved over it, never written into a binary that may be running. Every
 /// call is logged to `<dir>/log`.
 fn fake_curl(latest: Option<&str>) -> TempDir {
+    fake_curl_installing(latest, true, 0)
+}
+
+/// [`fake_curl`], whose install script puts the new pando in place only
+/// when `installs`, then exits with `exit`.
+fn fake_curl_installing(latest: Option<&str>, installs: bool, exit: i32) -> TempDir {
     let dir = TempDir::new().unwrap();
     let log = dir.path().join("log");
     let lookup = match latest {
@@ -32,15 +38,22 @@ case "$*" in
     cat > "$out" <<'SCRIPT'
 #!/bin/sh
 echo "installer dir=$PANDO_CLI_INSTALL_DIR no_modify_path=$PANDO_CLI_NO_MODIFY_PATH" >> '{log}'
-printf '#!/bin/sh\necho "pando {latest}"\n' > "$PANDO_CLI_INSTALL_DIR/pando.new"
-chmod +x "$PANDO_CLI_INSTALL_DIR/pando.new"
-mv "$PANDO_CLI_INSTALL_DIR/pando.new" "$PANDO_CLI_INSTALL_DIR/pando"
+{install}exit {exit}
 SCRIPT
     ;;
 esac
 "#,
         log = log.display(),
-        latest = latest.unwrap_or("0.0.0"),
+        install = match installs {
+            true => format!(
+                "printf '#!/bin/sh\\necho \"pando {latest}\"\\n' > \"$PANDO_CLI_INSTALL_DIR/pando.new\"
+chmod +x \"$PANDO_CLI_INSTALL_DIR/pando.new\"
+mv \"$PANDO_CLI_INSTALL_DIR/pando.new\" \"$PANDO_CLI_INSTALL_DIR/pando\"
+",
+                latest = latest.unwrap_or("0.0.0")
+            ),
+            false => String::new(),
+        },
     );
     let curl = dir.path().join("curl");
     std::fs::write(&curl, script).unwrap();
@@ -123,6 +136,39 @@ fn an_installed_pando_is_replaced_by_the_latest_release_in_its_own_directory() {
     );
     let now = Command::new(&pando).arg("--version").output().unwrap();
     assert_eq!(stdout(&now), "pando 99.0.0\n");
+}
+
+// Homebrew installed 0.10.0, then its periodic `brew cleanup` refused a
+// cask from another, untrusted tap and exited 1: `pando update` said the
+// update failed, with the new pando already in place.
+#[test]
+fn an_update_that_installed_the_release_and_then_failed_says_it_is_updated() {
+    let (_dir, pando) = installed_copy();
+    let curl = fake_curl_installing(Some("99.0.0"), true, 1);
+    let out = update(&pando, &curl, &[]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout(&out), format!("pando {RUNNING} → 99.0.0\n"));
+    let err = stderr(&out);
+    assert!(err.contains("the install script failed"), "{err}");
+    assert!(
+        err.contains("after it installed 99.0.0: pando is updated"),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_update_that_failed_before_installing_anything_fails() {
+    let (_dir, pando) = installed_copy();
+    let curl = fake_curl_installing(Some("99.0.0"), false, 1);
+    let out = update(&pando, &curl, &[]);
+    assert_eq!(code(&out), 1, "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains("the install script failed"),
+        "{}",
+        stderr(&out)
+    );
+    let now = Command::new(&pando).arg("--version").output().unwrap();
+    assert_eq!(stdout(&now), format!("pando {RUNNING}\n"));
 }
 
 #[test]

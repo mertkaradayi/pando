@@ -454,15 +454,25 @@ pub fn update(survey: &Survey, progress: &dyn Fn(&str)) -> Result<Updated> {
         ));
     }
     progress(&format!("running {}", updater.command_line()));
-    updater.run()?;
+    let ran = updater.run();
     let now = survey
         .install
         .binary()
         .and_then(|binary| version_of(&binary));
-    Ok(match now {
-        Some(now) if now != survey.running => Updated::To(now),
-        _ => Updated::Unchanged,
-    })
+    // What is installed says whether the update happened, not how the
+    // command exited: Homebrew runs its periodic `brew cleanup` after the
+    // upgrade, and exits 1 when that trips over some other tap.
+    match (ran, now) {
+        (Ok(()), Some(now)) if now != survey.running => Ok(Updated::To(now)),
+        (Ok(()), _) => Ok(Updated::Unchanged),
+        (Err(why), Some(now)) if now > survey.running => {
+            progress(&format!(
+                "{why:#}, after it installed {now}: pando is updated, and what failed came after"
+            ));
+            Ok(Updated::To(now))
+        }
+        (Err(why), _) => Err(why),
+    }
 }
 
 /// The latest release, from where GitHub's `releases/latest` redirects:
