@@ -18009,6 +18009,21 @@ mod update {
     }
 
     #[test]
+    fn the_install_script_goes_into_a_new_file_only_this_user_can_write() {
+        let one = super::super::update::private_script_file().unwrap();
+        let two = super::super::update::private_script_file().unwrap();
+        assert_ne!(one, two);
+        let meta = std::fs::symlink_metadata(&one).unwrap();
+        assert!(meta.is_file());
+        assert_eq!(meta.len(), 0);
+        if let Some(bits) = crate::platform::files::permission_bits(&meta) {
+            assert_eq!(bits, 0o600);
+        }
+        let _ = std::fs::remove_file(&one);
+        let _ = std::fs::remove_file(&two);
+    }
+
+    #[test]
     fn the_latest_release_is_the_tag_github_redirects_to() {
         assert_eq!(
             release_of("https://github.com/mertkaradayi/pando/releases/tag/v0.9.0\n"),

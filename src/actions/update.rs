@@ -321,8 +321,7 @@ impl Updater {
             // Downloaded first and run second, so a failed download is a
             // failure and not an empty script that "succeeded".
             Updater::Script { url, env } => {
-                let script =
-                    std::env::temp_dir().join(format!("pando-installer-{}.sh", std::process::id()));
+                let script = private_script_file()?;
                 let download = curl()
                     .args(["--proto", "=https", "--tlsv1.2", "-LsSf", "-o"])
                     .arg(&script)
@@ -350,6 +349,26 @@ impl Updater {
         }
         Ok(())
     }
+}
+
+/// A new, empty file only this user can write, for the install script.
+///
+/// Made here, exclusively, before curl writes into it: the temporary
+/// directory may be shared, and a name another user could guess and
+/// create first — as a file they can rewrite, or a link — would hand them
+/// the script `sh` runs next.
+pub(super) fn private_script_file() -> Result<PathBuf> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or_default();
+    let path = std::env::temp_dir().join(format!(
+        "pando-installer-{}-{nanos:09}.sh",
+        std::process::id()
+    ));
+    crate::platform::files::create_new(&path, 0o600)
+        .with_context(|| format!("could not make {}", path.display()))?;
+    Ok(path)
 }
 
 /// What `pando update` found, before it does anything.
