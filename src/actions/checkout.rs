@@ -164,6 +164,9 @@ fn converts_everything(dir: &Path) -> bool {
         || has_info_attributes(dir)
 }
 
+/// What a `new` stopped during its checkout fails with.
+pub(super) const INTERRUPTED: &str = "`new` was interrupted during the checkout";
+
 /// Whether `new` has been told to stop — Ctrl-C, a closed terminal, a
 /// `kill` — while it checks out. `git worktree add` removes its own
 /// half-made worktree when that happens; a copy-on-write checkout is
@@ -239,6 +242,11 @@ pub(super) fn fill(worktree: &Path, source: &Source, progress: &dyn Fn(&str)) ->
             clone_all(worktree, &source.root, &wanted)
         }
     };
+    // Cloning starts no child for a Ctrl-C to reach, so it is seen here:
+    // stopped now, git writes nothing more and the hook never runs.
+    if told_to_stop() {
+        bail!(INTERRUPTED);
+    }
     if !cloned.is_empty() {
         raw_refresh(worktree);
     }
@@ -275,6 +283,9 @@ pub(super) fn fill(worktree: &Path, source: &Source, progress: &dyn Fn(&str)) ->
             "the copy-on-write checkout left {stray:?}, which the branch does not have; \
              `copy_on_write = false` in pando.toml checks out with git"
         );
+    }
+    if told_to_stop() {
+        bail!(INTERRUPTED);
     }
     if let Some(hook) = &source.post_checkout {
         run_post_checkout(worktree, hook)?;

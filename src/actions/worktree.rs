@@ -334,8 +334,7 @@ fn create(
     // Told to stop during the checkout: what it made goes, as `git
     // worktree add` takes its own half-made worktree down.
     .or_else(|| {
-        super::checkout::told_to_stop()
-            .then(|| anyhow::anyhow!("`new` was interrupted during the checkout"))
+        super::checkout::told_to_stop().then(|| anyhow::anyhow!(super::checkout::INTERRUPTED))
     });
     let lock = state::lock(&paths.lock_file()).map_err(undo)?;
     let mut store = state::load(&paths.state_file()).map_err(undo)?;

@@ -9646,6 +9646,42 @@ fn a_new_told_to_stop_during_its_checkout_leaves_nothing() {
     assert!(branch.stdout.is_empty(), "the new branch was left");
 }
 
+// Cloning starts no child a Ctrl-C reaches, so a stop that arrives then
+// is pando's to see before git writes the rest and the hook runs: a
+// husky install or a `npm install` in a hook after "stop" is the opposite
+// of what was asked.
+#[test]
+fn a_new_told_to_stop_while_it_clones_runs_no_post_checkout_hook() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture_with_tree();
+    if !crate::platform::cow::can_clone(fx._dir.path()) {
+        return;
+    }
+    let marks = tempdir().unwrap();
+    let hook = fx.root.join(".git/hooks/post-checkout");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh
+touch '{}/ran'
+",
+            marks.path().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    super::checkout::test_seam::STOP.with(|stop| stop.set(true));
+    let (made, _) = new_saying(&fx, "feat/stopped-hook");
+    super::checkout::test_seam::STOP.with(|stop| stop.set(false));
+    let msg = format!("{:#}", made.unwrap_err());
+    assert!(msg.contains("interrupted during the checkout"), "{msg}");
+    assert!(
+        !marks.path().join("ran").exists(),
+        "the hook ran after the stop"
+    );
+    assert!(fx.names().is_empty(), "the worktree was left");
+}
+
 // What a stopped `new` leaves says how to clear it.
 #[test]
 fn what_a_stopped_new_leaves_is_refused_with_the_way_past_it() {
