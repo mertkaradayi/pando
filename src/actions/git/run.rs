@@ -7,7 +7,6 @@ use std::path::Path;
 use std::process::{Command, Output};
 use std::time::Duration;
 
-use crate::project::GIT_TIMEOUT;
 use crate::worktree::{self, InProgress};
 
 use super::offer::{refusal, remote_of};
@@ -19,6 +18,14 @@ use super::table::GitAction;
 /// question; bounded, because a hook waiting on a terminal it will never
 /// get is a menu that never comes back.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// How long a fetch the developer asked for may take. Far longer than
+/// the 30 seconds a background git question gets: a large repository,
+/// or one not fetched for weeks, takes longer than that every time, and
+/// a fetch killed while it writes refs leaves their lock files behind for
+/// the next one to trip on. Still bounded, because an ssh prompt for a
+/// host key waits on a terminal the menu never shows.
+const NETWORK_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// What an action did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,15 +155,15 @@ fn reason(out: &Output) -> String {
         .unwrap_or_else(|| format!("exit {}", out.status))
 }
 
-/// A step that reaches the network: bounded by [`GIT_TIMEOUT`], and
+/// A step that reaches the network: bounded by [`NETWORK_TIMEOUT`], and
 /// nothing checked out has changed when it fails.
 fn network(dir: &Path, args: &[&str], shown: &str) -> Result<()> {
-    match git(dir, args, GIT_TIMEOUT) {
+    match git(dir, args, NETWORK_TIMEOUT) {
         Ok(out) if out.status.success() => Ok(()),
         Ok(out) => bail!("`{shown}` failed: {} — nothing changed", reason(&out)),
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => bail!(
             "`{shown}` did not answer in {}s — nothing changed",
-            GIT_TIMEOUT.as_secs()
+            NETWORK_TIMEOUT.as_secs()
         ),
         Err(e) => bail!("could not run `{shown}`: {e}"),
     }
