@@ -14478,6 +14478,35 @@ fn a_namespace_is_found_again_and_one_dropped_by_hand_is_made_again_and_filled()
     );
 }
 
+// Gone, and made again by something else between pando's two questions:
+// adopted, it was a database pando did not make, filled by the schema step
+// and later dropped as the worktree's.
+#[test]
+fn a_database_made_by_something_else_while_pando_remade_it_is_not_taken() {
+    let ns = namespaced_fixture(MAIN_ENV);
+    let (report, _) = ns.start(Mode::Namespaced).unwrap();
+    drop(guard(&report));
+    stop(&ns.fx.paths, &ns.name, None).unwrap();
+    let schema_runs = || {
+        std::fs::read_to_string(&ns.schema)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+    let before = schema_runs();
+
+    std::fs::remove_file(ns.fake.join("dbs/shop__feat_one")).unwrap();
+    std::fs::write(
+        ns.fake.join("on-create-shop__feat_one"),
+        format!("touch '{}'\n", ns.fake.join("dbs/shop__feat_one").display()),
+    )
+    .unwrap();
+    let err = ns.start(Mode::Remembered).map(|_| ()).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("made by something else"), "{msg}");
+    assert_eq!(schema_runs(), before, "the schema step ran into it");
+}
+
 // Decision 4: the login may not make it, so the start stops with nothing
 // made, nothing recorded, nothing spawned, and the grant that fixes it.
 #[test]

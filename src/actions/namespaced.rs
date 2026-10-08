@@ -1102,7 +1102,21 @@ fn ensure_database(
             recorded.name,
             server.address()
         ));
-        create(server, &recorded.name, &target.main, progress)?;
+        // Made again only if pando makes it: one that appeared between the
+        // two questions was made by something else, and is not this
+        // worktree's to run on, nor to drop later.
+        if let namespace::Created::AlreadyThere =
+            create(server, &recorded.name, &target.main, progress)?
+        {
+            bail!(
+                "{}: {} was gone from {} and is there again, made by something else since — \
+                 pando runs this worktree only on a database it made; see what made it, then \
+                 start again",
+                target.service,
+                recorded.name,
+                server.address()
+            );
+        }
         return Ok((record(paths, name, wanted(&recorded.name))?, true));
     }
     let names = namespace::database_names(
