@@ -311,7 +311,10 @@ pub struct ProcessRecord {
     /// its own worktree is started, stopped or removed, and re-signalling
     /// its pgid on every later mutation is how a pid that has since
     /// wrapped around onto an unrelated session leader gets killed. Those
-    /// three clear a swept record without signalling it again.
+    /// three clear a swept record without signalling it again. A group
+    /// already empty when its record is seen to fail is marked swept then:
+    /// nothing is left to signal, and a signal days later finds only
+    /// whoever has the number now.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub swept: bool,
     pub phase: Phase,
@@ -800,6 +803,7 @@ pub fn advance_phases<R: Into<PortCheck>>(
                             at: now,
                             reason: EXITED.into(),
                         };
+                        proc.swept |= !group_alive(proc.pgid);
                         changed = true;
                     } else {
                         let check = proc
@@ -854,6 +858,7 @@ pub fn advance_phases<R: Into<PortCheck>>(
                             at: now,
                             reason: EXITED.into(),
                         };
+                        proc.swept |= !group_alive(proc.pgid);
                         changed = true;
                     }
                 }
@@ -2153,5 +2158,37 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("state.lock");
         assert!(try_lock(&path).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_process_whose_group_is_gone_when_it_fails_is_never_signalled_later() {
+        let mut state = State::new();
+        let mut rec = WorktreeRecord::new("/abs/w", true);
+        rec.processes.insert("gone".into(), running(100));
+        rec.processes.insert("lingering".into(), running(200));
+        rec.processes
+            .insert("starting".into(), starting(300, Utc::now()));
+        state.worktrees.insert("w".into(), rec);
+
+        // Every leader is dead; only `lingering`'s group has a member
+        // left, which the sweep still has to signal once.
+        let lingering = Group::from_raw(200);
+        assert!(advance_phases(
+            &mut state,
+            |_| false,
+            |group| group == lingering,
+            |_, _| false
+        ));
+        let procs = &state.worktrees["w"].processes;
+        for name in ["gone", "lingering", "starting"] {
+            assert!(
+                matches!(procs[name].phase, Phase::Failed { .. }),
+                "{name}: {:?}",
+                procs[name].phase
+            );
+        }
+        assert!(procs["gone"].swept, "nothing left to signal");
+        assert!(procs["starting"].swept, "nothing left to signal");
+        assert!(!procs["lingering"].swept, "its group still has a member");
     }
 }
