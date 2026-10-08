@@ -1,6 +1,6 @@
 [package]
 name = "pando-cli"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2024"
 # The oldest Rust that builds pando: 1.88, for `if … && let` chains and
 # because ratatui, darling and instability need it themselves. The

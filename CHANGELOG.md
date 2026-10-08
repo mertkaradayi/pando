@@ -7,6 +7,8 @@ may change behaviour.
 
 ## Unreleased
 
+## 0.10.1 — 2026-10-08
+
 ### Changed
 
 - A placeholder in a command a process, hook or probe runs is quoted for

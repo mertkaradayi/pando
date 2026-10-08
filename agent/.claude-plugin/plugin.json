@@ -1,6 +1,6 @@
 {
   "name": "pando",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Set pando up on a project and operate it: a git worktree per branch, each with its own dev server, private services, logs and shareable URL. Two skills, both thin over agent/brief.md.",
   "author": {
     "name": "Mert Karadayi",

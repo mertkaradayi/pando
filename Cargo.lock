@@ -1096,7 +1096,7 @@ dependencies = [
 
 [[package]]
 name = "pando-cli"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "ansi-to-tui",
  "anyhow",
