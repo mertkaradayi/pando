@@ -13,7 +13,7 @@
 //! tool where it has run in anger. It is deliberately not extended.
 
 use anyhow::{Context, Result, bail};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -230,11 +230,11 @@ fn handle_connection_with(
     cookie: &str,
     limits: Limits,
 ) -> Result<()> {
-    client.set_read_timeout(Some(limits.headers)).ok();
     // A connection that closes before sending a byte asked nothing, and
     // nothing failed: it is a port probe, `await_listening`'s among them.
     // Logged, it left a false error in every share's proxy log.
-    let Some((head, leftover)) = read_until_headers_end(&mut client)? else {
+    let deadline = Instant::now() + limits.headers;
+    let Some((head, leftover)) = read_until_headers_end(&mut client, deadline)? else {
         return Ok(());
     };
     // The deadline was for the headers, and they are here. A request whose
@@ -293,11 +293,27 @@ fn handle_connection_with(
 /// Reads until the end-of-headers marker, returning the header block and
 /// whatever body bytes arrived in the same packet — or `None` when the
 /// client closed without sending anything at all.
-fn read_until_headers_end(client: &mut TcpStream) -> Result<Option<(String, Vec<u8>)>> {
+///
+/// By `deadline` for the whole block, not per read: a client sending a
+/// byte every little while would otherwise hold its thread for good.
+fn read_until_headers_end(
+    client: &mut TcpStream,
+    deadline: Instant,
+) -> Result<Option<(String, Vec<u8>)>> {
     let mut buf: Vec<u8> = Vec::with_capacity(2048);
     let mut chunk = [0u8; 1024];
     loop {
-        let n = client.read(&mut chunk).context("read from the client")?;
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            bail!("the client took too long to send its headers");
+        }
+        client.set_read_timeout(Some(left)).ok();
+        let n = match client.read(&mut chunk) {
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                bail!("the client took too long to send its headers")
+            }
+            read => read.context("read from the client")?,
+        };
         if n == 0 && buf.is_empty() {
             return Ok(None);
         }
@@ -779,6 +795,40 @@ mod tests {
             response.contains("tick-11"),
             "the stream was cut short: {response}"
         );
+    }
+
+    // The header deadline is for the whole block: a client trickling a
+    // byte at a time, each well inside it, is cut off once it passes.
+    #[test]
+    fn a_client_trickling_its_headers_is_cut_off_at_the_deadline() {
+        let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy_port = proxy.local_addr().unwrap().port();
+        let (tx, rx) = mpsc::channel::<Result<(), String>>();
+        thread::spawn(move || {
+            if let Ok((stream, _)) = proxy.accept() {
+                let limits = Limits {
+                    headers: Duration::from_millis(300),
+                    upstream: UPSTREAM_READ_TIMEOUT,
+                };
+                let handled = handle_connection_with(stream, 1, COOKIE, limits);
+                tx.send(handled.map_err(|e| format!("{e:#}"))).ok();
+            }
+        });
+        let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
+        let began = Instant::now();
+        for byte in b"GET / HTTP/1.1\r\nHost: h\r\n".iter().cycle().take(40) {
+            if client.write_all(&[*byte]).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+            if let Ok(result) = rx.try_recv() {
+                let err = result.unwrap_err();
+                assert!(err.contains("too long to send its headers"), "{err}");
+                assert!(began.elapsed() < Duration::from_millis(1500));
+                return;
+            }
+        }
+        panic!("a trickle of 50 ms a byte held the connection past its 300 ms deadline");
     }
 
     // The upstream deadline is for a server that never starts answering.
