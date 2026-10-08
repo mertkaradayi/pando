@@ -18003,6 +18003,13 @@ mod update {
         );
         assert!(v("0.9.0-rc.1") > v("0.8.1"));
         assert!(v("0.9.0-rc.2") > v("0.9.0-rc.1"));
+        assert!(v("0.9.0-rc.10") > v("0.9.0-rc.9"), "numbers, not text");
+        assert!(
+            v("0.9.0-rc.1") > v("0.9.0-rc"),
+            "more identifiers come later"
+        );
+        assert!(v("0.9.0-rc.1") > v("0.9.0-beta.7"));
+        assert!(v("0.9.0-1") < v("0.9.0-alpha"), "numeric before text");
         for bad in ["", "0.8", "0.8.1.2", "0.8.x", "0.8.1-", "pando"] {
             assert_eq!(Version::parse(bad), None, "{bad:?}");
         }
