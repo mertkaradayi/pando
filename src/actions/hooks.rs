@@ -176,12 +176,12 @@ fn run_hook(
 ) -> Result<()> {
     let log_file = paths.log_file(ctx.name, &hook.name);
     let template_ctx = template_context(paths, ctx, &log_file);
-    let cmd = template::render(&hook.cmd, &template_ctx)
+    let cmd = template::render_shell(&hook.cmd, &template_ctx)
         .with_context(|| format!("in the command for hook {}", hook.name))?;
     let fallback = hook
         .fallback
         .as_deref()
-        .map(|f| template::render(f, &template_ctx))
+        .map(|f| template::render_shell(f, &template_ctx))
         .transpose()
         .with_context(|| format!("in the fallback for hook {}", hook.name))?;
     let cwd = hook_cwd(ctx.worktree, hook, &template_ctx)?;
@@ -311,7 +311,8 @@ pub fn runs_again(
     let log_file = paths.log_file(ctx.name, &hook.name);
     // A command that does not render is one the start stops on rather
     // than skips.
-    let Ok(cmd) = template::render(&hook.cmd, &template_context(paths, ctx, &log_file)) else {
+    let Ok(cmd) = template::render_shell(&hook.cmd, &template_context(paths, ctx, &log_file))
+    else {
         return true;
     };
     let (pins, keyed_cmd) = runtime_key(config, hook, &cmd);
@@ -395,7 +396,7 @@ pub(super) fn run_probes(
     let mut env = pando_env(paths, ctx.name, ctx.branch, ctx.worktree);
     env.extend(ctx.service_env.iter().map(|(k, v)| (k.clone(), v.clone())));
     for probe in &config.probes {
-        let cmd = template::render(&probe.cmd, &template_ctx)
+        let cmd = template::render_shell(&probe.cmd, &template_ctx)
             .with_context(|| format!("in the command for probe {}", probe.name))?;
         let Some(stderr) = hooks::probe(&with_prelude(config, &cmd), ctx.worktree, &env)
             .with_context(|| format!("the probe {} could not be run", probe.name))?

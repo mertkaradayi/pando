@@ -1255,7 +1255,7 @@ fn plan_processes(
             default_role: ready_role.as_deref(),
             log: Some(&log_file),
         };
-        let cmd = template::render(&process.cmd, &ctx)
+        let cmd = template::render_shell(&process.cmd, &ctx)
             .with_context(|| format!("in the command for process {process_name}"))?;
         let cwd = process_cwd(canonical, process_name, process, &ctx)?;
         let env = process_env(paths, name, worktree, process, service_env, &ctx)?;

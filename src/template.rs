@@ -14,6 +14,11 @@
 //! - `${…}` is left alone, because that is a shell variable, not a
 //!   placeholder. Anything else that does not look like `{name}` or
 //!   `{name:arg}` — brace expansion, a JSON literal — is left alone too.
+//!
+//! A command the shell runs is rendered with [`render_shell`], which
+//! quotes each value for where it stands in the command: a path with a
+//! space, or a branch a fork named `x$(…)`, is one word of data and never
+//! shell. An `env` value is not a command, and is rendered as it is.
 
 use anyhow::{Result, bail};
 use std::collections::BTreeMap;
@@ -65,8 +70,49 @@ pub fn render(text: &str, ctx: &Context<'_>) -> Result<String> {
 
 /// [`render`] against any other set of names.
 pub fn render_with(text: &str, resolver: &dyn Resolver) -> Result<String> {
+    render_inner(text, resolver, false)
+}
+
+/// [`render`] for a command a shell runs: each value quoted for where it
+/// stands — a bare word where it is safe as one and single-quoted where
+/// not, escaped for `"…"` inside double quotes, and spliced as `'\''`
+/// inside single quotes. So `cd {worktree}`, `cd "{worktree}"` and
+/// `cd '{worktree}'` all reach the one directory, whatever its name holds.
+pub fn render_shell(text: &str, ctx: &Context<'_>) -> Result<String> {
+    render_inner(text, ctx, true)
+}
+
+/// Where the shell is in a command, as far as the text read so far says.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Quoting {
+    Bare,
+    Single,
+    Double,
+}
+
+/// A value, written so the shell reads it back as itself where `quoting`
+/// says it stands.
+fn quoted_for(value: &str, quoting: Quoting) -> String {
+    match quoting {
+        Quoting::Bare => crate::process::shell_word(value),
+        Quoting::Single => value.replace('\'', "'\\''"),
+        Quoting::Double => {
+            let mut out = String::with_capacity(value.len());
+            for c in value.chars() {
+                if matches!(c, '\\' | '"' | '$' | '`') {
+                    out.push('\\');
+                }
+                out.push(c);
+            }
+            out
+        }
+    }
+}
+
+fn render_inner(text: &str, resolver: &dyn Resolver, shell: bool) -> Result<String> {
     let mut out = String::with_capacity(text.len());
     let bytes: Vec<char> = text.chars().collect();
+    let mut quoting = Quoting::Bare;
     let mut i = 0;
     while i < bytes.len() {
         let c = bytes[i];
@@ -88,10 +134,31 @@ pub fn render_with(text: &str, resolver: &dyn Resolver) -> Result<String> {
         {
             let inner: String = bytes[i + 1..end].iter().collect();
             if let Some((key, arg)) = split_placeholder(&inner) {
-                out.push_str(&resolver.resolve(key, arg)?);
+                let value = resolver.resolve(key, arg)?;
+                match shell {
+                    true => out.push_str(&quoted_for(&value, quoting)),
+                    false => out.push_str(&value),
+                }
                 i = end + 1;
                 continue;
             }
+        }
+        // The quoting the command's own text sets up, which the value
+        // after it has to fit: a backslash outside single quotes takes the
+        // next character with it.
+        match (quoting, c) {
+            (Quoting::Bare | Quoting::Double, '\\')
+                if bytes.get(i + 1).is_some_and(|next| *next != '{') =>
+            {
+                out.push(c);
+                out.push(bytes[i + 1]);
+                i += 2;
+                continue;
+            }
+            (Quoting::Bare, '\'') => quoting = Quoting::Single,
+            (Quoting::Bare, '"') => quoting = Quoting::Double,
+            (Quoting::Single, '\'') | (Quoting::Double, '"') => quoting = Quoting::Bare,
+            _ => {}
         }
         out.push(c);
         i += 1;
@@ -363,5 +430,72 @@ mod tests {
         let o = owned();
         assert_eq!(render("pnpm dev", &ctx(&o)).unwrap(), "pnpm dev");
         assert_eq!(render("", &ctx(&o)).unwrap(), "");
+    }
+
+    /// What a POSIX shell prints for `command`.
+    fn shell_says(command: &str) -> String {
+        let out = crate::platform::shell::posix()
+            .unwrap()
+            .arg("-c")
+            .arg(command)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{command}: {out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    // Values a fork's branch or a home directory can hold, each read back
+    // by the shell as itself, however the command writes the placeholder.
+    // Spliced raw, a space split the path and `$(…)` ran.
+    #[test]
+    fn a_value_in_a_command_is_one_word_of_data_however_it_is_quoted() {
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        for branch in [
+            "feat/plain".to_string(),
+            "with space".to_string(),
+            format!("x$(touch {})", ran.display()),
+            "it's".to_string(),
+            "say \"hi\" `now` \\ $HOME".to_string(),
+        ] {
+            let o = owned();
+            let mut c = ctx(&o);
+            c.branch = Some(&branch);
+            for command in [
+                "printf %s {branch}",
+                "printf %s \"{branch}\"",
+                "printf %s '{branch}'",
+                "printf %s \"[{branch}]\"",
+                "printf %s pre-{branch}-post",
+            ] {
+                let rendered = render_shell(command, &c).unwrap();
+                let expected = match command {
+                    "printf %s \"[{branch}]\"" => format!("[{branch}]"),
+                    "printf %s pre-{branch}-post" => format!("pre-{branch}-post"),
+                    _ => branch.clone(),
+                };
+                assert_eq!(shell_says(&rendered), expected, "{command} → {rendered}");
+            }
+        }
+        assert!(!ran.exists(), "a value ran as a command");
+    }
+
+    // A plain value is left as it was, so every command that rendered
+    // before renders the same — its hook's fingerprint with it.
+    #[test]
+    fn a_plain_value_renders_as_before_in_a_command() {
+        let o = owned();
+        let c = ctx(&o);
+        for command in [
+            "cd {worktree} && pnpm dev --port {port}",
+            "cd \"{worktree}\" && echo '{branch}' {{x}} ${PORT}",
+            "echo \\{port}",
+        ] {
+            assert_eq!(
+                render_shell(command, &c).unwrap(),
+                render(command, &c).unwrap(),
+                "{command}"
+            );
+        }
     }
 }
