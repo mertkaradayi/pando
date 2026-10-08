@@ -924,20 +924,23 @@ pub(super) fn prepare(
     let mut fresh = false;
     let mut namespaces = Vec::new();
     for (target, server) in &servers {
-        let (namespace, made) = match target.namespace.kind {
-            NamespaceKind::Database => ensure_database(paths, name, target, server, progress)?,
-            NamespaceKind::Slot => ensure_slot(paths, name, target, server, progress)?,
-        };
-        // A slot given out is empty and needs no schema; only a database
-        // made just now does.
-        fresh |= made && namespace.kind == NamespaceKind::Database;
-        progress(&format!(
-            "{}: {}{}",
-            target.service,
-            own(&namespace),
-            if made { ", made just now" } else { "" }
-        ));
-        namespaces.push(namespace);
+        for part in parts(target) {
+            let target = &part;
+            let (namespace, made) = match target.namespace.kind {
+                NamespaceKind::Database => ensure_database(paths, name, target, server, progress)?,
+                NamespaceKind::Slot => ensure_slot(paths, name, target, server, progress)?,
+            };
+            // A slot given out is empty and needs no schema; only a database
+            // made just now does.
+            fresh |= made && namespace.kind == NamespaceKind::Database;
+            progress(&format!(
+                "{}: {}{}",
+                target.service,
+                own(&namespace),
+                if made { ", made just now" } else { "" }
+            ));
+            namespaces.push(namespace);
+        }
     }
     for line in plan.shared_lines() {
         progress(&line);
@@ -947,6 +950,57 @@ pub(super) fn prepare(
         namespaces,
         fresh,
     })
+}
+
+/// What a worktree gets of one target: a database of its own for each one
+/// the main checkout uses there — `shop` and its tests' `shop_test` are two
+/// databases, and the worktree's tests emptying "the test database" must
+/// not empty its dev one — each as the target of that main alone. A slot
+/// is one, whatever its keys say: a Redis's slots fold together on
+/// purpose, and one app's roles sharing one is its own choice.
+fn parts(target: &Target) -> Vec<Target> {
+    match target.namespace.kind {
+        NamespaceKind::Database => target
+            .mains
+            .iter()
+            .map(|main| Target {
+                main: main.clone(),
+                ..target.clone()
+            })
+            .collect(),
+        NamespaceKind::Slot => vec![target.clone()],
+    }
+}
+
+/// The database or slot one tell names in the main checkout's env files:
+/// a URL's path or query parameter, or a key's value.
+fn named_by(
+    tell: &Tell,
+    env: &std::collections::BTreeMap<String, String>,
+    main_env: &EnvFiles,
+    address: &crate::recipes::AddressRecipe,
+) -> Option<String> {
+    let key = match tell {
+        Tell::Key(key) | Tell::Url(key) => key,
+    };
+    let value = match env.get(key) {
+        Some(value) => value.trim().to_string(),
+        None => main_env.value(key).ok().flatten()?.trim().to_string(),
+    };
+    match tell {
+        Tell::Key(_) => Some(value),
+        Tell::Url(_) => address
+            .url_path
+            .then(|| crate::services::url_identity(&value).1)
+            .flatten()
+            .or_else(|| {
+                address.url_query.iter().find_map(|parameter| {
+                    crate::services::url_query_values(&value, parameter)
+                        .into_iter()
+                        .next()
+                })
+            }),
+    }
 }
 
 /// `own database northwind_traders__feat_x`, `slot 3` — what a worktree
@@ -2383,7 +2437,25 @@ pub(super) fn namespaced_env(
                 target.port
             );
         };
+        let main_env = main_env(paths, config);
+        let address = target.namespace.address();
         for tell in &target.tells {
+            // Each tell at the worktree's own of the database it names:
+            // `TEST_DATABASE_URL`'s `shop_test` at `shop_test__…`, never
+            // at the dev one.
+            let namespace = match target.namespace.kind {
+                NamespaceKind::Database => named_by(tell, &env, &main_env, &address)
+                    .and_then(|main| {
+                        namespaces.iter().find(|ns| {
+                            ns.service == target.service
+                                && ns.port == target.port
+                                && ns.kind == NamespaceKind::Database
+                                && ns.main.eq_ignore_ascii_case(&main)
+                        })
+                    })
+                    .unwrap_or(namespace),
+                NamespaceKind::Slot => namespace,
+            };
             match tell {
                 Tell::Key(key) => {
                     env.insert(key.clone(), namespace.name.clone());
@@ -2391,9 +2463,8 @@ pub(super) fn namespaced_env(
                 Tell::Url(key) => {
                     let url = match env.get(key) {
                         Some(url) => Some(url.clone()),
-                        None => main_env(paths, config).value(key)?,
+                        None => main_env.value(key)?,
                     };
-                    let address = target.namespace.address();
                     let rewritten = url.map(|url| url.trim().to_string()).and_then(|url| {
                         match address.url_path {
                             true => crate::services::with_url_path(&url, &namespace.name),
@@ -2763,9 +2834,17 @@ pub fn namespace_leftovers(
         let Ok(server) = server_for(paths, config, &target) else {
             continue;
         };
-        let Ok(names) = server.list(&target.main) else {
-            continue;
-        };
+        let mut names: Vec<String> = Vec::new();
+        for main in &target.mains {
+            for listed in server.list(main).unwrap_or_default() {
+                if !names
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(&listed))
+                {
+                    names.push(listed);
+                }
+            }
+        }
         for name in names {
             let listed = crate::state::NamespaceRecord {
                 service: target.service.clone(),

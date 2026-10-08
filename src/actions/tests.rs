@@ -14571,6 +14571,40 @@ fn a_recorded_database_another_project_records_too_is_not_run_on() {
     assert!(msg.contains("pando rm"), "{msg}");
 }
 
+// `DATABASE_URL` names `shop` and `TEST_DATABASE_URL` its tests'
+// `shop_test`, on one server. Both pointed at one worktree database, the
+// worktree's tests emptying "the test database" emptied its dev data.
+// Each gets its own, and `rm` drops both.
+#[test]
+fn each_database_main_uses_gets_one_of_the_worktrees_own() {
+    let mut ns = namespaced_fixture(
+        "DATABASE_URL=mysql://app:s3cret-pw@localhost:3306/shop\n\
+         TEST_DATABASE_URL=mysql://app:s3cret-pw@localhost:3306/shop_test\n",
+    );
+    let text = "[[services]]\nkind = \"native\"\nname = \"mariadb\"\n\
+                env = { DATABASE_URL = \"mariadb\", TEST_DATABASE_URL = \"mariadb\" }\n";
+    let config: Config = toml::from_str(text).unwrap();
+    ns.fx.config.services = config.services;
+    ns.fx.config.hooks.clear();
+    std::fs::write(ns.fx.paths.config_file(), text).unwrap();
+
+    let (report, _) = ns.start(Mode::Namespaced).unwrap();
+    let guarded = guard(&report);
+    let made: Vec<String> = ns.fake("created").lines().map(str::to_string).collect();
+    assert_eq!(made, vec!["shop__feat_one", "shop_test__feat_one"]);
+    let url = ns.env_line("DATABASE_URL").unwrap();
+    let test_url = ns.env_line("TEST_DATABASE_URL").unwrap();
+    assert!(url.ends_with("/shop__feat_one"), "{url}");
+    assert!(test_url.ends_with("/shop_test__feat_one"), "{test_url}");
+    drop(guarded);
+    stop(&ns.fx.paths, &ns.name, None).unwrap();
+
+    super::rm(&ns.fx.paths, &ns.name, false, false, &noop).unwrap();
+    let mut dropped: Vec<String> = ns.fake("dropped").lines().map(str::to_string).collect();
+    dropped.sort();
+    assert_eq!(dropped, vec!["shop__feat_one", "shop_test__feat_one"]);
+}
+
 // Decision 4: the login may not make it, so the start stops with nothing
 // made, nothing recorded, nothing spawned, and the grant that fixes it.
 #[test]
