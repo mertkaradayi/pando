@@ -88,14 +88,13 @@ fn offer(read: &GitRead, action: GitAction) -> Offer {
 /// Why `action` will not run on `read`, or `None` when it will. Checked
 /// again by [`super::run`] on a fresh read before anything runs.
 pub(super) fn refusal(read: &GitRead, action: GitAction) -> Option<String> {
-    let dirty = || {
-        (read.dirty > 0).then(|| {
-            let files = if read.dirty == 1 { "file" } else { "files" };
-            format!(
-                "✎ {} uncommitted {files} — commit or stash first",
-                read.dirty
-            )
-        })
+    let dirty = || match read.dirty {
+        Some(0) => None,
+        Some(n) => {
+            let files = if n == 1 { "file" } else { "files" };
+            Some(format!("✎ {n} uncommitted {files} — commit or stash first"))
+        }
+        None => Some("git status did not answer, so the tree may not be clean".to_string()),
     };
     let in_progress = || {
         read.in_progress

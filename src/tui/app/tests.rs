@@ -8176,7 +8176,7 @@ pub fn a_git_read(main: bool) -> GitRead {
         upstream_remote: Some("origin".into()),
         upstream_drift: Some((0, 0)),
         pushed: 46,
-        dirty: 0,
+        dirty: Some(0),
         in_progress: None,
         has_origin: true,
         fetched: None,
@@ -8282,7 +8282,7 @@ fn esc_steps_the_git_menu_back_one_stage_at_a_time() {
 fn a_letter_opens_its_preview_and_a_refused_one_says_why() {
     let mut app = test_app(&["feat+one"]);
     let mut dirty = a_git_read(false);
-    dirty.dirty = 2;
+    dirty.dirty = Some(2);
     open_git_menu(&mut app, "feat+one", dirty);
     press(&mut app, KeyCode::Char('r'));
     assert!(matches!(

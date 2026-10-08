@@ -1392,9 +1392,13 @@ fn git_header(read: &GitRead) -> Vec<Line<'static>> {
             format!("a {} is in progress", op.noun()),
             Style::new().fg(orange()),
         ),
-        (None, 0) => Span::styled("clean", Style::new().fg(green())),
-        (None, 1) => Span::styled("✎ 1 uncommitted file", Style::new().fg(yellow())),
-        (None, n) => Span::styled(
+        (None, None) => Span::styled(
+            "unknown — git status did not answer",
+            Style::new().fg(yellow()),
+        ),
+        (None, Some(0)) => Span::styled("clean", Style::new().fg(green())),
+        (None, Some(1)) => Span::styled("✎ 1 uncommitted file", Style::new().fg(yellow())),
+        (None, Some(n)) => Span::styled(
             format!("✎ {n} uncommitted files"),
             Style::new().fg(yellow()),
         ),

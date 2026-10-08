@@ -244,7 +244,7 @@ fn a_rebase_that_conflicts_is_aborted_and_leaves_everything_as_it_was() {
         std::fs::read_to_string(wt.join("a.txt")).unwrap(),
         "one\nmine\nthree\n"
     );
-    assert_eq!(read::dirty(&wt), 0);
+    assert_eq!(read::dirty(&wt), Some(0));
 }
 
 #[test]
@@ -301,7 +301,7 @@ fn uncommitted_changes_refuse_every_move_but_a_fetch() {
     repo.advance("b.txt", "b\n");
     write(&wt, "a.txt", "edited\n");
     let read = read(&wt, false, Some("origin/main"));
-    assert_eq!(read.dirty, 1);
+    assert_eq!(read.dirty, Some(1));
     for offer in offers(&read) {
         match offer.action {
             GitAction::Fetch => assert_eq!(offer.refused, None),
@@ -505,4 +505,26 @@ fn an_ignored_directory_counts_and_an_ignored_file_nobody_tracks_does_not() {
         run::ignored_in_the_way(&wt, "origin/main"),
         vec!["build/vendored.js".to_string()]
     );
+}
+
+#[test]
+fn a_status_that_did_not_answer_refuses_every_move_but_a_fetch() {
+    let r = repo();
+    let wt = r.worktree("fix/unknown");
+    let mut read = read::read(&wt, false, Some("origin/main"));
+    read.dirty = None;
+    let mut main = read::read(&r.main, true, Some("origin/main"));
+    main.dirty = None;
+    for (read, action) in [
+        (&main, GitAction::Pull),
+        (&read, GitAction::Rebase),
+        (&read, GitAction::Merge),
+    ] {
+        let why = offer::refusal(read, action);
+        assert!(
+            why.as_deref()
+                .is_some_and(|w| w.contains("git status did not answer")),
+            "{action:?}: {why:?}"
+        );
+    }
 }

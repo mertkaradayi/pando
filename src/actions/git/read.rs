@@ -33,8 +33,9 @@ pub struct GitRead {
     /// already: the next push of a rebased branch needs force.
     pub pushed: u32,
     /// Entries `git status` lists: uncommitted changes and untracked
-    /// files alike.
-    pub dirty: usize,
+    /// files alike. `None` when `git status` failed or did not answer in
+    /// time, which no move takes for clean.
+    pub dirty: Option<usize>,
     pub in_progress: Option<InProgress>,
     pub has_origin: bool,
     /// When the repository last fetched, from `FETCH_HEAD`'s time.
@@ -135,12 +136,11 @@ fn pushed(dir: &Path, base: &str, upstream: &str) -> u32 {
 
 /// `--no-optional-locks`, as the list's own status read: a read never
 /// writes an index lock into the checkout.
-pub(super) fn dirty(dir: &Path) -> usize {
+pub(super) fn dirty(dir: &Path) -> Option<usize> {
     crate::project::git(dir, ["--no-optional-locks", "status", "--porcelain"])
         .ok()
         .filter(|out| out.status.success())
         .map(|out| String::from_utf8_lossy(&out.stdout).lines().count())
-        .unwrap_or(0)
 }
 
 /// The newer of this checkout's `FETCH_HEAD` and the repository's: a
