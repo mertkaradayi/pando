@@ -471,10 +471,27 @@ fn status_from(value: &serde_json::Value) -> Status {
 
 // ---- telling the app where its services are -------------------------------
 
-/// Where a value is looked up, in order. `.env` first because it holds the
-/// real credentials for this project; the example files are the fallback
-/// for a worktree that has none.
-const ENV_FILES: [&str; 4] = [".env", ".env.example", ".env.sample", ".env.template"];
+/// The env files an app reads for itself, in the order a dotenv loader
+/// lets one override the next: `.env.local` over `.env`, as Next, Vite and
+/// dotenv-flow read them. What the app really connects with is there.
+pub const LOCAL_ENV_FILES: [&str; 2] = [".env.local", ".env"];
+
+/// The examples a project commits for a checkout that has no env file of
+/// its own yet.
+pub const ENV_EXAMPLES: [&str; 3] = [".env.example", ".env.sample", ".env.template"];
+
+/// Where a value is looked up, in order: the app's own files first, as it
+/// reads them, which hold the real credentials and the database it really
+/// uses — a value read from `.env` that `.env.local` overrides named a
+/// database the app never touches — then the examples, the fallback for a
+/// worktree that has none.
+const ENV_FILES: [&str; 5] = [
+    LOCAL_ENV_FILES[0],
+    LOCAL_ENV_FILES[1],
+    ENV_EXAMPLES[0],
+    ENV_EXAMPLES[1],
+    ENV_EXAMPLES[2],
+];
 
 /// The environment that points an app at *this* worktree's services.
 ///
@@ -1883,6 +1900,38 @@ mod tests {
             with_url_query_value("redis://localhost:6379/2", "db", "7"),
             "redis://localhost:6379/2"
         );
+    }
+
+    // `.env.local` overrides `.env` for the app, as Next, Vite and
+    // dotenv-flow read them: the value pando rewrote from `.env` named a
+    // database the app never connects to. A key it leaves out is still
+    // `.env`'s.
+    #[test]
+    fn a_value_in_env_local_wins_over_env_as_the_app_reads_it() {
+        let dir = worktree_with(&[
+            (
+                ".env",
+                "DATABASE_URL=postgres://app@localhost:5432/shop
+REDIS_PORT=6379
+",
+            ),
+            (
+                ".env.local",
+                "DATABASE_URL=postgres://me@localhost:5432/shop_dev
+",
+            ),
+        ]);
+        let env = app_env(
+            dir.path(),
+            &map(&[("DATABASE_URL", "postgres"), ("REDIS_PORT", "redis")]),
+            &ports(&[("postgres", 17_004), ("redis", 17_006)]),
+        )
+        .unwrap();
+        assert_eq!(
+            env["DATABASE_URL"],
+            "postgres://me@localhost:17004/shop_dev"
+        );
+        assert_eq!(env["REDIS_PORT"], "17006");
     }
 
     #[test]

@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::catalog::artifacts;
 use crate::catalog::frameworks;
 use crate::catalog::package_managers;
+use crate::services::{ENV_EXAMPLES, LOCAL_ENV_FILES};
 
 /// Everything tier 1 can see. Serialisable because `pando signals` prints it
 /// for an agent to read.
@@ -125,8 +126,6 @@ pub(super) const VERSION_FILES: [&str; 8] = [
     "rust-toolchain.toml",
     ".ruby-version",
 ];
-
-const ENV_EXAMPLES: [&str; 3] = [".env.example", ".env.sample", ".env.template"];
 
 /// The compose file names `signals` reports, in the order it reports them.
 /// The same names as [`crate::compose::COMPOSE_FILES`], whose order is
@@ -625,10 +624,6 @@ pub(super) fn env_example(root: &Path) -> Vec<(String, String)> {
     }
     Vec::new()
 }
-
-/// The env files an app reads for itself, in the order a dotenv loader
-/// lets one override the next: `.env.local` over `.env`.
-const LOCAL_ENV_FILES: [&str; 2] = [".env.local", ".env"];
 
 /// The value `key` has in a directory's own env files: its local ones
 /// first, which are what the app really reads in the main checkout, then
