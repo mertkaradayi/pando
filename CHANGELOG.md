@@ -7,6 +7,60 @@ may change behaviour.
 
 ## Unreleased
 
+### Fixed
+
+- The git menu no longer loses an ignored file such as `.env`. A pull,
+  rebase or merge onto a base that has started tracking that path used
+  to replace it, and the abort after a conflict deleted it. Such a move
+  is now refused before anything runs, naming the files.
+- The git menu moves a branch onto the base it was made from. That is
+  the branch `new --base` forked it from, or, for a pull request, the
+  branch the pull request targets. It used to rebase onto the
+  configured base: a branch cut from `release` and rebased onto `main`
+  took every commit of `release` with it.
+- The git menu refuses a move when `git status` does not answer, rather
+  than reading the tree as clean. Its fetches get five minutes, not
+  thirty seconds.
+- A fork's pull request is fetched from the remote of the repository it
+  was opened against, such as `upstream`. Fetching from `origin`, a
+  contributor's own fork, could check out a different pull request with
+  the same number.
+- `pando rm` drops nothing in namespaced mode while it cannot read what
+  the main checkout's env files name today. Before, an unresolved value,
+  a renamed service or a moved port meant it decided on the record alone.
+- Namespaced mode finds a database container whose port on the host
+  differs from the port inside it (`5433:5432`). Docker's `--filter
+  publish=` matches the inside port, so pando used to find nothing.
+- The share proxy logs in only requests for the tunnel's own host. A web
+  page or another process reaching its loopback port directly is
+  answered `421` and never gets the session cookie.
+- A shared event stream or long poll that is quiet for more than a
+  minute is no longer cut off. The proxy's upstream deadline now ends at
+  the first byte of the answer. The header deadline now covers the whole
+  header block, not each read.
+- A Ctrl-C during `pando check`'s install or start records the check as
+  interrupted, not as failing settings.
+- A Ctrl-C while `new` clones files copy-on-write now stops it before
+  git writes the rest of the checkout and before the `post-checkout`
+  hook runs.
+- A port held by a listener on `[::]` with `IPV6_V6ONLY` is no longer
+  handed out as free. uvicorn's `--host ::` and nginx's `listen [::]`
+  listen like that.
+- A process whose whole group had already exited when it was seen to
+  fail is never signalled later. That pid may by then belong to
+  something else.
+- The state file is synced to disk before it replaces the old one, so a
+  crash right after a save cannot leave it empty.
+- `pando update` downloads the install script into a new file only you
+  can write, not to a predictable path in the shared temporary
+  directory. Pre-release tags are ordered as semver orders them
+  (`rc.10` after `rc.9`).
+- The TUI saves the list's order and the theme when `ui` in the config
+  is an inline or dotted table. It used to report success and write
+  nothing.
+- A workspace member excluded with a negated glob, such as
+  `!apps/legacy`, is no longer proposed as an app.
+
 ## 0.10.0 — 2026-10-08
 
 ### Added
