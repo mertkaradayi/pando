@@ -50,20 +50,27 @@ const HASH_SEPARATOR: u8 = 0x1f;
 /// probe that takes the port can hand the server it is waiting for an
 /// `EADDRINUSE`.
 pub fn is_port_free(port: u16) -> bool {
-    can_bind("0.0.0.0", port) && can_bind("127.0.0.1", port) && v6_loopback_free(port)
+    can_bind("0.0.0.0", port)
+        && can_bind("127.0.0.1", port)
+        && v6_free("::1", port)
+        && v6_free("::", port)
 }
 
 fn can_bind(host: &str, port: u16) -> bool {
     std::net::TcpListener::bind((host, port)).is_ok()
 }
 
-/// Whether `[::1]:port` is free, on a machine that has an IPv6 loopback.
+/// Whether `[host]:port` is free, on a machine that has IPv6.
+///
+/// `[::]` as well as `[::1]`: a listener on `[::]` with `IPV6_V6ONLY` set
+/// — uvicorn's `--host ::`, nginx's `listen [::]:p`, Go's `tcp6` — leaves
+/// both IPv4 addresses and, on macOS, `[::1]` bindable too.
 ///
 /// Only `AddrInUse` counts as taken: a host without IPv6 answers every bind
 /// with `AddrNotAvailable` or `AfNoSupport`, and reading that as "occupied"
 /// would leave pando with no ports at all.
-fn v6_loopback_free(port: u16) -> bool {
-    match std::net::TcpListener::bind(("::1", port)) {
+fn v6_free(host: &str, port: u16) -> bool {
+    match std::net::TcpListener::bind((host, port)) {
         Ok(_) => true,
         Err(e) => e.kind() != std::io::ErrorKind::AddrInUse,
     }
@@ -796,6 +803,50 @@ mod tests {
             crate::testutil::wait_until(std::time::Duration::from_secs(10), || is_port_free(port)),
             "and it is free again once that goes"
         );
+    }
+
+    // A listener on `[::]` with `IPV6_V6ONLY` leaves `0.0.0.0`,
+    // `127.0.0.1` and, on macOS, `[::1]` bindable: only a probe of `[::]`
+    // itself sees it.
+    #[test]
+    fn a_port_held_by_a_v6_only_wildcard_listener_is_not_free() {
+        if !crate::testutil::python3_available() {
+            eprintln!("skipping: no python3");
+            return;
+        }
+        let mut child = std::process::Command::new("python3")
+            .args([
+                "-u",
+                "-c",
+                "import socket,sys\n\
+                 s=socket.socket(socket.AF_INET6)\n\
+                 s.setsockopt(socket.IPPROTO_IPV6,socket.IPV6_V6ONLY,1)\n\
+                 s.bind(('::',0))\n\
+                 s.listen()\n\
+                 print(s.getsockname()[1])\n\
+                 sys.stdin.read()",
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(child.stdout.take().unwrap()),
+            &mut line,
+        )
+        .unwrap();
+        let Ok(port) = line.trim().parse::<u16>() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            eprintln!("skipping: no IPv6 on this machine");
+            return;
+        };
+        let free = is_port_free(port);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(!free, "{port} is held on [::] and must not be handed out");
     }
 
     // A machine with no IPv6 at all must not have every port read as taken.
