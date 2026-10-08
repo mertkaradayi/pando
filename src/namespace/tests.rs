@@ -923,8 +923,14 @@ fn containerised(published: Option<u16>) -> FakeClient {
     std::fs::create_dir_all(&inside).unwrap();
     std::fs::rename(fake.bin().join(INSIDE_CLIENT), inside.join(INSIDE_CLIENT)).unwrap();
     let state = fake.dir.path().display();
+    // Docker's `--filter publish=` matches the port inside the container,
+    // 5432 here, never the one published on the host: a stand-in that
+    // ignored it hid a lookup by the host's port that finds nothing.
     let ps = match published {
-        Some(_) => "echo c0ffee",
+        Some(_) => {
+            "f=$(printf '%s\\n' \"$*\" | sed -n 's/.*publish=\\([0-9]*\\).*/\\1/p'); \
+             if [ -z \"$f\" ] || [ \"$f\" = 5432 ]; then echo c0ffee; fi"
+        }
         None => ":",
     };
     let port = published.unwrap_or(0);

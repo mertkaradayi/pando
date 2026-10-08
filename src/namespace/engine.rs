@@ -179,8 +179,10 @@ impl Server<'_> {
     }
 
     /// The running container that publishes this server's port on this
-    /// machine, and the port it listens on inside: `docker ps` by the
-    /// published port, then `docker port` for the side within. `None`
+    /// machine, and the port it listens on inside: every running
+    /// container's `docker port`, matched on the host's side. Not `docker
+    /// ps --filter publish=`, which matches the port inside the container:
+    /// a `5433:5432` mapping is never found by 5433. `None`
     /// with no Docker, no such container, or an answer it cannot read.
     ///
     /// Only for a server the app reaches on this machine's own loopback,
@@ -198,7 +200,7 @@ impl Server<'_> {
             return None;
         }
         let script = self.with_path(&format!(
-            "ids=$(docker ps --filter publish={port} --format '{{{{.ID}}}}') || exit 1\n\
+            "ids=$(docker ps --format '{{{{.ID}}}}') || exit 1\n\
              echo --\n\
              for id in $ids; do echo \"$id\"; docker port \"$id\"; done\n\
              echo ==\n\
