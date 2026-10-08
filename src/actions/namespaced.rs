@@ -2403,6 +2403,23 @@ pub(super) fn drop_namespaces(
             true => "",
             false => " — nothing records it after this, so pando will not mention it again",
         };
+        // What the main checkout names today is half of the guard. Unread
+        // — an env value it cannot resolve, a service renamed or no longer
+        // namespaced, a port moved — it is not "nothing": main may name
+        // this very one now, and a drop on the record's word alone would
+        // empty it.
+        if target.is_none() {
+            progress(
+                &format!(
+                    "{}: {what} is left as it is — pando cannot read what the main checkout's \
+                     env files name for {} today, so it cannot be sure this is not the main \
+                     checkout's now{last}",
+                    ns.service, ns.service
+                ),
+                false,
+            );
+            continue;
+        }
         if let Err(e) = namespace::may_drop(store, name, ns, &main_now, &others) {
             progress(
                 &format!("{}: {what} is left as it is — {e:#}{last}", ns.service),

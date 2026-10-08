@@ -12645,11 +12645,12 @@ fn boxed_fixture(url: &str, env: &str) -> (Fx, PathBuf) {
         "services:\n  db:\n    image: boxed:1\n    ports: [\"15432:5432\"]\n",
         &format!("PORT=3000\nDATABASE_URL={url}\n"),
     );
-    let config: Config = toml::from_str(
-        "[[services]]\nkind = \"compose\"\nfile = \"docker-compose.yml\"\n\
-         include = [\"db\"]\nenv = { DATABASE_URL = \"db\" }\n",
-    )
-    .unwrap();
+    let text = "[[services]]\nkind = \"compose\"\nfile = \"docker-compose.yml\"\n\
+                include = [\"db\"]\nenv = { DATABASE_URL = \"db\" }\n";
+    let config: Config = toml::from_str(text).unwrap();
+    // On disk too, where `rm` reads it.
+    std::fs::create_dir_all(fx.paths.config_file().parent().unwrap()).unwrap();
+    std::fs::write(fx.paths.config_file(), text).unwrap();
     fx.config.services = config.services;
     std::fs::create_dir_all(fx.paths.recipes_dir()).unwrap();
     std::fs::write(fx.paths.recipes_dir().join("boxed.toml"), BOXED_RECIPE).unwrap();
@@ -14210,13 +14211,17 @@ fn namespaced_fixture(env: &str) -> Namespaced {
     std::fs::write(fx.root.join(".env"), env).unwrap();
     let seen = fx.root.parent().unwrap().join("seen-env");
     let schema = fx.root.parent().unwrap().join("schema-ran");
-    let config: Config = toml::from_str(&format!(
+    let text = format!(
         "[[services]]\nkind = \"native\"\nname = \"mariadb\"\nenv = {{ DATABASE_PORT = \"mariadb\" }}\n\n\
          [[hooks]]\nname = \"schema\"\nafter = \"services\"\n\
          cmd = \"echo \\\"$DATABASE_NAME\\\" >> '{}'\"\n",
         schema.display()
-    ))
-    .unwrap();
+    );
+    let config: Config = toml::from_str(&text).unwrap();
+    // On disk too: `rm` reads the config from pando's own file, as it does
+    // for real, and without it reads no target for any namespace.
+    std::fs::create_dir_all(fx.paths.config_file().parent().unwrap()).unwrap();
+    std::fs::write(fx.paths.config_file(), &text).unwrap();
     fx.config.services = config.services;
     fx.config.hooks = config.hooks;
     with_dev(
@@ -14889,11 +14894,16 @@ fn slots_fixture_keyed(env: &str, keys: &[&str]) -> (Namespaced, PathBuf) {
         .iter()
         .map(|key| format!("{key} = \"redis\""))
         .collect();
-    let redis: Config = toml::from_str(&format!(
+    let text = format!(
         "[[services]]\nkind = \"native\"\nname = \"redis\"\nenv = {{ {} }}\n",
         keys.join(", ")
-    ))
-    .unwrap();
+    );
+    let redis: Config = toml::from_str(&text).unwrap();
+    let file = ns.fx.paths.config_file();
+    let mut on_disk = std::fs::read_to_string(&file).unwrap();
+    on_disk.push('\n');
+    on_disk.push_str(&text);
+    std::fs::write(&file, on_disk).unwrap();
     ns.fx.config.services.extend(redis.services);
     let fake = fake_redis(&ns.fx.paths);
     (ns, fake)
@@ -16745,6 +16755,35 @@ fn rm_leaves_what_the_guard_refuses_and_says_why() {
             .any(|l| l.contains("database shop is left") && forgotten(l)),
         "{said:?}"
     );
+    assert_eq!(ns.fake("dropped"), "", "nothing was dropped");
+    assert!(!redis.join("flushed").exists(), "nothing was emptied");
+}
+
+// What main names today is half of the guard. Main's env pointed at the
+// worktree's own slot and database through values pando cannot resolve,
+// and `rm` took the empty answer for "none": it emptied the slot main now
+// used and dropped the database main now read.
+#[test]
+fn rm_drops_nothing_while_it_cannot_read_what_main_names_today() {
+    let (ns, redis) = stopped_namespaced();
+    std::fs::write(
+        ns.fx.root.join(".env"),
+        "DATABASE_HOST=localhost\nDATABASE_PORT=${DB_PORT}\nDATABASE_NAME=shop__feat_one\n\
+         DATABASE_USER=app\nDATABASE_PASSWORD=s3cret-pw\nREDIS_HOST=\nREDIS_PORT=${CACHE_PORT}\n\
+         REDIS_DB=1\n",
+    )
+    .unwrap();
+    let (said, progress) = collecting();
+    super::rm(&ns.fx.paths, &ns.name, false, false, &progress).unwrap();
+    let said = said.borrow().clone();
+    for service in ["mariadb", "redis"] {
+        assert!(
+            said.iter().any(|l| l.starts_with(&format!("{service}: "))
+                && l.contains("is left as it is")
+                && l.contains("cannot read what the main checkout's env files name")),
+            "{service}: {said:?}"
+        );
+    }
     assert_eq!(ns.fake("dropped"), "", "nothing was dropped");
     assert!(!redis.join("flushed").exists(), "nothing was emptied");
 }
