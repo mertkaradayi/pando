@@ -145,7 +145,9 @@ pub(super) fn set_sort(doc: &mut toml_edit::DocumentMut, sort: ListSort) {
     let ui = doc
         .entry("ui")
         .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
-    if let Some(table) = ui.as_table_mut() {
-        table["sort"] = toml_edit::value(sort.word());
+    // `ui = { ... }` and `ui.sort = ...` are the same table to a reader,
+    // and a save that only found `[ui]` reported success and wrote nothing.
+    if let Some(table) = ui.as_table_like_mut() {
+        table.insert("sort", toml_edit::value(sort.word()));
     }
 }

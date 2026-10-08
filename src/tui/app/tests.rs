@@ -8132,6 +8132,22 @@ fn every_order_is_a_word_the_config_takes_in_the_order_b_cycles_them() {
 }
 
 #[test]
+fn the_order_and_the_theme_are_saved_into_an_inline_or_dotted_ui_table_too() {
+    for text in ["ui = { theme = \"gruvbox\" }\n", "ui.theme = \"gruvbox\"\n"] {
+        let mut doc: toml_edit::DocumentMut = text.parse().unwrap();
+        sort::set_sort(&mut doc, ListSort::Run);
+        super::themes::set_theme(&mut doc, "github");
+        let saved: toml::Value = toml::from_str(&doc.to_string()).unwrap();
+        assert_eq!(saved["ui"]["sort"].as_str(), Some("run"), "{text}: {doc}");
+        assert_eq!(
+            saved["ui"]["theme"].as_str(),
+            Some("github"),
+            "{text}: {doc}"
+        );
+    }
+}
+
+#[test]
 fn the_order_is_saved_beside_the_theme() {
     let mut doc: toml_edit::DocumentMut = "[ui]\ntheme = \"gruvbox\"\n".parse().unwrap();
     sort::set_sort(&mut doc, ListSort::Run);

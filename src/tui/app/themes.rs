@@ -162,7 +162,9 @@ pub(super) fn set_theme(doc: &mut toml_edit::DocumentMut, name: &str) {
     let ui = doc
         .entry("ui")
         .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
-    if let Some(table) = ui.as_table_mut() {
-        table["theme"] = toml_edit::value(name);
+    // `ui = { ... }` and `ui.theme = ...` are the same table to a reader,
+    // and a save that only found `[ui]` reported success and wrote nothing.
+    if let Some(table) = ui.as_table_like_mut() {
+        table.insert("theme", toml_edit::value(name));
     }
 }
