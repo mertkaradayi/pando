@@ -206,17 +206,24 @@ pub fn run_in_process(listen_port: u16, upstream_port: u16, cookie: &str) -> Res
     Ok(())
 }
 
-/// The deadlines one connection runs under.
+/// The deadlines one connection runs under, and the hosts it answers.
 #[derive(Debug, Clone, Copy)]
 struct Limits {
     headers: Duration,
     upstream: Duration,
+    /// What a request's `Host` must end in: the tunnel's public hosts.
+    public_host: &'static str,
 }
 
 const LIMITS: Limits = Limits {
     headers: HEADER_READ_TIMEOUT,
     upstream: UPSTREAM_READ_TIMEOUT,
+    public_host: crate::tunnel::URL_HOST,
 };
+
+/// The answer to a request for any other host.
+const MISDIRECTED: &[u8] =
+    b"HTTP/1.1 421 Misdirected Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
 fn handle_connection(client: TcpStream, upstream_port: u16, cookie: &str) -> Result<()> {
     handle_connection_with(client, upstream_port, cookie, LIMITS)
@@ -243,6 +250,19 @@ fn handle_connection_with(
     // that ordinary silence into a failed read, a half-closed application,
     // and an SSE or streaming response cut off mid-flight.
     client.set_read_timeout(None).ok();
+    // Only a visitor through the tunnel is logged in. The port is on
+    // loopback, but loopback is everyone on this machine: a page in the
+    // developer's browser can send a request to it, and through DNS
+    // rebinding read the answer, and neither carries the tunnel's host.
+    if !for_public_host(&head, limits.public_host) {
+        let _ = client.write_all(MISDIRECTED);
+        // The host is not a credential; the cookie never reaches this line.
+        eprintln!(
+            "pando share proxy: refused a request for {:?}, which is not the tunnel's",
+            host_of(&head).unwrap_or_default()
+        );
+        return Ok(());
+    }
     let rewritten = rewrite_headers(&head, cookie);
 
     // Either loopback, per connection: a dev server told `localhost` is on
@@ -288,6 +308,28 @@ fn handle_connection_with(
     }
     let _ = back.join();
     Ok(())
+}
+
+/// The `Host` a request names, lower-cased, without its port or a
+/// trailing dot.
+fn host_of(head: &str) -> Option<String> {
+    let value = split_header_lines(head).skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("host").then_some(value)
+    })?;
+    let host = value.trim();
+    let host = match host.find(']') {
+        // `[::1]:80`: the address is everything up to its bracket.
+        Some(end) if host.starts_with('[') => &host[..=end],
+        _ => host.split_once(':').map_or(host, |(name, _)| name),
+    };
+    Some(host.trim_end_matches('.').to_ascii_lowercase())
+}
+
+/// Whether a request is for one of the tunnel's hosts: a name ending in
+/// `suffix` with something before it.
+fn for_public_host(head: &str, suffix: &str) -> bool {
+    host_of(head).is_some_and(|host| host.len() > suffix.len() && host.ends_with(suffix))
 }
 
 /// Reads until the end-of-headers marker, returning the header block and
@@ -636,7 +678,9 @@ mod tests {
 
         let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
         client
-            .write_all(b"GET /hello HTTP/1.1\r\nHost: tunnel.example\r\nCookie: stale=1\r\n\r\n")
+            .write_all(
+                b"GET /hello HTTP/1.1\r\nHost: abc.trycloudflare.com\r\nCookie: stale=1\r\n\r\n",
+            )
             .unwrap();
         let mut response = String::new();
         client.read_to_string(&mut response).unwrap();
@@ -646,7 +690,7 @@ mod tests {
         assert!(head.contains(&format!("Cookie: {COOKIE}")), "{head}");
         assert!(!head.contains("stale=1"), "{head}");
         assert!(head.contains("Connection: close"), "{head}");
-        assert!(head.contains("Host: tunnel.example"), "{head}");
+        assert!(head.contains("Host: abc.trycloudflare.com"), "{head}");
     }
 
     // A dev server told `localhost` is on `[::1]` alone on macOS, which is
@@ -669,7 +713,7 @@ mod tests {
 
         let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
         client
-            .write_all(b"GET / HTTP/1.1\r\nHost: tunnel.example\r\n\r\n")
+            .write_all(b"GET / HTTP/1.1\r\nHost: abc.trycloudflare.com\r\n\r\n")
             .unwrap();
         let mut response = String::new();
         client.read_to_string(&mut response).unwrap();
@@ -691,7 +735,7 @@ mod tests {
 
         let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
         client
-            .write_all(b"POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\nhello")
+            .write_all(b"POST /x HTTP/1.1\r\nHost: abc.trycloudflare.com\r\nContent-Length: 5\r\n\r\nhello")
             .unwrap();
         let mut response = String::new();
         client.read_to_string(&mut response).unwrap();
@@ -771,7 +815,7 @@ mod tests {
             if let Ok((stream, _)) = proxy.accept() {
                 let limits = Limits {
                     headers: header_timeout,
-                    upstream: UPSTREAM_READ_TIMEOUT,
+                    ..LIMITS
                 };
                 let _ = handle_connection_with(stream, upstream_port, COOKIE, limits);
             }
@@ -779,7 +823,7 @@ mod tests {
 
         let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
         client
-            .write_all(b"GET /stream HTTP/1.1\r\nHost: h\r\nAccept: text/event-stream\r\n\r\n")
+            .write_all(b"GET /stream HTTP/1.1\r\nHost: abc.trycloudflare.com\r\nAccept: text/event-stream\r\n\r\n")
             .unwrap();
         let mut response = String::new();
         client.read_to_string(&mut response).unwrap();
@@ -797,6 +841,61 @@ mod tests {
         );
     }
 
+    // A page in the developer's browser can reach the proxy on loopback,
+    // and with DNS rebinding read what it answers. Neither request names
+    // the tunnel's host, and neither is sent on with the cookie.
+    #[test]
+    fn a_request_for_any_host_but_the_tunnels_is_refused_without_the_cookie() {
+        for host in [
+            "127.0.0.1:17005",
+            "localhost:17005",
+            "[::1]:17005",
+            "evil.example",
+            "trycloudflare.com",
+            "abc.trycloudflare.com.evil.example",
+        ] {
+            let (upstream_port, seen) = upstream_that_records();
+            let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
+            let proxy_port = proxy.local_addr().unwrap().port();
+            thread::spawn(move || {
+                if let Ok((stream, _)) = proxy.accept() {
+                    let _ = handle_connection(stream, upstream_port, COOKIE);
+                }
+            });
+            let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
+            client
+                .write_all(format!("POST /x HTTP/1.1\r\nHost: {host}\r\n\r\n").as_bytes())
+                .unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 421"), "{host}: {response}");
+            assert!(
+                seen.recv_timeout(Duration::from_millis(200)).is_err(),
+                "{host} reached the upstream"
+            );
+        }
+    }
+
+    #[test]
+    fn the_host_is_read_without_its_port_case_or_trailing_dot() {
+        let head = |host: &str| format!("GET / HTTP/1.1\r\nhOsT:  {host} \r\n");
+        assert_eq!(
+            host_of(&head("ABC.TryCloudflare.com.:443")).as_deref(),
+            Some("abc.trycloudflare.com")
+        );
+        assert_eq!(host_of(&head("[::1]:80")).as_deref(), Some("[::1]"));
+        assert_eq!(host_of(&head("[::1]")).as_deref(), Some("[::1]"));
+        assert_eq!(host_of("GET / HTTP/1.1\r\nX-Host: a\r\n"), None);
+        assert!(for_public_host(
+            &head("abc.trycloudflare.com"),
+            crate::tunnel::URL_HOST
+        ));
+        assert!(!for_public_host(
+            &head(".trycloudflare.com"),
+            crate::tunnel::URL_HOST
+        ));
+    }
+
     // The header deadline is for the whole block: a client trickling a
     // byte at a time, each well inside it, is cut off once it passes.
     #[test]
@@ -808,7 +907,7 @@ mod tests {
             if let Ok((stream, _)) = proxy.accept() {
                 let limits = Limits {
                     headers: Duration::from_millis(300),
-                    upstream: UPSTREAM_READ_TIMEOUT,
+                    ..LIMITS
                 };
                 let handled = handle_connection_with(stream, 1, COOKIE, limits);
                 tx.send(handled.map_err(|e| format!("{e:#}"))).ok();
@@ -845,6 +944,7 @@ mod tests {
                 let limits = Limits {
                     headers: HEADER_READ_TIMEOUT,
                     upstream: Duration::from_millis(300),
+                    ..LIMITS
                 };
                 let _ = handle_connection_with(stream, upstream_port, COOKIE, limits);
             }
@@ -852,7 +952,7 @@ mod tests {
 
         let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
         client
-            .write_all(b"GET /stream HTTP/1.1\r\nHost: h\r\nAccept: text/event-stream\r\n\r\n")
+            .write_all(b"GET /stream HTTP/1.1\r\nHost: abc.trycloudflare.com\r\nAccept: text/event-stream\r\n\r\n")
             .unwrap();
         let mut response = String::new();
         client.read_to_string(&mut response).unwrap();

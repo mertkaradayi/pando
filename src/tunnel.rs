@@ -30,7 +30,9 @@ const STOP_GRACE: Duration = Duration::from_secs(5);
 const TAIL_LINES: usize = 5;
 
 const URL_SCHEME: &str = "https://";
-const URL_HOST: &str = ".trycloudflare.com";
+/// What every public host a quick tunnel hands out ends in, and so the
+/// `Host` every visitor's request through the share proxy carries.
+pub const URL_HOST: &str = ".trycloudflare.com";
 /// Where cloudflared asks for a quick tunnel. It is in the installed
 /// binary, and a run that is offline or rate limited logs
 /// `Post "https://api.trycloudflare.com/tunnel": …` — which is a URL on a

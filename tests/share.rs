@@ -113,8 +113,10 @@ fn get_through(port: u16, path: &str) -> String {
     let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
     client
         .write_all(
-            format!("GET {path} HTTP/1.1\r\nHost: tunnel.example\r\nCookie: stale=1\r\n\r\n")
-                .as_bytes(),
+            format!(
+                "GET {path} HTTP/1.1\r\nHost: abc.trycloudflare.com\r\nCookie: stale=1\r\n\r\n"
+            )
+            .as_bytes(),
         )
         .unwrap();
     let mut response = String::new();
