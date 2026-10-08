@@ -1090,7 +1090,23 @@ fn ensure_database(
         used_at: chrono::Utc::now(),
     };
     let store = crate::state::load(&paths.state_file())?;
+    // A server is the machine's, and a second clone of the repository on
+    // it names its worktrees' databases the same way. One another project
+    // records is never made or taken here: after a server reset, the
+    // other clone made this name again, and a start here adopted its live
+    // database for this worktree.
+    let others = other_projects(paths);
     if let Some(recorded) = recorded_database(&store, name, target) {
+        if let Some(whose) = in_another_project(&others, &wanted(&recorded.name)) {
+            bail!(
+                "{}: {} on {} is recorded for {whose} as well, and pando cannot tell whose it \
+                 is, so it runs neither on it — `pando rm {name}` in the project it is not \
+                 for forgets it there and drops nothing, and the other goes on using it",
+                target.service,
+                recorded.name,
+                server.address()
+            );
+        }
         if server.exists(&recorded.name)? {
             return Ok((record(paths, name, wanted(&recorded.name))?, false));
         }
@@ -1126,8 +1142,11 @@ fn ensure_database(
         target.namespace.max_name(),
     )?;
     for candidate in &names {
-        // Another worktree's, as state knows it, is not this one's to use.
-        if recorded_elsewhere(&store, name, &wanted(candidate)).is_some() {
+        // Another worktree's, as state knows it, is not this one's to use,
+        // nor one another project records.
+        if recorded_elsewhere(&store, name, &wanted(candidate)).is_some()
+            || in_another_project(&others, &wanted(candidate)).is_some()
+        {
             continue;
         }
         match create(server, candidate, &target.main, progress)? {
@@ -2534,23 +2553,36 @@ fn named_elsewhere(
     others: &[(String, std::result::Result<crate::state::State, String>)],
 ) -> bool {
     recorded_elsewhere(store, name, namespace).is_some()
-        || others.iter().any(|(_, other)| match other {
-            Err(_) => true,
-            Ok(other) => other
-                .worktrees
-                .values()
-                .flat_map(|record| &record.namespaces)
-                .any(|ns| {
-                    namespace::same_namespace(ns, namespace)
-                        || ns.every_main().any(|main| {
-                            let main = crate::state::NamespaceRecord {
-                                name: main.to_string(),
-                                ..ns.clone()
-                            };
-                            namespace::same_namespace(&main, namespace)
-                        })
-                }),
+        || others.iter().any(|(_, other)| other.is_err())
+        || in_another_project(others, namespace).is_some()
+}
+
+/// Who in another project's state names this namespace — `feat+x of
+/// project shop-1a2b3c4d`, or `the main checkout of project …` — as far as
+/// those states can be read.
+fn in_another_project(
+    others: &[(String, std::result::Result<crate::state::State, String>)],
+    namespace: &crate::state::NamespaceRecord,
+) -> Option<String> {
+    others.iter().find_map(|(project, other)| {
+        let other = other.as_ref().ok()?;
+        other.worktrees.iter().find_map(|(worktree, record)| {
+            record.namespaces.iter().find_map(|ns| {
+                if namespace::same_namespace(ns, namespace) {
+                    return Some(format!("{worktree} of project {project}"));
+                }
+                ns.every_main()
+                    .any(|main| {
+                        let main = crate::state::NamespaceRecord {
+                            name: main.to_string(),
+                            ..ns.clone()
+                        };
+                        namespace::same_namespace(&main, namespace)
+                    })
+                    .then(|| format!("the main checkout of project {project}"))
+            })
         })
+    })
 }
 
 /// A database named like a worktree's of this project that no pando

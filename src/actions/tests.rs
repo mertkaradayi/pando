@@ -14507,6 +14507,66 @@ fn a_database_made_by_something_else_while_pando_remade_it_is_not_taken() {
     assert_eq!(schema_runs(), before, "the schema step ran into it");
 }
 
+/// Another project's state, holding `database` on the fixture's MariaDB
+/// for a worktree of its own.
+fn other_project_holds(ns: &Namespaced, database: &str) {
+    let mut record = WorktreeRecord::new("/abs/other/feat+one", true);
+    record.namespaces.push(crate::state::NamespaceRecord {
+        service: "mariadb".into(),
+        recipe: "mariadb".into(),
+        kind: crate::state::NamespaceKind::Database,
+        host: "localhost".into(),
+        port: 3306,
+        name: database.into(),
+        main: "shop".into(),
+        mains: vec!["shop".into()],
+        keys: Vec::new(),
+        used_at: chrono::Utc::now(),
+    });
+    let mut store = crate::state::State::default();
+    store.worktrees.insert("feat+one".into(), record);
+    let file = ns
+        .fx
+        .paths
+        .projects_dir()
+        .join("other-1a2b3c4d")
+        .join("state.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    state::save(&file, &store).unwrap();
+}
+
+// A second clone on the same server names its worktree's database the
+// same way. The name it records is passed over, not made here too.
+#[test]
+fn a_database_another_project_records_is_not_made_for_this_worktree() {
+    let ns = namespaced_fixture(MAIN_ENV);
+    other_project_holds(&ns, "shop__feat_one");
+    let (report, _) = ns.start(Mode::Namespaced).unwrap();
+    let _guard = guard(&report);
+    let made = ns.fake("created");
+    assert_eq!(made.lines().count(), 1, "{made}");
+    assert_ne!(made.trim(), "shop__feat_one", "the other project's name");
+    assert!(made.starts_with("shop__feat_one_"), "{made}");
+}
+
+// The server was reset, the other clone made this worktree's recorded
+// name again, and a start here took the other clone's live database.
+#[test]
+fn a_recorded_database_another_project_records_too_is_not_run_on() {
+    let ns = namespaced_fixture(MAIN_ENV);
+    let (report, _) = ns.start(Mode::Namespaced).unwrap();
+    drop(guard(&report));
+    stop(&ns.fx.paths, &ns.name, None).unwrap();
+    other_project_holds(&ns, "shop__feat_one");
+    let err = ns.start(Mode::Remembered).map(|_| ()).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("recorded for feat+one of project other-1a2b3c4d as well"),
+        "{msg}"
+    );
+    assert!(msg.contains("pando rm"), "{msg}");
+}
+
 // Decision 4: the login may not make it, so the start stops with nothing
 // made, nothing recorded, nothing spawned, and the grant that fixes it.
 #[test]
