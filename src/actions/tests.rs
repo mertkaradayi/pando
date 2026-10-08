@@ -16985,6 +16985,36 @@ fn doctor_lists_a_leftover_database_with_the_command_that_drops_it() {
     assert_eq!(plain.fake("argv"), "", "no server was asked anything");
 }
 
+// A database a main checkout names is never a leftover, however much it
+// looks like one: doctor offered a ready `DROP DATABASE` for it.
+#[test]
+fn doctor_never_lists_a_database_a_main_checkout_names() {
+    let (ns, _redis) = stopped_namespaced();
+    let mut store = ns.fx.state();
+    for namespace in store
+        .worktrees
+        .get_mut(&ns.name)
+        .unwrap()
+        .namespaces
+        .iter_mut()
+    {
+        if namespace.kind == crate::state::NamespaceKind::Database {
+            namespace.mains = vec!["shop".into(), "shop__legacy".into()];
+        }
+    }
+    state::save(&ns.fx.paths.state_file(), &store).unwrap();
+    std::fs::write(ns.fake.join("dbs/shop__legacy"), "").unwrap();
+    std::fs::write(ns.fake.join("dbs/shop__feat_gone"), "").unwrap();
+    let leftovers = namespace_leftovers(&ns.fx.paths, &ns.fx.config, &ns.fx.state());
+    assert_eq!(
+        leftovers
+            .iter()
+            .map(|l| l.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["shop__feat_gone"]
+    );
+}
+
 // A second clone of the repository on the same server names its
 // worktrees' databases the same way: one its record holds is its own, and
 // never listed here as this project's leftover.

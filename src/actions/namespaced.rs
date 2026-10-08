@@ -2635,7 +2635,23 @@ pub fn namespace_leftovers(
                         .any(|ns| namespace::same_namespace(ns, &listed))
                 })
             });
-            if held {
+            // A main checkout's own, here or in another project, that
+            // happens to look like a namespace: `shop__test` named beside
+            // `shop`, or a project whose main database is `shop__legacy`.
+            let own = std::iter::once(target.main.as_str())
+                .chain(target.mains.iter().map(String::as_str));
+            let mains = own.chain(stores.iter().flat_map(|store| {
+                store
+                    .worktrees
+                    .values()
+                    .flat_map(|record| record.namespaces.iter())
+                    .flat_map(|ns| ns.every_main())
+            }));
+            if held
+                || mains
+                    .into_iter()
+                    .any(|main| main.eq_ignore_ascii_case(&name))
+            {
                 continue;
             }
             out.push(Leftover {
