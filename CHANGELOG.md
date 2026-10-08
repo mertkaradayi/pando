@@ -28,6 +28,14 @@ may change behaviour.
 - `pando rm` drops nothing in namespaced mode while it cannot read what
   the main checkout's env files name today. Before, an unresolved value,
   a renamed service or a moved port meant it decided on the record alone.
+- Namespaced mode runs a worktree only on a database pando made. One
+  that was gone and was made again by something else, between pando's
+  check and its create, is refused rather than taken over.
+- Namespaced mode reaches a server named by an IPv6 address
+  (`postgres://…@[::1]:5432/shop`). The clients used to be handed the
+  address in brackets, which they cannot resolve.
+- `pando doctor` never offers to drop a database that a main checkout
+  names, even when the name looks like a worktree's.
 - Namespaced mode finds a database container whose port on the host
   differs from the port inside it (`5433:5432`). Docker's `--filter
   publish=` matches the inside port, so pando used to find nothing.
