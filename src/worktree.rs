@@ -1008,6 +1008,10 @@ pub struct PrInfo {
     /// cache written before pando asked, which reads as not a fork.
     #[serde(default)]
     pub cross_repository: bool,
+    /// The branch it would merge into, on the repository it was opened
+    /// against. Empty in a cache written before pando asked.
+    #[serde(default)]
+    pub base: String,
 }
 
 impl PrInfo {
@@ -1067,7 +1071,7 @@ fn gh_pr_list_with(
             "--limit",
             limit,
             "--json",
-            "number,title,headRefName,author,isDraft,state,url,isCrossRepository",
+            "number,title,headRefName,baseRefName,author,isDraft,state,url,isCrossRepository",
         ])
         .env("GH_PROMPT_DISABLED", "1")
         .env("GH_NO_UPDATE_NOTIFIER", "1");
@@ -1203,6 +1207,8 @@ fn parse_pr_list(json: &str) -> Result<Vec<PrInfo>> {
         url: String,
         #[serde(rename = "isCrossRepository", default)]
         is_cross_repository: bool,
+        #[serde(rename = "baseRefName", default)]
+        base_ref_name: String,
     }
     let raw: Vec<RawPr> = serde_json::from_str(json).context("parse gh pr list JSON")?;
     Ok(raw
@@ -1220,6 +1226,7 @@ fn parse_pr_list(json: &str) -> Result<Vec<PrInfo>> {
             },
             url: p.url,
             cross_repository: p.is_cross_repository,
+            base: p.base_ref_name,
         })
         .collect())
 }
@@ -1914,6 +1921,7 @@ bare
             state,
             url: String::new(),
             cross_repository: fork,
+            base: "main".into(),
         }
     }
 
@@ -1963,6 +1971,7 @@ bare
             state: PrState::Open,
             url: String::new(),
             cross_repository: false,
+            base: "main".into(),
         };
         assert_eq!(pr.local_branch(), "main");
         pr.cross_repository = true;

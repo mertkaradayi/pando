@@ -42,10 +42,30 @@ pub struct GitRead {
     pub fetched: Option<SystemTime>,
 }
 
-/// The base a branch is measured against and moved onto: the config's
-/// rule for it, then the project's base, each preferring `origin`'s copy
-/// as `new` does, then the repository's default.
-pub fn base_for(root: &Path, config: &Config, branch: Option<&str>) -> Option<String> {
+/// The base a branch is measured against and moved onto: the one its
+/// worktree was made to go onto (`recorded`), while that still names a
+/// commit; then the config's rule for it, then the project's base, each
+/// preferring `origin`'s copy as `new` does, then the repository's default.
+pub fn base_for(
+    root: &Path,
+    config: &Config,
+    branch: Option<&str>,
+    recorded: Option<&str>,
+) -> Option<String> {
+    if let Some(recorded) = recorded
+        && text(
+            root,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{recorded}^{{commit}}"),
+            ],
+        )
+        .is_some()
+    {
+        return Some(recorded.to_string());
+    }
     let configured = match branch {
         Some(branch) => config.base_for_branch(branch),
         None => config.project.base.as_deref(),

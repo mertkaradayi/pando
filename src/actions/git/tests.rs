@@ -411,14 +411,32 @@ fn the_base_is_the_configs_first_then_the_repositorys_own() {
     git(&repo.main, &["branch", "develop"]);
     let mut config = Config::default();
     assert_eq!(
-        base_for(&repo.main, &config, Some("feat/x")).as_deref(),
+        base_for(&repo.main, &config, Some("feat/x"), None).as_deref(),
         Some("origin/main")
     );
     config.project.base = Some("develop".into());
     // A base origin does not have is taken as the local branch.
     assert_eq!(
-        base_for(&repo.main, &config, Some("feat/x")).as_deref(),
+        base_for(&repo.main, &config, Some("feat/x"), None).as_deref(),
         Some("develop")
+    );
+}
+
+// A branch made from `release` goes back onto `release`: rebased onto
+// the config's `main`, it took every commit of `release` along.
+#[test]
+fn the_base_a_worktree_was_made_from_comes_before_the_configs() {
+    let repo = repo();
+    git(&repo.main, &["branch", "release"]);
+    let config = Config::default();
+    assert_eq!(
+        base_for(&repo.main, &config, Some("fix/x"), Some("release")).as_deref(),
+        Some("release")
+    );
+    // One that names nothing any more is passed over, not offered.
+    assert_eq!(
+        base_for(&repo.main, &config, Some("fix/x"), Some("gone")).as_deref(),
+        Some("origin/main")
     );
 }
 

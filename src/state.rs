@@ -169,6 +169,13 @@ pub struct WorktreeRecord {
     /// so the TUI can still order its list by what ran last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_started: Option<DateTime<Utc>>,
+    /// The branch this one was made to go onto, when `new` knew it: the
+    /// base it forked a new branch from (`origin/release` for `--base
+    /// release`), or a pull request's target. What the git menu rebases
+    /// onto and merges in, before the config's rule: a branch cut from
+    /// `release` rebased onto `main` takes every commit of `release` along.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
 }
 
 impl WorktreeRecord {
@@ -190,6 +197,7 @@ impl WorktreeRecord {
             share: None,
             pending_shares: Vec::new(),
             last_started: None,
+            base: None,
         }
     }
 

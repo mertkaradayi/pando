@@ -214,6 +214,7 @@ fn a_pr(number: u32, branch: &str, draft: bool, fork: bool) -> crate::worktree::
         state: crate::worktree::PrState::Open,
         url: String::new(),
         cross_repository: fork,
+        base: "main".into(),
     }
 }
 

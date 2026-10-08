@@ -772,6 +772,7 @@ fn a_pr(number: u32, branch: &str, state: crate::worktree::PrState) -> crate::wo
         state,
         url: format!("https://example.test/pull/{number}"),
         cross_repository: false,
+        base: "main".into(),
     }
 }
 

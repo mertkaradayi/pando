@@ -106,9 +106,13 @@ impl App {
         let root = self.paths.root().to_path_buf();
         let config = self.config.clone();
         let main = self.is_main(&name);
+        let recorded = self
+            .record_for(&name)
+            .and_then(|record| record.base.clone());
         let tx = self.event_tx.clone();
         thread::spawn(move || {
-            let base = actions::git::base_for(&root, &config, branch.as_deref());
+            let base =
+                actions::git::base_for(&root, &config, branch.as_deref(), recorded.as_deref());
             let read = actions::git::read(&path, main, base.as_deref());
             let _ = tx.send(AppEvent::GitRead(Box::new((name, read))));
         });

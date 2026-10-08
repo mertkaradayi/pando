@@ -8455,6 +8455,7 @@ fn open_pr(number: u32, branch: &str, cross_repository: bool) -> worktree::PrInf
         state: worktree::PrState::Open,
         url: String::new(),
         cross_repository,
+        base: String::new(),
     }
 }
 
@@ -8565,8 +8566,14 @@ fn a_fork_pull_request_is_fetched_from_the_repository_it_was_opened_against() {
     );
     let mut pr = open_pr(7, "main", true);
     pr.url = "https://github.com/Acme/shop/pull/7".into();
+    pr.base = "develop".into();
     let name = new_for_pr(&fx.paths, &fx.config, &pr, &noop).unwrap();
     assert_eq!(head_of(&fx.worktrees_dir().join(&name), "HEAD"), wanted);
+    // It goes onto the branch it targets, on the repository it targets.
+    assert_eq!(
+        fx.state().worktrees[&name].base.as_deref(),
+        Some("upstream/develop")
+    );
 }
 
 #[test]
@@ -8612,6 +8619,11 @@ fn new_forks_from_the_requested_base() {
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "release only");
+    assert_eq!(
+        fx.state().worktrees[&name].base.as_deref(),
+        Some("release"),
+        "the git menu moves it back onto release, not main"
+    );
 }
 
 #[test]

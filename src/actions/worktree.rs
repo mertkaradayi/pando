@@ -366,9 +366,11 @@ fn create(
         ensure_gitignored(&target, &as_ignore_query(&root, rel), "clone").map_err(undo)?;
     }
     let canonical = std::fs::canonicalize(&target).unwrap_or_else(|_| target.clone());
-    store
-        .worktrees
-        .insert(dir_name.clone(), WorktreeRecord::new(canonical, true));
+    let mut record = WorktreeRecord::new(canonical, true);
+    if let CreateSource::Fork { base } = source {
+        record.base = Some(base.clone());
+    }
+    store.worktrees.insert(dir_name.clone(), record);
     state::save(&paths.state_file(), &store).map_err(undo)?;
     // The lock goes before the install runs: `npm ci` takes minutes, and
     // holding the state lock through it would stall every `ls` and freeze
@@ -1288,11 +1290,46 @@ pub fn new_for_pr(
     pr: &PrInfo,
     progress: &dyn Fn(&str),
 ) -> Result<String> {
+    let (name, remote) = checkout_for_pr(paths, config, pr, progress)?;
+    // The branch it is going onto is the pull request's, not the config's.
+    if !pr.base.is_empty() {
+        remember_base(paths, &name, &format!("{remote}/{}", pr.base));
+    }
+    Ok(name)
+}
+
+/// Writes down the base a worktree goes onto. Best effort: a worktree
+/// that has not got one falls back to the config's rule.
+fn remember_base(paths: &PandoPaths, name: &str, base: &str) {
+    let Ok(_lock) = state::lock(&paths.lock_file()) else {
+        return;
+    };
+    let Ok(mut store) = state::load(&paths.state_file()) else {
+        return;
+    };
+    if let Some(record) = store.worktrees.get_mut(name) {
+        record.base = Some(base.to_string());
+        let _ = state::save(&paths.state_file(), &store);
+    }
+}
+
+/// [`new_for_pr`]'s worktree, and the remote its branch came from.
+fn checkout_for_pr(
+    paths: &PandoPaths,
+    config: &Config,
+    pr: &PrInfo,
+    progress: &dyn Fn(&str),
+) -> Result<(String, String)> {
     let branch = pr.local_branch();
     let root = paths.root().to_path_buf();
     validate_branch_name(&root, &branch)?;
+    let origin = || "origin".to_string();
     if ref_exists(&root, &format!("refs/heads/{branch}")) {
-        return new(paths, config, &branch, None, progress);
+        let remote = match pr.cross_repository {
+            true => pr_remote(&root, &pr.url).unwrap_or_else(origin),
+            false => origin(),
+        };
+        return Ok((new(paths, config, &branch, None, progress)?, remote));
     }
     if !pr.cross_repository {
         // `new` of a name it cannot find forks a new branch of that name,
@@ -1312,7 +1349,7 @@ pub fn new_for_pr(
                 pr.number
             );
         }
-        return new(paths, config, &branch, None, progress);
+        return Ok((new(paths, config, &branch, None, progress)?, origin()));
     }
     let Some(remote) = pr_remote(&root, &pr.url) else {
         bail!(
@@ -1331,9 +1368,11 @@ pub fn new_for_pr(
     )?;
     // A rejected `new` leaves no branch behind, and the one fetched here
     // is part of what it made.
-    new(paths, config, &branch, None, progress).inspect_err(|_| {
-        let _ = crate::project::git(&root, ["branch", "-D", branch.as_str()]);
-    })
+    new(paths, config, &branch, None, progress)
+        .inspect_err(|_| {
+            let _ = crate::project::git(&root, ["branch", "-D", branch.as_str()]);
+        })
+        .map(|name| (name, remote))
 }
 
 /// The remote a pull request's `refs/pull/<n>/head` is fetched from: the
