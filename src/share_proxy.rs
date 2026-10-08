@@ -46,7 +46,9 @@ const LISTEN_POLL: Duration = Duration::from_millis(50);
 const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a client may take to finish sending its request headers.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long the proxy waits on the upstream between reads.
+/// How long the upstream may take to start answering. Only until its
+/// first byte: a server-sent event stream or a long poll is silent for as
+/// long as it likes after that.
 const UPSTREAM_READ_TIMEOUT: Duration = Duration::from_secs(60);
 /// A request whose headers are bigger than this is refused rather than
 /// buffered: the proxy holds the whole header block in memory.
@@ -204,20 +206,31 @@ pub fn run_in_process(listen_port: u16, upstream_port: u16, cookie: &str) -> Res
     Ok(())
 }
 
-fn handle_connection(client: TcpStream, upstream_port: u16, cookie: &str) -> Result<()> {
-    handle_connection_with(client, upstream_port, cookie, HEADER_READ_TIMEOUT)
+/// The deadlines one connection runs under.
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    headers: Duration,
+    upstream: Duration,
 }
 
-/// [`handle_connection`] with the header deadline given, so a test can
-/// watch what happens once it passes without sitting through thirty
-/// seconds of it.
+const LIMITS: Limits = Limits {
+    headers: HEADER_READ_TIMEOUT,
+    upstream: UPSTREAM_READ_TIMEOUT,
+};
+
+fn handle_connection(client: TcpStream, upstream_port: u16, cookie: &str) -> Result<()> {
+    handle_connection_with(client, upstream_port, cookie, LIMITS)
+}
+
+/// [`handle_connection`] with its deadlines given, so a test can watch
+/// what happens once one passes without sitting through it.
 fn handle_connection_with(
     mut client: TcpStream,
     upstream_port: u16,
     cookie: &str,
-    header_timeout: Duration,
+    limits: Limits,
 ) -> Result<()> {
-    client.set_read_timeout(Some(header_timeout)).ok();
+    client.set_read_timeout(Some(limits.headers)).ok();
     // A connection that closes before sending a byte asked nothing, and
     // nothing failed: it is a port probe, `await_listening`'s among them.
     // Logged, it left a false error in every share's proxy log.
@@ -237,7 +250,7 @@ fn handle_connection_with(
     // other.
     let mut upstream = ports::connect_loopback(upstream_port, UPSTREAM_CONNECT_TIMEOUT)
         .with_context(|| format!("connect to the upstream on localhost:{upstream_port}"))?;
-    upstream.set_read_timeout(Some(UPSTREAM_READ_TIMEOUT)).ok();
+    upstream.set_read_timeout(Some(limits.upstream)).ok();
 
     upstream
         .write_all(rewritten.as_bytes())
@@ -253,7 +266,16 @@ fn handle_connection_with(
     let mut up_read = upstream.try_clone().context("clone the upstream socket")?;
     let mut cli_write = client.try_clone().context("clone the client socket")?;
     let back = thread::spawn(move || {
-        let _ = std::io::copy(&mut up_read, &mut cli_write);
+        // The deadline is for an upstream that never answers. Once it has,
+        // it is cleared — on the socket, which both halves share — or an
+        // event stream quiet for a minute is cut off mid-flight.
+        let mut first = [0u8; 16 * 1024];
+        if let Ok(n @ 1..) = up_read.read(&mut first) {
+            up_read.set_read_timeout(None).ok();
+            if cli_write.write_all(&first[..n]).is_ok() {
+                let _ = std::io::copy(&mut up_read, &mut cli_write);
+            }
+        }
         let _ = cli_write.shutdown(std::net::Shutdown::Write);
     });
     // Half-closed only at a real end of file: "the client is done sending"
@@ -731,7 +753,11 @@ mod tests {
         let header_timeout = Duration::from_millis(200);
         thread::spawn(move || {
             if let Ok((stream, _)) = proxy.accept() {
-                let _ = handle_connection_with(stream, upstream_port, COOKIE, header_timeout);
+                let limits = Limits {
+                    headers: header_timeout,
+                    upstream: UPSTREAM_READ_TIMEOUT,
+                };
+                let _ = handle_connection_with(stream, upstream_port, COOKIE, limits);
             }
         });
 
@@ -752,6 +778,38 @@ mod tests {
         assert!(
             response.contains("tick-11"),
             "the stream was cut short: {response}"
+        );
+    }
+
+    // The upstream deadline is for a server that never starts answering.
+    // Left on for the whole response, it cut a stream whose events came
+    // further apart than it: 300 ms stands in for the 60 s.
+    #[test]
+    fn a_stream_quieter_than_the_upstream_deadline_is_not_cut() {
+        let tick = Duration::from_millis(450);
+        let (upstream_port, fin) = streaming_upstream(3, tick);
+        let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy_port = proxy.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((stream, _)) = proxy.accept() {
+                let limits = Limits {
+                    headers: HEADER_READ_TIMEOUT,
+                    upstream: Duration::from_millis(300),
+                };
+                let _ = handle_connection_with(stream, upstream_port, COOKIE, limits);
+            }
+        });
+
+        let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
+        client
+            .write_all(b"GET /stream HTTP/1.1\r\nHost: h\r\nAccept: text/event-stream\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(fin.recv_timeout(Duration::from_secs(10)).is_ok());
+        assert!(
+            response.contains("tick-2"),
+            "the stream was cut between two events: {response}"
         );
     }
 
