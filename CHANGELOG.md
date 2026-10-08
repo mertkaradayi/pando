@@ -7,7 +7,30 @@ may change behaviour.
 
 ## Unreleased
 
+### Changed
+
+- A placeholder in a command a process, hook or probe runs is quoted for
+  where it stands: bare, inside double quotes, or inside single quotes.
+  A path with a space is one word, and a fork's branch named `x$(…)` is
+  text, not a command. A plain value renders as before, and `env` values
+  are not commands and stay as they are.
+- `.env.local` is read before `.env`, as Next, Vite and dotenv-flow read
+  them, so pando finds the database and login the app really uses.
+- In namespaced mode each database the main checkout uses gets one of the
+  worktree's own. `DATABASE_URL`'s `shop` and `TEST_DATABASE_URL`'s
+  `shop_test` used to become one `shop__<worktree>`, so a test suite that
+  emptied its test database emptied the worktree's dev data.
+
 ### Fixed
+
+- Namespaced mode tells a Redis slot it gave out from the same number on
+  another Redis answering on the same port. Each slot is marked as the
+  worktree's, and pando keeps which server process it was on. `rm` no
+  longer empties, and a start no longer writes into, another server's
+  slot. A slot recorded before this is trusted as before.
+- Namespaced mode never makes or runs on a database that another
+  project's state records, such as a second clone of the repository on
+  the same server.
 
 - The git menu no longer loses an ignored file such as `.env`. A pull,
   rebase or merge onto a base that has started tracking that path used
