@@ -592,7 +592,14 @@ pub fn save(path: &Path, state: &State) -> Result<()> {
         boot_pids_since: now.and_then(|boot| boot.pids_since),
     })
     .context("serialize state")?;
-    std::fs::write(&tmp, json).with_context(|| format!("write tmp state {}", tmp.display()))?;
+    // On disk before the rename, not merely in the page cache: a crash
+    // after a rename whose data never landed leaves an empty state file,
+    // which every command then refuses to read.
+    let written = std::fs::File::create(&tmp).and_then(|mut file| {
+        std::io::Write::write_all(&mut file, json.as_bytes())?;
+        file.sync_all()
+    });
+    written.with_context(|| format!("write tmp state {}", tmp.display()))?;
     std::fs::rename(&tmp, path).with_context(|| format!("rename tmp → {}", path.display()))?;
     Ok(())
 }
