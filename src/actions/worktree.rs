@@ -1314,15 +1314,21 @@ pub fn new_for_pr(
         }
         return new(paths, config, &branch, None, progress);
     }
-    if !has_origin(&root) {
+    let Some(remote) = pr_remote(&root, &pr.url) else {
         bail!(
-            "#{} is from a fork, and pando fetches it from a remote named origin, which this \
-             repository does not have",
+            "#{} is from a fork, and pando fetches it from the remote of the repository it was \
+             opened against, or from origin, and this repository has neither",
             pr.number
         );
-    }
-    progress(&format!("fetching #{}", pr.number));
-    fetch_pr_head(&root, pr.number, &branch, crate::project::GIT_TIMEOUT)?;
+    };
+    progress(&format!("fetching #{} from {remote}", pr.number));
+    fetch_pr_head(
+        &root,
+        &remote,
+        pr.number,
+        &branch,
+        crate::project::GIT_TIMEOUT,
+    )?;
     // A rejected `new` leaves no branch behind, and the one fetched here
     // is part of what it made.
     new(paths, config, &branch, None, progress).inspect_err(|_| {
@@ -1330,11 +1336,55 @@ pub fn new_for_pr(
     })
 }
 
-/// `git fetch origin refs/pull/<number>/head` into a new local branch.
+/// The remote a pull request's `refs/pull/<n>/head` is fetched from: the
+/// one whose URL names the repository the pull request was opened
+/// against, as `gh` chose it — `upstream` in a contributor's clone, where
+/// `origin` is their fork and its #n is another pull request or none —
+/// else `origin`. Matched on the owner and name alone, so an ssh host
+/// alias still matches.
+fn pr_remote(root: &Path, url: &str) -> Option<String> {
+    let base = repository_of(url.split("/pull/").next().unwrap_or_default());
+    let names = remotes(root);
+    let matching = base.and_then(|base| {
+        names.iter().find(|name| {
+            crate::project::git(root, ["remote", "get-url", name.as_str()])
+                .ok()
+                .filter(|out| out.status.success())
+                .and_then(|out| repository_of(String::from_utf8_lossy(&out.stdout).trim()))
+                .is_some_and(|theirs| theirs == base)
+        })
+    });
+    matching
+        .or_else(|| names.iter().find(|name| *name == "origin"))
+        .cloned()
+}
+
+/// `owner/name`, lower-cased, from a repository's URL in any of git's
+/// spellings: `https://host/owner/name(.git)`, `git@host:owner/name.git`,
+/// `ssh://git@host/owner/name`, or a path.
+pub(super) fn repository_of(url: &str) -> Option<String> {
+    let path = url.trim().trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let path = match path.split_once("://") {
+        Some((_, rest)) => rest,
+        // scp-like: `host:owner/name`, but not a Windows drive.
+        None => match path.split_once(':') {
+            Some((host, rest)) if host.len() > 1 && !host.contains('/') => rest,
+            _ => path,
+        },
+    };
+    let mut parts = path.rsplit('/').filter(|part| !part.is_empty());
+    let name = parts.next()?;
+    let owner = parts.next()?;
+    Some(format!("{owner}/{name}").to_ascii_lowercase())
+}
+
+/// `git fetch <remote> refs/pull/<number>/head` into a new local branch.
 /// Bounded and never prompting, as [`fetch_branch`] is; unlike it, a
 /// failure is an error, because there is no other place the branch could be.
 fn fetch_pr_head(
     root: &Path,
+    remote: &str,
     number: u32,
     branch: &str,
     timeout: std::time::Duration,
@@ -1344,16 +1394,16 @@ fn fetch_pr_head(
     command
         .arg("-C")
         .arg(root)
-        .args(["fetch", "--quiet", "origin", &refspec])
+        .args(["fetch", "--quiet", remote, &refspec])
         .env("GIT_TERMINAL_PROMPT", "0");
     match crate::platform::process::output_within(command, timeout) {
         Ok(out) if out.status.success() => Ok(()),
         Ok(out) => bail!(
-            "could not fetch #{number} from origin: {}",
+            "could not fetch #{number} from {remote}: {}",
             git_failure_reason(&out)
         ),
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => bail!(
-            "`git fetch origin {refspec}` did not answer in {}s",
+            "`git fetch {remote} {refspec}` did not answer in {}s",
             timeout.as_secs()
         ),
         Err(e) => Err(e).context("spawn git fetch"),

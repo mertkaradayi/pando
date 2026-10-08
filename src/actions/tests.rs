@@ -8518,6 +8518,73 @@ fn a_pull_request_whose_branch_is_not_on_origin_is_refused() {
     assert!(fx.names().is_empty());
 }
 
+// A contributor's clone: `origin` is their fork, `upstream` the project
+// `gh` lists pull requests of. Fetched from `origin`, #7 was the fork's own
+// #7 — another pull request's code under this one's name.
+#[test]
+fn a_fork_pull_request_is_fetched_from_the_repository_it_was_opened_against() {
+    let fx = fixture_with_origin(&[]);
+    let seed = fx.root.parent().unwrap().join("seed");
+    let upstream = fx.root.parent().unwrap().join("acme").join("shop.git");
+    std::fs::create_dir_all(upstream.parent().unwrap()).unwrap();
+    git(
+        upstream.parent().unwrap(),
+        &["init", "--bare", "--quiet", "shop.git"],
+    );
+    git(
+        &seed,
+        &[
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "the fork's own #7",
+        ],
+    );
+    git(
+        &seed,
+        &["push", "--quiet", "origin", "HEAD:refs/pull/7/head"],
+    );
+    git(
+        &seed,
+        &["commit", "--quiet", "--allow-empty", "-m", "upstream's #7"],
+    );
+    git(
+        &seed,
+        &[
+            "push",
+            "--quiet",
+            upstream.to_str().unwrap(),
+            "HEAD:refs/pull/7/head",
+        ],
+    );
+    let wanted = head_of(&seed, "HEAD");
+    git(
+        &fx.root,
+        &["remote", "add", "upstream", upstream.to_str().unwrap()],
+    );
+    let mut pr = open_pr(7, "main", true);
+    pr.url = "https://github.com/Acme/shop/pull/7".into();
+    let name = new_for_pr(&fx.paths, &fx.config, &pr, &noop).unwrap();
+    assert_eq!(head_of(&fx.worktrees_dir().join(&name), "HEAD"), wanted);
+}
+
+#[test]
+fn a_repository_is_named_by_its_owner_and_name_in_every_spelling() {
+    use super::worktree::repository_of;
+    for url in [
+        "https://github.com/acme/shop",
+        "https://github.com/Acme/shop.git",
+        "git@github.com:acme/shop.git",
+        "github-work:acme/shop.git",
+        "ssh://git@github.com/acme/shop/",
+        "/srv/git/acme/shop.git",
+    ] {
+        assert_eq!(repository_of(url).as_deref(), Some("acme/shop"), "{url}");
+    }
+    assert_eq!(repository_of("shop"), None);
+}
+
 #[test]
 fn a_fork_pull_request_origin_does_not_have_leaves_no_branch_behind() {
     let fx = fixture_with_origin(&[]);
