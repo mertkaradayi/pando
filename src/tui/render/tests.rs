@@ -3769,6 +3769,7 @@ fn with_namespaces(app: &mut App, name: &str) {
             mains: Vec::new(),
             keys: Vec::new(),
             used_at: chrono::Utc::now(),
+            server: None,
         });
     }
 }
@@ -4026,6 +4027,7 @@ fn the_detail_pane_says_what_each_service_holds_for_the_worktree() {
             mains: Vec::new(),
             keys: Vec::new(),
             used_at: chrono::Utc::now(),
+            server: None,
         });
     }
     let rendered = text_of(&draw(&mut app, 200, 40));

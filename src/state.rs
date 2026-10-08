@@ -397,6 +397,14 @@ pub struct NamespaceRecord {
     pub keys: Vec<String>,
     /// When a start of this worktree last used it.
     pub used_at: DateTime<Utc>,
+    /// Which server process a slot was last kept on, as its recipe's
+    /// `server_id` says it — a Redis's `run_id`. A slot is known by host
+    /// and port alone, and another Redis on the same port has its own
+    /// slot of that number: this, with the mark pando writes into the
+    /// slot, tells the two apart. `None` in a record written before it
+    /// was kept, which is trusted as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<String>,
 }
 
 impl NamespaceRecord {
@@ -1315,6 +1323,7 @@ mod tests {
             mains: vec!["shop".into(), "shop_jobs".into()],
             keys: vec!["DATABASE_PORT".into()],
             used_at: at(10),
+            server: None,
         }];
         let mut state = State::new();
         state.worktrees.insert("feat+x".into(), rec);

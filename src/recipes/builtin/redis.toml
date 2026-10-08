@@ -45,6 +45,14 @@ ping = "redis-cli -e -h {host} -p {port} ping"
 size = "redis-cli --raw -e -h {host} -p {port} EVAL \"redis.call('SELECT', ARGV[1]); return redis.call('DBSIZE')\" 0 {namespace}"
 drop = "redis-cli -e -h {host} -p {port} EVAL \"redis.call('SELECT', ARGV[1]); return redis.call('FLUSHDB')\" 0 {namespace}"
 denied = ["NOPERM"]
+# A slot is known by host and port, and another Redis on the same port has
+# a slot of the same number. pando marks each slot it gives out with a key
+# of its own, and keeps which server process it was on: a slot is this
+# worktree's while the mark says so, or while the server is the same
+# process — an app that empties its slot takes the mark with its keys.
+owner = "redis-cli --raw -e -h {host} -p {port} EVAL \"redis.call('SELECT', ARGV[1]); return redis.call('GET', KEYS[1])\" 1 pando:owner {namespace}"
+claim = "redis-cli -e -h {host} -p {port} EVAL \"redis.call('SELECT', ARGV[1]); return redis.call('SET', KEYS[1], ARGV[2])\" 1 pando:owner {namespace} {owner}"
+server_id = "redis-cli --raw -e -h {host} -p {port} INFO server | sed -n 's/^run_id:\\([0-9a-zA-Z]*\\).*/\\1/p'"
 
 # Where an app names its slot: a URL's path, and `?db=`, which redis-py
 # reads before the path; or `REDIS_DB` beside `REDIS_PORT`.

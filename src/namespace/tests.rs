@@ -251,6 +251,7 @@ fn database(name: &str, main: &str) -> NamespaceRecord {
         mains: Vec::new(),
         keys: Vec::new(),
         used_at: Utc::now(),
+        server: None,
     }
 }
 
@@ -266,6 +267,7 @@ fn slot(n: &str, main: &str) -> NamespaceRecord {
         mains: Vec::new(),
         keys: Vec::new(),
         used_at: Utc::now(),
+        server: None,
     }
 }
 

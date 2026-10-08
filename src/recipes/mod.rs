@@ -142,6 +142,20 @@ pub struct NamespaceRecipe {
     /// numbers is told not to here, as `redis-cli --raw` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<String>,
+    /// A `slot`'s: prints the mark pando wrote into it, `{owner}` as
+    /// `claim` wrote it, or nothing when it has none. With `claim`, what
+    /// tells a slot pando gave out from the same number on another server
+    /// that answers on the same port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// A `slot`'s: writes `{owner}` into it as its mark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<String>,
+    /// Prints which server process answers, alone on its last line: a
+    /// Redis's `run_id`. The same one means the same server, whose slot an
+    /// app may have emptied of pando's mark along with its own keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
     /// A `slot`'s: how many the server has. 0 is the main checkout's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slots: Option<u32>,
@@ -337,6 +351,12 @@ impl NamespaceRecipe {
         }
         if self.ping.trim().is_empty() || self.drop.trim().is_empty() {
             bail!("a [namespace] needs `ping` and `drop`");
+        }
+        if self.owner.is_some() != self.claim.is_some() {
+            bail!("a [namespace] marks its slots with both `owner` and `claim`, or neither");
+        }
+        if self.owner.is_some() && self.kind != NamespaceKind::Slot {
+            bail!("`owner` and `claim` mark a `kind = \"slot\"` [namespace]'s slots");
         }
         if let Some(address) = &self.address {
             if !address.url_path && address.url_query.is_empty() && address.keys.is_empty() {
@@ -973,6 +993,9 @@ mod tests {
                 Some(ns.drop.as_str()),
                 ns.size.as_deref(),
                 ns.account.as_deref(),
+                ns.owner.as_deref(),
+                ns.claim.as_deref(),
+                ns.server_id.as_deref(),
             ]
             .into_iter()
             .flatten()
@@ -1005,10 +1028,20 @@ mod tests {
                 // `-n` falls back to slot 0 when the slot cannot be
                 // selected; every command naming a slot must fail instead.
                 NamespaceKind::Slot => {
-                    for command in [ns.drop.as_str(), ns.size.as_deref().unwrap()] {
+                    let marks = [ns.owner.as_deref(), ns.claim.as_deref()];
+                    for command in [Some(ns.drop.as_str()), ns.size.as_deref()]
+                        .into_iter()
+                        .chain(marks)
+                        .flatten()
+                    {
                         assert!(!command.contains(" -n "), "{name}: {command}");
                         assert!(command.contains("{namespace}"), "{name}: {command}");
                     }
+                    // Another Redis on the same port is told apart.
+                    assert!(
+                        ns.owner.is_some() && ns.server_id.is_some(),
+                        "{name} marks its slots"
+                    );
                     assert!(ns.slots.is_some_and(|n| n > 1), "{name}");
                 }
             }

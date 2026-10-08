@@ -452,6 +452,69 @@ impl Server<'_> {
         }
     }
 
+    /// Whether the recipe marks the slots pando gives out.
+    pub fn marks(&self) -> bool {
+        self.recipe.owner.is_some() && self.recipe.claim.is_some()
+    }
+
+    /// The mark in a slot: what `claim` wrote there, or `None` when it
+    /// has none. Fails when the server cannot be asked.
+    pub fn owner(&self, slot: u32) -> Result<Option<String>> {
+        let command = self.command(self.recipe.owner.as_deref(), "owner")?;
+        let out = self.run(command, Some(&slot.to_string()))?;
+        if !out.success() {
+            bail!(
+                "could not ask {} on {} whose slot {slot} is: {}",
+                self.service,
+                self.address(),
+                out.last_stderr_line().unwrap_or("no output")
+            );
+        }
+        Ok(out
+            .stdout
+            .lines()
+            .map(str::trim)
+            .rfind(|line| !line.is_empty())
+            .map(str::to_string))
+    }
+
+    /// Writes `owner` into a slot as pando's mark of it.
+    pub fn claim(&self, slot: u32, owner: &str) -> Result<()> {
+        let command = self.command(self.recipe.claim.as_deref(), "claim")?;
+        let vars = Vars {
+            owner: Some(shell_quote(owner)),
+            ..self.vars(Some(&slot.to_string()))
+        };
+        let script = self.wrap(&template::render_with(command, &vars)?);
+        let env = self.login.env(self.recipe.password_env.as_deref());
+        let out = proc::run_captured(&script, &std::env::temp_dir(), &env, TIMEOUT)?;
+        if !out.success() {
+            bail!(
+                "could not mark slot {slot} of {} on {} as pando's: {}",
+                self.service,
+                self.address(),
+                out.last_stderr_line().unwrap_or("no output")
+            );
+        }
+        Ok(())
+    }
+
+    /// Which server process answers, as the recipe's `server_id` prints
+    /// it — or `None`, when it has none or the server does not say.
+    pub fn server_id(&self) -> Option<String> {
+        let command = self.recipe.server_id.as_deref()?;
+        let out = self.run(command, None).ok()?;
+        out.success()
+            .then(|| {
+                out.stdout
+                    .lines()
+                    .map(str::trim)
+                    .rfind(|line| !line.is_empty())
+                    .map(str::to_string)
+            })
+            .flatten()
+    }
+
     /// What an administrator runs, once, so this login may make and drop
     /// `<main>__…` on this server and nothing else — when the recipe
     /// knows how to say it, and `main` is a plain name.
@@ -585,6 +648,7 @@ impl Server<'_> {
             prefix_like: None,
             account_user: None,
             account_host: None,
+            owner: None,
         }
     }
 
@@ -794,9 +858,11 @@ struct Vars {
     prefix_like: Option<String>,
     account_user: Option<String>,
     account_host: Option<String>,
+    /// The mark a slot's `claim` writes, shell-quoted.
+    owner: Option<String>,
 }
 
-const KNOWN: [&str; 8] = [
+const KNOWN: [&str; 9] = [
     "host",
     "port",
     "user",
@@ -805,6 +871,7 @@ const KNOWN: [&str; 8] = [
     "prefix_like",
     "account_user",
     "account_host",
+    "owner",
 ];
 
 impl template::Resolver for Vars {
@@ -821,6 +888,7 @@ impl template::Resolver for Vars {
             "prefix_like" => &self.prefix_like,
             "account_user" => &self.account_user,
             "account_host" => &self.account_host,
+            "owner" => &self.owner,
             _ => bail!(
                 "unknown placeholder {{{key}}} in a [namespace] command — it understands {}",
                 KNOWN.join(", ")

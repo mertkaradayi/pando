@@ -1088,6 +1088,7 @@ fn ensure_database(
         mains: target.mains.clone(),
         keys: target.keys.clone(),
         used_at: chrono::Utc::now(),
+        server: None,
     };
     let store = crate::state::load(&paths.state_file())?;
     // A server is the machine's, and a second clone of the repository on
@@ -1308,6 +1309,8 @@ fn ensure_slot(
     server: &namespace::Server<'_>,
     progress: &dyn Fn(&str),
 ) -> Result<(crate::state::NamespaceRecord, bool)> {
+    let now = server.server_id();
+    let owner = slot_owner(paths, name);
     let slot = |n: &str| crate::state::NamespaceRecord {
         service: target.service.clone(),
         recipe: target.recipe.clone(),
@@ -1319,6 +1322,13 @@ fn ensure_slot(
         mains: target.mains.clone(),
         keys: target.keys.clone(),
         used_at: chrono::Utc::now(),
+        server: now.clone(),
+    };
+    let claim = |given: &crate::state::NamespaceRecord| -> Result<()> {
+        match (server.marks(), given.name.trim().parse::<u32>()) {
+            (true, Ok(n)) => server.claim(n, &owner),
+            _ => Ok(()),
+        }
     };
     // Every project's, from reading the others' records to writing this
     // one's: each project's own lock is its own, and two starts in two
@@ -1336,12 +1346,29 @@ fn ensure_slot(
             .find(|ns| {
                 ns.service == target.service && namespace::same_namespace(ns, &slot(&ns.name))
             })
-            .map(|ns| ns.name.clone())
+            .cloned()
     });
-    if let Some(recorded) = recorded {
+    if let Some(was) = recorded {
+        let recorded = was.name.clone();
         let kept = slot(&recorded);
+        // Before anything is kept or written: on another server, the slot
+        // of this number is somebody else's, and the app would write into
+        // it.
+        if let Some(why) = slot_unproven(server, &was, &owner, now.as_deref())? {
+            bail!(
+                "{}: this worktree's {why}. If it is this worktree's, empty it ({}) and start \
+                 again; if it is another server's, stop that one first",
+                target.service,
+                server
+                    .by_hand(&recorded)
+                    .unwrap_or_else(|| format!("slot {recorded}"))
+            );
+        }
         match hold_on(paths, name, target, &kept, &others)? {
-            Held::Kept => return Ok((kept, false)),
+            Held::Kept => {
+                claim(&kept)?;
+                return Ok((kept, false));
+            }
             Held::Running(why) => {
                 progress(&format!(
                     "{}: slot {recorded} is kept while this worktree runs — {why} — stop it and \
@@ -1372,6 +1399,7 @@ fn ensure_slot(
         if record_if(paths, name, &given, |store| {
             recorded_elsewhere(store, name, &given).is_none()
         })? {
+            claim(&given)?;
             return Ok((given, true));
         }
         slots.retain(|m| *m > n);
@@ -2155,6 +2183,14 @@ fn free_slot(
         &target.mains.iter().map(String::as_str).collect::<Vec<_>>(),
         &other_projects(paths),
     )?;
+    if let Some(why) = slot_unproven(
+        &server,
+        &holder.namespace,
+        &slot_owner(paths, &holder.worktree),
+        server.server_id().as_deref(),
+    )? {
+        bail!("{}'s slot was not emptied — {why}", holder.worktree);
+    }
     server.drop(&holder.namespace.name, &target.main)?;
     if let Some(record) = store.worktrees.get_mut(&holder.worktree) {
         record.namespaces.retain(|ns| ns != &holder.namespace);
@@ -2165,6 +2201,57 @@ fn free_slot(
         target.service, holder.slot, holder.worktree
     ));
     Ok(())
+}
+
+/// The mark pando writes into a slot it gives `worktree`: the project and
+/// the worktree, which no other slot pando gives out carries.
+fn slot_owner(paths: &PandoPaths, worktree: &str) -> String {
+    format!("{}/{worktree}", paths.project_id())
+}
+
+/// Whether the slot a record names is, on the server answering now, the
+/// one pando gave out: its mark says so, or it has none and the server is
+/// the same process it was kept on (an app that empties its slot takes the
+/// mark with its keys). An empty slot holds nothing anybody could lose. A
+/// record from before slots were marked is trusted, as it was then.
+///
+/// Anything else — another project's mark, or keys and no mark on
+/// another server process — may be another Redis that answers on the same
+/// port, whose slot of that number is its own app's: the why, said.
+fn slot_unproven(
+    server: &namespace::Server<'_>,
+    ns: &crate::state::NamespaceRecord,
+    owner: &str,
+    now: Option<&str>,
+) -> Result<Option<String>> {
+    let Ok(n) = ns.name.trim().parse::<u32>() else {
+        return Ok(None);
+    };
+    if !server.marks() {
+        return Ok(None);
+    }
+    // A mark of this project's is this server's, whichever worktree's it
+    // names: which of them holds the slot is state's to say, and the
+    // guard's. Another project's is a server this one cannot vouch for.
+    let project = owner.split_once('/').map_or(owner, |(project, _)| project);
+    match server.owner(n)? {
+        Some(mark) if mark.split_once('/').is_some_and(|(of, _)| of == project) => Ok(None),
+        Some(mark) => Ok(Some(format!(
+            "slot {n} on {} is marked as {mark}'s, not this project's",
+            server.address()
+        ))),
+        None if server.size(n)? == 0 => Ok(None),
+        None => match (ns.server.as_deref(), now) {
+            (None, _) => Ok(None),
+            (Some(was), Some(now)) if was == now => Ok(None),
+            _ => Ok(Some(format!(
+                "slot {n} on {} holds keys and no mark of this worktree's, and the server \
+                 answering there is not the process it was given out on — a restart since \
+                 the app cleared it, or another Redis on that port whose slot {n} is its own",
+                server.address()
+            ))),
+        },
+    }
 }
 
 /// Writes a namespace into this worktree's record — the moment after the
@@ -2237,6 +2324,9 @@ pub(super) fn keep(
     {
         Some(existing) => {
             existing.used_at = namespace.used_at;
+            if namespace.server.is_some() {
+                existing.server = namespace.server.clone();
+            }
             if !namespace.mains.is_empty() {
                 existing.mains = namespace.mains.clone();
             }
@@ -2505,6 +2595,36 @@ pub(super) fn drop_namespaces(
             .then(|| server.admin())
             .flatten();
         let server = admin.unwrap_or(server);
+        if ns.kind == NamespaceKind::Slot {
+            let checked = slot_unproven(
+                &server,
+                ns,
+                &slot_owner(paths, name),
+                server.server_id().as_deref(),
+            );
+            let why = match checked {
+                Ok(None) => None,
+                Ok(Some(why)) => Some(why),
+                Err(e) => Some(format!("{e:#}")),
+            };
+            if let Some(why) = why {
+                progress(
+                    &format!(
+                        "{}: {what} is left as it is — {why}{}{last}",
+                        ns.service,
+                        server
+                            .by_hand(&ns.name)
+                            .map(|command| format!(
+                                " — if it is this worktree's, `{command}` \
+                                                     empties it"
+                            ))
+                            .unwrap_or_default()
+                    ),
+                    false,
+                );
+                continue;
+            }
+        }
         // A login that may not drop it is no reason to leave it: the
         // server's own administrator, inside its container, may — past
         // the same guard, which has already passed.
@@ -2658,6 +2778,7 @@ pub fn namespace_leftovers(
                 mains: target.mains.clone(),
                 keys: Vec::new(),
                 used_at: chrono::Utc::now(),
+                server: None,
             };
             let held = stores.iter().any(|store| {
                 store.worktrees.values().any(|record| {

@@ -5089,6 +5089,7 @@ fn with_namespaces(fx: &Fx, name: &str, mode: crate::state::ServiceMode) {
             mains: Vec::new(),
             keys: Vec::new(),
             used_at: Utc::now(),
+            server: None,
         });
     }
     crate::state::save(&fx.paths.state_file(), &store).unwrap();

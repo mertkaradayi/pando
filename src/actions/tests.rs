@@ -1156,6 +1156,7 @@ fn a_slot_key_beside_no_address_is_found_through_db_env() {
         mains: vec!["2".into()],
         keys: target.keys.clone(),
         used_at: Utc::now(),
+        server: None,
     };
     let env =
         super::namespaced::namespaced_env(&fx.paths, &fx.config, &plan, &[record], "feat+one")
@@ -11979,6 +11980,7 @@ fn a_stale_records_containers_and_namespaces_pass_to_the_record_that_replaces_it
         mains: Vec::new(),
         keys: Vec::new(),
         used_at: Utc::now(),
+        server: None,
     };
     let mut store = fx.state();
     let record = store.worktrees.get_mut(&name).unwrap();
@@ -12876,6 +12878,7 @@ fn a_prefix_elsewhere_does_not_start_a_worktree_that_lost_its_database() {
         mains: Vec::new(),
         keys: vec!["DATABASE_URL".into()],
         used_at: Utc::now(),
+        server: None,
     });
     crate::state::save(&fx.paths.state_file(), &store).unwrap();
     let plan = super::namespaced::plan(&fx.paths, &fx.config);
@@ -14522,6 +14525,7 @@ fn other_project_holds(ns: &Namespaced, database: &str) {
         mains: vec!["shop".into()],
         keys: Vec::new(),
         used_at: chrono::Utc::now(),
+        server: None,
     });
     let mut store = crate::state::State::default();
     store.worktrees.insert("feat+one".into(), record);
@@ -14632,6 +14636,7 @@ fn recorded_by_another_start(ns: &Namespaced, database: &str) -> String {
             mains: vec!["shop".into()],
             keys: vec!["DATABASE_PORT".into()],
             used_at: Utc::now(),
+            server: None,
         });
     let racing = ns.fx.paths.home.join("raced.json");
     state::save(&racing, &raced).unwrap();
@@ -15029,7 +15034,12 @@ case "$*" in
     if [ -f "$state/on-size-$last" ]; then sh "$state/on-size-$last"; rm -f "$state/on-size-$last"; fi
     if [ -f "$state/fail-$last" ]; then cat "$state/fail-$last" >&2; exit 1; fi
     cat "$state/slot-$last" 2>/dev/null || echo 0 ;;
-  *FLUSHDB*) echo 0 > "$state/slot-$last"; echo "$last" >> "$state/flushed"; echo OK ;;
+  *FLUSHDB*) echo 0 > "$state/slot-$last"; rm -f "$state/owner-$last"; echo "$last" >> "$state/flushed"; echo OK ;;
+  *"INFO server"*) echo "redis_version:7.2.0"; echo "run_id:$(cat "$state/run_id" 2>/dev/null || echo r1)" ;;
+  *"'SET'"*)
+    slot=; prev=; for a; do slot=$prev; prev=$a; done
+    printf '%s\n' "$last" > "$state/owner-$slot"; echo OK ;;
+  *"'GET'"*) cat "$state/owner-$last" 2>/dev/null || echo ;;
   *) echo "unexpected: $*" >&2; exit 9 ;;
 esac
 "#,
@@ -15093,6 +15103,7 @@ fn slot_holder(n: u32, running: bool, hours: i64) -> WorktreeRecord {
         mains: Vec::new(),
         keys: Vec::new(),
         used_at: Utc::now() - chrono::Duration::hours(hours),
+        server: None,
     });
     if running {
         record.processes.insert(
@@ -16956,6 +16967,110 @@ fn rm_drops_nothing_while_it_cannot_read_what_main_names_today() {
     assert!(!redis.join("flushed").exists(), "nothing was emptied");
 }
 
+// A slot is known by host and port. Another Redis on that port has a
+// slot 1 of its own, holding its app's keys and no mark of pando's: `rm`
+// emptied it as this worktree's.
+#[test]
+fn rm_leaves_a_slot_on_another_server_answering_on_the_same_port() {
+    let (ns, redis) = stopped_namespaced();
+    assert!(
+        std::fs::read_to_string(redis.join("owner-1"))
+            .unwrap()
+            .contains(&format!("/{}", ns.name)),
+        "the start marked the slot it was given"
+    );
+    std::fs::write(redis.join("run_id"), "r2").unwrap();
+    std::fs::remove_file(redis.join("owner-1")).unwrap();
+    std::fs::write(redis.join("slot-1"), "40").unwrap();
+    let (said, progress) = collecting();
+    super::rm(&ns.fx.paths, &ns.name, false, false, &progress).unwrap();
+    let said = said.borrow().clone();
+    assert!(
+        said.iter()
+            .any(|l| l.contains("redis slot 1 is left as it is")
+                && l.contains("not the process it was given out on")),
+        "{said:?}"
+    );
+    assert!(!redis.join("flushed").exists(), "nothing was emptied");
+}
+
+// The same slot after a restart of its own server: the mark survived with
+// the keys, and is this worktree's.
+#[test]
+fn rm_empties_a_marked_slot_after_its_server_restarted() {
+    let (ns, redis) = stopped_namespaced();
+    std::fs::write(redis.join("run_id"), "r2").unwrap();
+    std::fs::write(redis.join("slot-1"), "40").unwrap();
+    let (said, progress) = collecting();
+    super::rm(&ns.fx.paths, &ns.name, false, false, &progress).unwrap();
+    assert!(
+        said.borrow().iter().any(|l| l == "redis: emptied slot 1"),
+        "{:?}",
+        said.borrow()
+    );
+}
+
+// An app that empties its slot takes the mark with its keys. On the same
+// server process, the slot is still this worktree's.
+#[test]
+fn a_slot_the_app_emptied_on_the_same_server_is_still_this_worktrees() {
+    let (ns, redis) = stopped_namespaced();
+    std::fs::remove_file(redis.join("owner-1")).unwrap();
+    std::fs::write(redis.join("slot-1"), "3").unwrap();
+    let (report, _) = ns.start(Mode::Remembered).unwrap();
+    drop(guard(&report));
+    assert!(redis.join("owner-1").exists(), "marked again");
+    stop(&ns.fx.paths, &ns.name, None).unwrap();
+    super::rm(&ns.fx.paths, &ns.name, false, false, &noop).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(redis.join("flushed")).unwrap(),
+        "1\n"
+    );
+}
+
+// Started against the other Redis, the app wrote into that server's own
+// slot 1. The start stops, and says how to go on either way.
+#[test]
+fn a_start_on_another_server_answering_on_the_same_port_stops() {
+    let (ns, redis) = stopped_namespaced();
+    std::fs::write(redis.join("run_id"), "r2").unwrap();
+    std::fs::remove_file(redis.join("owner-1")).unwrap();
+    std::fs::write(redis.join("slot-1"), "40").unwrap();
+    let e = format!("{:#}", ns.start(Mode::Remembered).unwrap_err());
+    assert!(e.contains("not the process it was given out on"), "{e}");
+    assert!(
+        e.contains("empty it") && e.contains("stop that one first"),
+        "{e}"
+    );
+    assert!(!redis.join("owner-1").exists(), "nothing was marked");
+}
+
+// A record written before slots were marked keeps no server: it is
+// trusted, as it was, and nothing an upgrade finds stops a start or `rm`.
+#[test]
+fn a_slot_recorded_before_marks_is_trusted_as_before() {
+    let (ns, redis) = stopped_namespaced();
+    let mut store = ns.fx.state();
+    for namespace in store
+        .worktrees
+        .get_mut(&ns.name)
+        .unwrap()
+        .namespaces
+        .iter_mut()
+    {
+        namespace.server = None;
+    }
+    state::save(&ns.fx.paths.state_file(), &store).unwrap();
+    std::fs::remove_file(redis.join("owner-1")).unwrap();
+    std::fs::write(redis.join("run_id"), "r2").unwrap();
+    std::fs::write(redis.join("slot-1"), "40").unwrap();
+    super::rm(&ns.fx.paths, &ns.name, false, false, &noop).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(redis.join("flushed")).unwrap(),
+        "1\n"
+    );
+}
+
 // A slot `rm` leaves because another record names it too is still that
 // one's, and pando goes on showing it: its line does not say this is the
 // last pando says of it.
@@ -17095,6 +17210,7 @@ fn doctor_never_lists_a_database_another_projects_record_holds() {
         mains: Vec::new(),
         keys: Vec::new(),
         used_at: Utc::now(),
+        server: None,
     });
     hold_elsewhere(&ns, theirs);
     let leftovers = namespace_leftovers(&ns.fx.paths, &ns.fx.config, &ns.fx.state());

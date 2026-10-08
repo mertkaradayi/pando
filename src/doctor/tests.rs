@@ -2816,6 +2816,7 @@ fn a_hook_a_namespaced_start_skips_beside_a_shared_database_is_not_one_it_runs_a
         mains: Vec::new(),
         keys: vec!["DATABASE_PORT".to_string()],
         used_at: chrono::Utc::now(),
+        server: None,
     });
     record.hooks.insert(
         "schema".to_string(),
