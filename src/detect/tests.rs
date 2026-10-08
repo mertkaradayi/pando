@@ -2159,6 +2159,44 @@ fn a_repository_that_is_not_a_workspace_proposes_nothing() {
     );
 }
 
+// A member the workspace leaves out with `!` is not proposed: pnpm and
+// npm both read it, and an app pando proposes the developer excluded is
+// a wrong proposal, not a missing one.
+#[test]
+fn a_workspace_member_excluded_with_a_negated_glob_is_not_an_app() {
+    let dir = tempdir().unwrap();
+    workspace(dir.path());
+    std::fs::write(
+        dir.path().join("package.json"),
+        r#"{ "workspaces": ["apps/*", "!apps/api"], "scripts": { "dev": "pnpm -r --parallel dev" } }"#,
+    )
+    .unwrap();
+    let apps = workspace_apps(dir.path(), &signals(dir.path()));
+    let names: Vec<&str> = apps.iter().map(|app| app.name.as_str()).collect();
+    assert!(names.contains(&"web"), "{names:?}");
+    assert!(!names.contains(&"api"), "{names:?}");
+}
+
+#[test]
+fn a_workspace_glob_matches_within_and_across_directories() {
+    use super::workspaces::glob_matches;
+    for (pattern, dir, matches) in [
+        ("apps/api", "apps/api", true),
+        ("./apps/api/", "apps/api", true),
+        ("apps/*", "apps/api", true),
+        ("apps/*", "apps/api/inner", false),
+        ("apps/a*", "apps/api", true),
+        ("apps/b*", "apps/api", false),
+        ("**/test/**", "apps/test", true),
+        ("**/test/**", "packages/x/test/fixtures", true),
+        ("**/test/**", "apps/tests", false),
+        ("**", "apps/web", true),
+        ("apps/api", "apps/apiary", false),
+    ] {
+        assert_eq!(glob_matches(pattern, dir), matches, "{pattern} ~ {dir}");
+    }
+}
+
 #[test]
 fn workspace_globs_are_read_from_every_convention() {
     let dir = tempdir().unwrap();

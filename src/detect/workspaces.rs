@@ -180,6 +180,40 @@ fn expand_glob(root: &Path, glob: &str) -> Vec<String> {
     out
 }
 
+/// Whether a workspace glob names `dir`, a path relative to the root:
+/// `*` within one directory name, `**` across any number of them.
+pub(super) fn glob_matches(pattern: &str, dir: &str) -> bool {
+    fn segments(path: &str) -> Vec<&str> {
+        path.trim_start_matches("./")
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+    fn name(pattern: &[u8], text: &[u8]) -> bool {
+        match (pattern.first(), text.first()) {
+            (None, None) => true,
+            (Some(b'*'), _) => {
+                name(&pattern[1..], text) || (!text.is_empty() && name(pattern, &text[1..]))
+            }
+            (Some(p), Some(t)) if p == t => name(&pattern[1..], &text[1..]),
+            _ => false,
+        }
+    }
+    fn path(pattern: &[&str], dir: &[&str]) -> bool {
+        match (pattern.first(), dir.first()) {
+            (None, None) => true,
+            (Some(&"**"), _) => {
+                path(&pattern[1..], dir) || (!dir.is_empty() && path(pattern, &dir[1..]))
+            }
+            (Some(p), Some(d)) if name(p.as_bytes(), d.as_bytes()) => {
+                path(&pattern[1..], &dir[1..])
+            }
+            _ => false,
+        }
+    }
+    path(&segments(pattern), &segments(dir))
+}
+
 /// Signals of one app directory: enough for its framework rule, and no
 /// more. A full read would shell out to git once per app for files nothing
 /// here looks at.
@@ -231,8 +265,17 @@ pub fn workspace_apps(root: &Path, signals: &Signals) -> Vec<WorkspaceApp> {
     let runner = script_runner(signals);
     let args = script_args(signals);
     let mut apps: Vec<WorkspaceApp> = Vec::new();
-    for glob in member_globs(root, signals) {
-        for dir in expand_glob(root, &glob) {
+    let globs = member_globs(root, signals);
+    // `!apps/legacy`, `!**/test/**`: a member the workspace itself leaves
+    // out is no app to propose.
+    let (excluded, included): (Vec<&String>, Vec<&String>) =
+        globs.iter().partition(|glob| glob.starts_with('!'));
+    let excluded: Vec<&str> = excluded.iter().map(|glob| &glob[1..]).collect();
+    for glob in included {
+        for dir in expand_glob(root, glob) {
+            if excluded.iter().any(|pattern| glob_matches(pattern, &dir)) {
+                continue;
+            }
             let path = root.join(&dir);
             let app = app_signals(&path);
             let Some((script_name, script)) = dev_script(&path, &app) else {
