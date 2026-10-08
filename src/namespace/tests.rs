@@ -1069,6 +1069,22 @@ fn with_no_container_the_missing_client_is_still_named() {
 // The whole round, and the password in exactly one place: the variable the
 // client reads. Not an argument of the client, and not in the script pando
 // hands `bash -lc`, which anyone on the machine can read in `ps`.
+// `postgres://u:p@[::1]:5432/shop` names its host `[::1]`, and a client
+// told `-h '[::1]'` cannot resolve it: the address goes without brackets.
+#[test]
+fn an_ipv6_host_reaches_the_client_without_its_brackets() {
+    let fake = FakeClient::new("mariadb", "MYSQL_PWD", FAKE_MARIADB);
+    let recipe = recipe_namespace("mariadb");
+    let db = Server {
+        host: "[::1]".into(),
+        ..server(&recipe, &fake, "mariadb")
+    };
+    db.ping().unwrap();
+    let argv = fake.read("argv");
+    assert!(argv.contains("::1"), "{argv}");
+    assert!(!argv.contains("[::1]"), "{argv}");
+}
+
 #[test]
 fn a_database_is_made_found_and_dropped_with_the_password_in_the_environment_alone() {
     let fake = FakeClient::new("mariadb", "MYSQL_PWD", FAKE_MARIADB);

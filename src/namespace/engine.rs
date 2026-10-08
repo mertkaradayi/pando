@@ -570,6 +570,12 @@ impl Server<'_> {
             Runner::Host => (self.host.as_str(), self.port),
             Runner::Container { port, .. } => ("127.0.0.1", *port),
         };
+        // A URL brackets an IPv6 address (`[::1]`); a client's `-h` takes
+        // the address alone, and cannot resolve the bracketed form.
+        let host = host
+            .strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(host);
         Vars {
             host: Some(shell_quote(host)),
             port: Some(port.to_string()),
