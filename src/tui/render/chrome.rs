@@ -414,31 +414,64 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             // its keys come right after the one that shared it.
             Some(name) if app.public_url_of(&name).is_some() => {
                 let mut hints = RUNNING_HINTS.to_vec();
-                let at = hints
-                    .iter()
-                    .position(|(key, ..)| *key == "t")
-                    .map_or(0, |i| i + 1);
-                hints.splice(
-                    at..at,
-                    [("O", "public", false), ("C", "copy public", false)],
+                insert_after(
+                    &mut hints,
+                    "t",
+                    &[("O", "public", false), ("C", "copy public", false)],
                 );
-                hint_line(&hints, width)
+                hint_line(&with_pr_hint(app, hints), width)
             }
-            Some(name) if app.phase_of(&name).is_some() => hint_line(&RUNNING_HINTS, width),
+            Some(name) if app.phase_of(&name).is_some() => {
+                hint_line(&with_pr_hint(app, RUNNING_HINTS.to_vec()), width)
+            }
             // Said first, in the footer's own row: what `⏎` would have
             // done, and the pane beside it says where to fix it.
             Some(_) if app.nothing_to_run => {
-                let mut line = hint_line(&NOTHING_TO_RUN_HINTS, width.saturating_sub(17));
+                let mut line = hint_line(
+                    &with_pr_hint(app, NOTHING_TO_RUN_HINTS.to_vec()),
+                    width.saturating_sub(17),
+                );
                 line.spans.insert(
                     0,
                     Span::styled(" nothing to run ·", Style::new().fg(yellow())),
                 );
                 truncate_line(line, width)
             }
-            Some(_) => hint_line(&STOPPED_HINTS, width),
+            Some(_) => hint_line(&with_pr_hint(app, STOPPED_HINTS.to_vec()), width),
         },
     };
     f.render_widget(Paragraph::new(line).style(Style::new().bg(surface())), area);
+}
+
+/// The key that opens the selected row's pull request, beside git's, on a
+/// row that has one: on any other `space p` only says there is none.
+pub(super) const PR_HINT: (&str, &str, bool) = ("space p", "open PR", false);
+
+fn with_pr_hint<'a>(
+    app: &App,
+    mut hints: Vec<(&'a str, &'a str, bool)>,
+) -> Vec<(&'a str, &'a str, bool)> {
+    let openable = app
+        .selected_worktree()
+        .and_then(|wt| app.pr_for(wt))
+        .is_some_and(|pr| !pr.url.is_empty());
+    if openable {
+        insert_after(&mut hints, "space g", &[PR_HINT]);
+    }
+    hints
+}
+
+/// Puts `extra` right after the hint for `key`, or first without one.
+fn insert_after<'a>(
+    hints: &mut Vec<(&'a str, &'a str, bool)>,
+    key: &str,
+    extra: &[(&'a str, &'a str, bool)],
+) {
+    let at = hints
+        .iter()
+        .position(|(k, ..)| *k == key)
+        .map_or(0, |i| i + 1);
+    hints.splice(at..at, extra.iter().copied());
 }
 
 pub(super) fn hint_line(hints: &[(&str, &str, bool)], width: usize) -> Line<'static> {

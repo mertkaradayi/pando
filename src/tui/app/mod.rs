@@ -867,8 +867,11 @@ impl App {
         if std::mem::take(&mut self.leader) {
             match key.code {
                 KeyCode::Char('g') => self.open_git_menu(),
+                // The row's pull request on GitHub, where `o` is its page
+                // on this machine.
+                KeyCode::Char('p') => self.open_selected_pr(),
                 KeyCode::Esc => self.set_status("cancelled"),
-                _ => self.set_status("space, then g: the git menu"),
+                _ => self.set_status("space, then g: the git menu, p: open its PR in the browser"),
             }
             return;
         }

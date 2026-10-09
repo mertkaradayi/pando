@@ -359,6 +359,39 @@ impl App {
         self.set_success(format!("opened {url}"));
     }
 
+    /// `space p`: the pull request its row's `#n` names,
+    /// open, draft, merged or closed alike. It needs nothing running, only
+    /// what the last fetch from GitHub knew.
+    pub(super) fn open_selected_pr(&mut self) {
+        use crate::worktree::GhAccount;
+        let Some(wt) = self.selected_worktree() else {
+            self.set_error("nothing selected");
+            return;
+        };
+        let label = self.label_of(&wt.name);
+        let found = match self.pr_for(wt) {
+            Some(pr) if !pr.url.is_empty() => Ok((pr.number, pr.url.clone())),
+            _ => Err(match (&wt.branch, &self.gh_account) {
+                (None, _) => format!("{label} is on no branch, so it has no pull request"),
+                (_, Some(GhAccount::Missing)) => {
+                    "pull requests come from gh, which is not installed".to_string()
+                }
+                (_, Some(GhAccount::SignedOut)) => {
+                    "pull requests come from gh, which is signed out — gh auth login, then R"
+                        .to_string()
+                }
+                _ => format!("{label} has no pull request — R asks GitHub again"),
+            }),
+        };
+        match found {
+            Ok((number, url)) => {
+                self.open_url(&url);
+                self.set_success(format!("opened #{number} {url}"));
+            }
+            Err(message) => self.set_error(message),
+        }
+    }
+
     /// One key for both directions, and both ask first: sharing puts the
     /// dev server on the internet, and unsharing takes a URL away from
     /// somebody who may be looking at it right now.

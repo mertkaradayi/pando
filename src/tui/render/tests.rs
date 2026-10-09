@@ -1459,6 +1459,34 @@ fn the_footer_offers_the_share_keys_on_a_wide_terminal() {
     assert!(shared.contains("C copy public"), "{shared}");
 }
 
+// `space p open PR` is offered on a row with a pull request to open, stopped or
+// running, right after git's key, and on no other.
+#[test]
+fn the_footer_offers_space_p_on_a_row_with_a_pull_request() {
+    let mut app = test_app(&["feat+one"]);
+    let none = text_of(&draw(&mut app, 200, 20));
+    assert!(!none.contains("space p open PR"), "{none}");
+
+    app.prs.insert(
+        "feat/one".into(),
+        crate::worktree::PrInfo {
+            url: "https://example.test/pull/482".into(),
+            ..a_pr(482, "feat/one", false, false)
+        },
+    );
+    let stopped = text_of(&draw(&mut app, 200, 20));
+    assert!(
+        stopped.contains("space g git · space p open PR"),
+        "{stopped}"
+    );
+    with_process(&mut app, "feat+one", running_phase());
+    let running = text_of(&draw(&mut app, 200, 20));
+    assert!(
+        running.contains("space g git · space p open PR"),
+        "{running}"
+    );
+}
+
 // …and they are optional, so a narrow terminal sheds them rather than
 // anything essential, and nothing clips.
 #[test]
@@ -2384,7 +2412,11 @@ fn every_footer_hint_is_a_key_help_documents() {
             .collect()
     };
     let list = tokens(LIST_KEYS);
-    let shared = [("O", "public", false), ("C", "copy public", false)];
+    let shared = [
+        ("O", "public", false),
+        ("C", "copy public", false),
+        super::chrome::PR_HINT,
+    ];
     for (key, _, _) in RUNNING_HINTS
         .iter()
         .chain(&STOPPED_HINTS)
@@ -5214,7 +5246,7 @@ fn after_space_the_footer_lists_what_may_follow_it() {
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
     let rendered = text_of(&draw(&mut app, 120, 12));
     assert!(
-        rendered.contains("space › g git · esc cancel"),
+        rendered.contains("space › g git · p open PR in browser · esc cancel"),
         "{rendered}"
     );
 }

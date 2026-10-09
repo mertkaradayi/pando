@@ -128,6 +128,11 @@ pub const LIST_KEYS: &[KeyHelp] = &[
         &[KeyCode::Char(' ')],
         "the git menu: fetch, pull, rebase or merge it — shows the commands first",
     ),
+    key(
+        "space p",
+        &[KeyCode::Char(' ')],
+        "open its pull request on GitHub (the row's #n)",
+    ),
     key("/", &[KeyCode::Char('/')], "filter by branch or name"),
     key(
         ",",
@@ -158,7 +163,10 @@ pub const LIST_KEYS: &[KeyHelp] = &[
 
 /// What may follow `space`, the list's leader, as in neovim: the footer
 /// lists them while it waits, and a test holds them to the handler.
-pub const LEADER_KEYS: &[KeyHelp] = &[key("g", &[KeyCode::Char('g')], "git")];
+pub const LEADER_KEYS: &[KeyHelp] = &[
+    key("g", &[KeyCode::Char('g')], "git"),
+    key("p", &[KeyCode::Char('p')], "open PR in browser"),
+];
 
 /// What the marks in a list row mean, shown under the keys.
 pub const LIST_LEGEND: &[(&str, &str)] = &[
@@ -168,7 +176,7 @@ pub const LIST_LEGEND: &[(&str, &str)] = &[
     ("○", "stopped — s starts it"),
     (
         "◍ #n",
-        "PR: its open pull request — ◌ draft, ✓ merged, ✗ closed",
+        "PR: its open pull request — ◌ draft, ✓ merged, ✗ closed; space p opens it",
     ),
     (
         "prunable",

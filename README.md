@@ -364,6 +364,7 @@ t        share it publicly, or stop sharing
 ! e      a shell in it, or open it in your editor
 n d      new worktree, remove one (never the main checkout, ⌂)
 p        open pull requests: ⏎ makes a worktree for one
+space p  open its own pull request on GitHub (the row's #n)
 a v      copy the setup prompt, or test the setup (pando check)
 T        colour themes, previewed live
 m ?      what pando said in full, and every key

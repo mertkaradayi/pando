@@ -2032,6 +2032,76 @@ fn the_two_open_keys_hand_out_different_urls() {
     );
 }
 
+// `space p` opens the pull request the row's `#n` names, running or not, and
+// merged as well as open: it is GitHub's page, not the dev server's.
+#[test]
+fn space_p_opens_the_rows_pull_request() {
+    use crate::worktree::PrState::{Merged, Open};
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    app.prs
+        .insert("feat/one".into(), a_pr(12, "feat/one", Open));
+    app.prs
+        .insert("feat/two".into(), a_pr(7, "feat/two", Merged));
+
+    app.select_index(0);
+    assert_eq!(app.selected_worktree().unwrap().name, "feat+one");
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Char('p'));
+    assert_eq!(app.opened.as_deref(), Some("https://example.test/pull/12"));
+    let (message, is_error) = app.active_status().unwrap();
+    assert_eq!(message, "opened #12 https://example.test/pull/12");
+    assert!(!is_error);
+
+    app.select_index(1);
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Char('p'));
+    assert_eq!(app.opened.as_deref(), Some("https://example.test/pull/7"));
+}
+
+// A row with no pull request opens nothing and says why: none known, no
+// branch to have one, or no `gh` to ask.
+#[test]
+fn space_p_without_a_pull_request_says_why() {
+    use crate::worktree::GhAccount;
+    let mut app = test_app(&["feat+one"]);
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Char('p'));
+    assert_eq!(app.opened, None);
+    let (message, is_error) = app.active_status().unwrap();
+    assert_eq!(
+        message,
+        "feat/one has no pull request — R asks GitHub again"
+    );
+    assert!(is_error);
+
+    app.gh_account = Some(GhAccount::Missing);
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Char('p'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m),
+        Some("pull requests come from gh, which is not installed")
+    );
+
+    app.gh_account = Some(GhAccount::SignedOut);
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Char('p'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m),
+        Some("pull requests come from gh, which is signed out — gh auth login, then R")
+    );
+
+    app.worktrees[0].branch = None;
+    app.worktrees[0].detached = true;
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Char('p'));
+    assert_eq!(app.opened, None);
+    let (message, _) = app.active_status().unwrap();
+    assert!(
+        message.ends_with("is on no branch, so it has no pull request"),
+        "{message}"
+    );
+}
+
 #[test]
 fn the_tunnel_and_proxy_logs_come_last_in_tab_order() {
     let dir = tempfile::tempdir().unwrap();
@@ -3883,6 +3953,11 @@ fn a_list_every_key_can_act_on() -> (tempfile::TempDir, App) {
     app.refilter();
     app.select_index(1);
     assert_eq!(app.selected_worktree().unwrap().name, "feat+two");
+    // After the rows are placed: a pull request sorts its row first.
+    app.prs.insert(
+        "feat/two".into(),
+        a_pr(12, "feat/two", crate::worktree::PrState::Open),
+    );
     app.poll_logs();
     app.tail_scroll = 1;
     (dir, app)
@@ -8485,7 +8560,7 @@ fn after_space_exactly_the_leader_keys_do_something() {
         press(&mut app, code);
         assert!(!app.leader, "{code:?} leaves the leader waiting");
         assert_eq!(
-            app.modal.is_some(),
+            app.modal.is_some() || app.opened.is_some(),
             documented.contains(&code),
             "{code:?} after space"
         );

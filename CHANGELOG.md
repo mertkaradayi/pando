@@ -7,6 +7,13 @@ may change behaviour.
 
 ## Unreleased
 
+### Added
+
+- `space p` in the TUI opens the selected worktree's pull request on
+  GitHub, the one its row's `#n` names, open, draft, merged or closed,
+  running or not. The footer offers it on a row that has one; on a row
+  without, it says why: no pull request, no branch, or no `gh` to ask.
+
 ## 0.10.1 — 2026-10-08
 
 ### Changed
