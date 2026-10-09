@@ -7,6 +7,8 @@ may change behaviour.
 
 ## Unreleased
 
+## 0.10.2 — 2026-10-09
+
 ### Added
 
 - `space p` in the TUI opens the selected worktree's pull request on
