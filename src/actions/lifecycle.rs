@@ -1362,7 +1362,7 @@ pub fn stop_all_listed(
 pub fn stop_all_with(
     paths: &PandoPaths,
     listed: Option<&[String]>,
-    stop: impl Fn(proc::Group) -> Result<()>,
+    stop: impl Fn(proc::Group) -> Result<()> + Sync,
     progress: &dyn Fn(&str),
 ) -> Result<StopAllReport> {
     paths.ensure_home()?;
@@ -1513,7 +1513,7 @@ pub(super) fn stop_recorded_with(
     store: &mut state::State,
     name: &str,
     only: Option<&str>,
-    stop: impl Fn(proc::Group) -> Result<()>,
+    stop: impl Fn(proc::Group) -> Result<()> + Sync,
     services_to_stop: &mut Vec<String>,
 ) -> Result<StopOutcome> {
     let Some(record) = store.worktrees.get_mut(name) else {
@@ -1567,13 +1567,33 @@ pub(super) fn stop_recorded_with(
     }
     let mut stopped = Vec::new();
     let mut failures = Vec::new();
-    for (process, pgid, swept) in groups {
+    // Every group at once, each waited for on a thread of its own: a dev
+    // server takes up to `STOP_GRACE` over SIGTERM, and this runs under
+    // the project's lock, so one after another a stop of one worktree held
+    // up every other worktree's start, and the TUI's refresh, for that
+    // long per process. Together it is as long as the slowest.
+    let signalled: Vec<Result<()>> = std::thread::scope(|scope| {
+        let waits: Vec<_> = groups
+            .iter()
+            .map(|(_, pgid, swept)| {
+                let (pgid, swept, stop) = (*pgid, *swept, &stop);
+                scope.spawn(move || match swept {
+                    true => Ok(()),
+                    false => stop(pgid),
+                })
+            })
+            .collect();
+        waits
+            .into_iter()
+            .map(|wait| {
+                wait.join()
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("the stop panicked")))
+            })
+            .collect()
+    });
+    for ((process, pgid, _), signalled) in groups.into_iter().zip(signalled) {
         // Signal first, drop second. A record cleared for a group that was
         // never signalled is a process nothing can find again.
-        let signalled = match swept {
-            true => Ok(()),
-            false => stop(pgid),
-        };
         match signalled {
             Ok(()) => {
                 record.processes.remove(&process);

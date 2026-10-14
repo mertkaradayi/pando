@@ -56,7 +56,10 @@ fn stop_all(paths: &PandoPaths) -> Result<Vec<String>> {
     super::stop_all(paths, &noop)
 }
 
-fn stop_all_with(paths: &PandoPaths, stop: impl Fn(Group) -> Result<()>) -> Result<Vec<String>> {
+fn stop_all_with(
+    paths: &PandoPaths,
+    stop: impl Fn(Group) -> Result<()> + Sync,
+) -> Result<Vec<String>> {
     super::stop_all_with(paths, None, stop, &noop).map(|report| report.stopped)
 }
 
@@ -1768,6 +1771,38 @@ fn a_process_that_cannot_start_leaves_none_of_the_others_running() {
     );
 }
 
+// A stop waited out each dev server's SIGTERM one group after another,
+// under the project's lock: a stop of one worktree held up a start of
+// every other, and the TUI's refresh, for up to `STOP_GRACE` per process.
+// The groups are waited for together.
+#[test]
+fn a_stop_waits_for_its_processes_together() {
+    let mut fx = fixture();
+    with_web_and_api(&mut fx);
+    for process in fx.config.processes.values_mut() {
+        process.cmd = "trap 'sleep 1; exit 0' TERM; while :; do sleep 0.1; done".to_string();
+    }
+    let name = workspace_worktree(&fx, "feat/one");
+    let report = start(&fx.paths, &fx.config, &name, None, &noop).unwrap();
+    let _guard = guard(&report);
+    // Each shell has its trap set before the stop arrives.
+    std::thread::sleep(Duration::from_millis(300));
+
+    let at = Instant::now();
+    assert_eq!(
+        stop(&fx.paths, &name, None).unwrap(),
+        StopOutcome::Stopped(vec!["api".to_string(), "web".to_string()])
+    );
+    let took = at.elapsed();
+    assert!(
+        took < Duration::from_millis(1900),
+        "two one-second exits, waited for together: took {took:?}"
+    );
+    for p in &report.started {
+        assert!(!crate::process::group_alive(p.record.pgid));
+    }
+}
+
 #[test]
 fn stop_signals_every_process_group_and_keeps_the_ports() {
     let mut fx = fixture();
@@ -2621,15 +2656,15 @@ fn stop_all_takes_down_a_share_whose_processes_are_all_gone() {
     });
     state::save(&fx.paths.state_file(), &store).unwrap();
 
-    let signalled = std::cell::RefCell::new(Vec::<i32>::new());
+    let signalled = std::sync::Mutex::new(Vec::<i32>::new());
     let stopped = stop_all_with(&fx.paths, |pgid| {
-        signalled.borrow_mut().push(pgid.as_raw());
+        signalled.lock().unwrap().push(pgid.as_raw());
         Ok(())
     })
     .unwrap();
     assert_eq!(stopped, vec![name.clone()]);
     assert!(
-        signalled.borrow().contains(&tunnel.pgid.as_raw()),
+        signalled.lock().unwrap().contains(&tunnel.pgid.as_raw()),
         "{signalled:?}"
     );
     assert!(fx.state().worktrees[&name].share.is_none());
@@ -2665,12 +2700,12 @@ fn a_stop_all_after_a_list_leaves_running_what_came_up_since() {
     state::save(&fx.paths.state_file(), &store).unwrap();
 
     let said = std::cell::RefCell::new(Vec::<String>::new());
-    let signalled = std::cell::RefCell::new(Vec::<i32>::new());
+    let signalled = std::sync::Mutex::new(Vec::<i32>::new());
     let report = super::stop_all_with(
         &fx.paths,
         Some(std::slice::from_ref(&listed)),
         |pgid| {
-            signalled.borrow_mut().push(pgid.as_raw());
+            signalled.lock().unwrap().push(pgid.as_raw());
             Ok(())
         },
         &|line| said.borrow_mut().push(line.to_string()),
@@ -2682,7 +2717,10 @@ fn a_stop_all_after_a_list_leaves_running_what_came_up_since() {
     assert_eq!(stopped, vec![crashed.clone(), listed.clone()]);
     // And the one kept is returned, for the TUI's header to name.
     assert_eq!(report.kept, vec![since.clone()]);
-    assert!(!signalled.borrow().contains(&4_000_202), "{signalled:?}");
+    assert!(
+        !signalled.lock().unwrap().contains(&4_000_202),
+        "{signalled:?}"
+    );
     assert!(fx.state().worktrees[&since].processes.contains_key("dev"));
     assert!(
         said.borrow()
