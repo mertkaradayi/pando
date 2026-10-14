@@ -7,6 +7,8 @@ may change behaviour.
 
 ## Unreleased
 
+## 0.10.3 — 2026-10-14
+
 ### Fixed
 
 - The TUI runs actions on different worktrees at once. A worktree that
