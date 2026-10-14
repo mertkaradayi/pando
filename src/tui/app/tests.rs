@@ -380,7 +380,7 @@ fn the_cursor_of_a_set_question_clamps_at_both_ends() {
 fn the_isolated_key_starts_the_selected_worktree() {
     let mut app = test_app(&["feat+one"]);
     press(&mut app, KeyCode::Char('i'));
-    let pending = app.pending.as_ref().expect("the key started something");
+    let pending = app.pending.last().expect("the key started something");
     assert_eq!(pending.kind, PendingKind::Start);
     assert_eq!(pending.name, "feat+one");
 }
@@ -755,7 +755,7 @@ fn the_create_modal_goes_to_a_worktree_that_already_exists() {
     press(&mut app, KeyCode::Enter);
 
     assert!(app.modal.is_none(), "the modal closes");
-    assert!(app.pending.is_none(), "no worker should have started");
+    assert!(app.pending.is_empty(), "no worker should have started");
     assert_eq!(app.selected_worktree().unwrap().name, "feat+two");
     let (message, is_error) = app.active_status().unwrap();
     assert!(!is_error);
@@ -821,7 +821,7 @@ fn enter_on_a_pull_request_makes_a_worktree_for_it() {
         app.modal.is_none(),
         "the picker closes once the work starts"
     );
-    let pending = app.pending.as_ref().expect("a worker started");
+    let pending = app.pending.last().expect("a worker started");
     assert_eq!(pending.kind, PendingKind::Create);
     assert_eq!(pending.name, "feat+new");
     assert_eq!(pending.label, "#12 feat/new");
@@ -835,7 +835,7 @@ fn enter_on_a_pull_request_with_a_worktree_selects_it() {
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Enter);
     assert!(app.modal.is_none());
-    assert!(app.pending.is_none(), "no worker should have started");
+    assert!(app.pending.is_empty(), "no worker should have started");
     assert_eq!(app.selected_worktree().unwrap().name, "feat+one");
     let (message, is_error) = app.active_status().unwrap();
     assert!(
@@ -857,7 +857,7 @@ fn enter_after_the_list_shrank_takes_the_last_row() {
         crate::worktree::PrState::Open,
     )])));
     press(&mut app, KeyCode::Enter);
-    let pending = app.pending.as_ref().expect("a worker started");
+    let pending = app.pending.last().expect("a worker started");
     assert_eq!(pending.label, "#12 feat/new");
 }
 
@@ -885,7 +885,7 @@ fn a_fetch_that_lands_in_the_picker_keeps_the_cursor_on_its_pull_request() {
         press(&mut app, KeyCode::Down);
         app.handle_event(AppEvent::PrsReady(Ok(fetched)));
         press(&mut app, KeyCode::Enter);
-        let pending = app.pending.as_ref().expect("a worker started");
+        let pending = app.pending.last().expect("a worker started");
         assert_eq!(pending.label, "#11 feat/one");
     }
 }
@@ -913,7 +913,7 @@ fn the_picker_says_why_it_has_no_pull_requests() {
         matches!(app.modal, Some(Modal::PullRequests { .. })),
         "enter on nothing keeps the picker open"
     );
-    assert!(app.pending.is_none());
+    assert!(app.pending.is_empty());
 }
 
 // And one `n` did create takes the cursor as soon as it is listed.
@@ -997,7 +997,7 @@ fn enter_on_a_filtered_row_keeps_it_over_a_created_worktree() {
     // Nor does the next discovery hand it the cursor.
     app.apply_snapshot(listing(&app, &["feat+one", "fix+two", "feat+new"]));
     press(&mut app, KeyCode::Char('s'));
-    let pending = app.pending.as_ref().expect("s started something");
+    let pending = app.pending.last().expect("s started something");
     assert_eq!(
         (pending.name.as_str(), pending.kind),
         ("fix+two", PendingKind::Start)
@@ -1023,7 +1023,7 @@ fn enter_on_a_filtered_row_keeps_it_over_a_created_worktree_not_yet_listed() {
         Some("fix+two")
     );
     press(&mut app, KeyCode::Char('s'));
-    let pending = app.pending.as_ref().expect("s started something");
+    let pending = app.pending.last().expect("s started something");
     assert_eq!(
         (pending.name.as_str(), pending.kind),
         ("fix+two", PendingKind::Start)
@@ -1163,7 +1163,10 @@ fn y_on_a_dirty_worktree_keeps_the_dialog_and_points_at_f() {
     app.worktrees[0].dirty = Some(true);
     press(&mut app, KeyCode::Char('d'));
     press(&mut app, KeyCode::Char('y'));
-    assert!(app.pending.is_none(), "nothing git would refuse is started");
+    assert!(
+        app.pending.is_empty(),
+        "nothing git would refuse is started"
+    );
     assert!(
         matches!(app.modal, Some(Modal::Remove { .. })),
         "the dialog stays open"
@@ -1190,7 +1193,7 @@ fn confirming_the_removal_of_a_worktree_already_gone_starts_nothing() {
     });
     press(&mut app, KeyCode::Char('y'));
     assert!(
-        app.pending.is_none(),
+        app.pending.is_empty(),
         "no worker for a worktree that is gone"
     );
     assert!(app.modal.is_none());
@@ -1205,7 +1208,7 @@ fn capital_f_in_the_remove_dialog_removes_with_force() {
     press(&mut app, KeyCode::Char('d'));
     press(&mut app, KeyCode::Char('F'));
     assert!(app.modal.is_none(), "the dialog closes");
-    let pending = app.pending.as_ref().expect("a removal is under way");
+    let pending = app.pending.last().expect("a removal is under way");
     assert_eq!(pending.kind, PendingKind::Remove);
     assert_eq!(pending.name, "feat+tui");
 }
@@ -1218,7 +1221,7 @@ fn y_on_a_clean_worktree_removes_it() {
     press(&mut app, KeyCode::Char('y'));
     assert!(app.modal.is_none());
     assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
         Some(PendingKind::Remove)
     );
 }
@@ -1254,7 +1257,7 @@ fn confirming_a_locked_removal_refuses_without_starting_work() {
     press(&mut app, KeyCode::Char('d'));
     press(&mut app, KeyCode::Char('y'));
 
-    assert!(app.pending.is_none(), "no worker for a refusal");
+    assert!(app.pending.is_empty(), "no worker for a refusal");
     assert!(app.modal.is_none());
     let (message, is_error) = app.active_status().unwrap();
     assert!(is_error);
@@ -1489,10 +1492,10 @@ fn the_process_keys_each_start_their_own_work() {
         // Stop and restart interrupt something that runs, so they are
         // pressed twice; start on a running worktree interrupts nothing.
         if kind != PendingKind::Start {
-            assert!(app.pending.is_none(), "{key:?}: the first press only asks");
+            assert!(app.pending.is_empty(), "{key:?}: the first press only asks");
             press(&mut app, key);
         }
-        let pending = app.pending.as_ref().expect("the key started something");
+        let pending = app.pending.last().expect("the key started something");
         assert_eq!(pending.kind, kind, "{key:?}");
         assert_eq!(pending.name, "feat+one");
         // And the work is on a worker thread, not this one: the frame
@@ -1662,17 +1665,14 @@ fn enter_twice_starts_the_selected_worktree() {
     let mut app = test_app(&["feat+one"]);
     press(&mut app, KeyCode::Enter);
     press(&mut app, KeyCode::Enter);
-    assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
-        Some(PendingKind::Start)
-    );
+    assert_eq!(app.pending.last().map(|p| p.kind), Some(PendingKind::Start));
 }
 
 #[test]
 fn a_process_key_with_nothing_selected_says_so() {
     let mut app = test_app(&[]);
     press(&mut app, KeyCode::Char('s'));
-    assert!(app.pending.is_none());
+    assert!(app.pending.is_empty());
     assert_eq!(
         app.active_status().map(|(m, _)| m),
         Some("nothing selected")
@@ -1901,16 +1901,16 @@ fn t_on_a_worktree_that_is_not_shared_asks_and_then_shares() {
         app.modal
     );
     assert!(
-        app.pending.is_none(),
+        app.pending.is_empty(),
         "nothing is published until confirmed"
     );
     press(&mut app, KeyCode::Esc);
     assert!(app.modal.is_none());
-    assert!(app.pending.is_none(), "escape shares nothing");
+    assert!(app.pending.is_empty(), "escape shares nothing");
 
     press(&mut app, KeyCode::Char('t'));
     press(&mut app, KeyCode::Enter);
-    let pending = app.pending.as_ref().expect("a share is in flight");
+    let pending = app.pending.last().expect("a share is in flight");
     assert_eq!(pending.kind, PendingKind::Share);
     assert_eq!(pending.name, "feat+one");
     assert!(app.modal.is_none());
@@ -1941,7 +1941,7 @@ fn a_share_reads_the_config_on_disk_not_the_one_the_tui_opened_with() {
     press(&mut app, KeyCode::Char('t'));
     press(&mut app, KeyCode::Char('y'));
     let deadline = Instant::now() + Duration::from_secs(20);
-    while app.pending.is_some() {
+    while !app.pending.is_empty() {
         assert!(Instant::now() < deadline, "the worker never reported");
         app.poll_pending();
         std::thread::sleep(Duration::from_millis(5));
@@ -1969,7 +1969,7 @@ fn t_on_a_shared_worktree_asks_before_taking_the_url_away() {
         other => panic!("expected the unshare confirmation, got {other:?}"),
     }
     assert!(
-        app.pending.is_none(),
+        app.pending.is_empty(),
         "nothing happens until it is confirmed"
     );
 }
@@ -1983,15 +1983,15 @@ fn the_unshare_confirmation_takes_the_url_down_on_y_and_keeps_it_otherwise() {
     press(&mut app, KeyCode::Char('t'));
     press(&mut app, KeyCode::Esc);
     assert!(app.modal.is_none());
-    assert!(app.pending.is_none(), "escape keeps the URL up");
+    assert!(app.pending.is_empty(), "escape keeps the URL up");
 
     press(&mut app, KeyCode::Char('t'));
     press(&mut app, KeyCode::Char('n'));
-    assert!(app.pending.is_none(), "so does n");
+    assert!(app.pending.is_empty(), "so does n");
 
     press(&mut app, KeyCode::Char('t'));
     press(&mut app, KeyCode::Char('y'));
-    let pending = app.pending.as_ref().expect("an unshare is in flight");
+    let pending = app.pending.last().expect("an unshare is in flight");
     assert_eq!(pending.kind, PendingKind::Unshare);
     assert!(app.modal.is_none());
 }
@@ -3970,7 +3970,7 @@ fn list_fingerprint(app: &App) -> String {
         app.modal.as_ref().map(std::mem::discriminant),
         app.mode,
         app.status.as_ref().map(|s| s.message.clone()),
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
         matches!(app.view, View::Log(_)),
         app.should_quit,
         app.list_state.selected(),
@@ -4059,7 +4059,7 @@ fn viewer_fingerprint(app: &App) -> String {
         app.should_quit,
         app.clipboard,
         app.status.as_ref().map(|s| s.message.clone()),
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
     )
 }
 
@@ -4120,12 +4120,9 @@ fn enter_opens_the_mode_chooser_on_what_a_stopped_worktree_last_ran_in() {
         Some(ServiceMode::Shared),
         "never started: shared"
     );
-    assert!(app.pending.is_none(), "nothing starts on the first ⏎");
+    assert!(app.pending.is_empty(), "nothing starts on the first ⏎");
     press(&mut app, KeyCode::Enter);
-    assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
-        Some(PendingKind::Start)
-    );
+    assert_eq!(app.pending.last().map(|p| p.kind), Some(PendingKind::Start));
 
     for last in ServiceMode::ALL {
         let mut app = test_app(&["feat+one"]);
@@ -4144,7 +4141,7 @@ fn enter_opens_the_mode_chooser_on_what_a_stopped_worktree_last_ran_in() {
     press(&mut app, KeyCode::Char('j'));
     assert_eq!(chooser(&app), Some(ServiceMode::Namespaced));
     press(&mut app, KeyCode::Esc);
-    assert!(app.modal.is_none() && app.pending.is_none());
+    assert!(app.modal.is_none() && app.pending.is_empty());
 }
 
 // On a running worktree the chooser is the asking: another mode restarts
@@ -4158,7 +4155,7 @@ fn enter_on_a_running_worktree_switches_it_or_says_it_already_runs_so() {
     assert_eq!(chooser(&app), Some(ServiceMode::Shared));
     assert!(app.log_view().is_none(), "the logs are l's");
     press(&mut app, KeyCode::Enter);
-    assert!(app.pending.is_none() && app.modal.is_none());
+    assert!(app.pending.is_empty() && app.modal.is_none());
     let said = app.status.as_ref().map(|s| s.message.clone());
     assert!(
         said.as_deref()
@@ -4176,7 +4173,7 @@ fn enter_on_a_running_worktree_switches_it_or_says_it_already_runs_so() {
         "the chooser was the asking"
     );
     assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
         Some(PendingKind::Restart)
     );
 
@@ -4191,7 +4188,7 @@ fn enter_on_a_running_worktree_switches_it_or_says_it_already_runs_so() {
 fn capital_s_starts_the_selected_worktree_shared() {
     let mut app = test_app(&["feat+one"]);
     press(&mut app, KeyCode::Char('S'));
-    let pending = app.pending.as_ref().expect("the key started something");
+    let pending = app.pending.last().expect("the key started something");
     assert_eq!(pending.kind, PendingKind::Start);
 }
 
@@ -4205,11 +4202,11 @@ fn a_mode_key_on_a_running_worktree_restarts_it_in_that_mode() {
         with_process(&mut app, "feat+one", running_phase());
         app.state.worktrees.get_mut("feat+one").unwrap().mode = Some(mode);
         press(&mut app, KeyCode::Char(key));
-        assert!(app.pending.is_none(), "{key}: the first press only asks");
+        assert!(app.pending.is_empty(), "{key}: the first press only asks");
         assert!(app.modal.is_none(), "{key}: no dialog for the same mode");
         press(&mut app, KeyCode::Char(key));
         assert_eq!(
-            app.pending.as_ref().map(|p| p.kind),
+            app.pending.last().map(|p| p.kind),
             Some(PendingKind::Restart),
             "{key}"
         );
@@ -4239,17 +4236,17 @@ fn a_mode_key_that_switches_a_running_worktree_asks_in_a_dialog() {
             "{key}: {:?}",
             app.modal
         );
-        assert!(app.pending.is_none(), "{key}: nothing restarts yet");
+        assert!(app.pending.is_empty(), "{key}: nothing restarts yet");
         press(&mut app, KeyCode::Char(key));
-        assert!(app.pending.is_none(), "{key}: only y or enter confirms");
+        assert!(app.pending.is_empty(), "{key}: only y or enter confirms");
         assert!(app.modal.is_some(), "{key}: and the dialog stays");
         press(&mut app, KeyCode::Esc);
-        assert!(app.modal.is_none() && app.pending.is_none(), "{key}");
+        assert!(app.modal.is_none() && app.pending.is_empty(), "{key}");
 
         press(&mut app, KeyCode::Char(key));
         press(&mut app, KeyCode::Char('y'));
         assert_eq!(
-            app.pending.as_ref().map(|p| p.kind),
+            app.pending.last().map(|p| p.kind),
             Some(PendingKind::Restart),
             "{key}"
         );
@@ -4281,7 +4278,7 @@ fn the_mode_chooser_and_the_switch_dialog_act_on_the_worktree_they_name() {
     app.apply_snapshot(listing(&app, &["feat+a", "feat+b", "feat+new"]));
     assert_eq!(app.selected_worktree().unwrap().name, "feat+new");
     press(&mut app, KeyCode::Enter);
-    let pending = app.pending.as_ref().expect("the chooser started something");
+    let pending = app.pending.last().expect("the chooser started something");
     assert_eq!(
         (pending.name.as_str(), pending.kind),
         ("feat+b", PendingKind::Start)
@@ -4296,10 +4293,7 @@ fn the_mode_chooser_and_the_switch_dialog_act_on_the_worktree_they_name() {
     app.apply_snapshot(listing(&app, &["feat+a", "feat+b", "feat+new"]));
     assert_eq!(app.selected_worktree().unwrap().name, "feat+new");
     press(&mut app, KeyCode::Char('y'));
-    let pending = app
-        .pending
-        .as_ref()
-        .expect("the dialog restarted something");
+    let pending = app.pending.last().expect("the dialog restarted something");
     assert_eq!(
         (pending.name.as_str(), pending.kind),
         ("feat+b", PendingKind::Restart)
@@ -4315,7 +4309,7 @@ fn a_mode_dialog_whose_worktree_went_away_starts_nothing() {
     press(&mut app, KeyCode::Enter);
     app.apply_snapshot(listing(&app, &["feat+a"]));
     press(&mut app, KeyCode::Enter);
-    assert!(app.pending.is_none());
+    assert!(app.pending.is_empty());
     assert_eq!(app.active_status(), Some(("feat+b is already gone", false)));
 
     let mut app = test_app(&["feat+a", "feat+b"]);
@@ -4325,7 +4319,7 @@ fn a_mode_dialog_whose_worktree_went_away_starts_nothing() {
     app.state.worktrees.remove("feat+b");
     app.apply_snapshot(listing(&app, &["feat+a"]));
     press(&mut app, KeyCode::Char('y'));
-    assert!(app.pending.is_none());
+    assert!(app.pending.is_empty());
 }
 
 #[test]
@@ -4386,7 +4380,10 @@ fn esc_takes_a_first_press_back_without_quitting() {
     assert!(!app.should_quit, "esc cancels rather than quits");
     assert_eq!(app.active_status(), Some(("cancelled", false)));
     press(&mut app, KeyCode::Char('x'));
-    assert!(app.pending.is_none(), "after esc, x is a first press again");
+    assert!(
+        app.pending.is_empty(),
+        "after esc, x is a first press again"
+    );
     press(&mut app, KeyCode::Esc);
     press(&mut app, KeyCode::Esc);
     assert!(app.should_quit, "with nothing armed esc quits as before");
@@ -4402,14 +4399,14 @@ fn any_other_key_between_the_presses_disarms() {
     press(&mut app, KeyCode::Char('r'));
     press(&mut app, KeyCode::Char('y'));
     press(&mut app, KeyCode::Char('r'));
-    assert!(app.pending.is_none(), "r y r is a first press again");
+    assert!(app.pending.is_empty(), "r y r is a first press again");
     // A different interrupting key is its own first press.
     press(&mut app, KeyCode::Char('x'));
-    assert!(app.pending.is_none(), "r x does not stop it");
+    assert!(app.pending.is_empty(), "r x does not stop it");
     // Moving to another worktree: the second press is not on the same one.
     press(&mut app, KeyCode::Char('j'));
     press(&mut app, KeyCode::Char('x'));
-    assert!(app.pending.is_none(), "x j x stops neither");
+    assert!(app.pending.is_empty(), "x j x stops neither");
 }
 
 #[test]
@@ -4419,10 +4416,10 @@ fn a_first_press_that_has_waited_too_long_is_a_first_press_again() {
     press(&mut app, KeyCode::Char('r'));
     app.armed.as_mut().unwrap().at -= super::ARM_TTL;
     press(&mut app, KeyCode::Char('r'));
-    assert!(app.pending.is_none(), "too late to be the second press");
+    assert!(app.pending.is_empty(), "too late to be the second press");
     press(&mut app, KeyCode::Char('r'));
     assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
         Some(PendingKind::Restart)
     );
 }
@@ -4441,10 +4438,7 @@ fn a_worktree_with_nothing_up_is_stopped_on_one_press() {
         },
     );
     press(&mut app, KeyCode::Char('x'));
-    assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
-        Some(PendingKind::Stop)
-    );
+    assert_eq!(app.pending.last().map(|p| p.kind), Some(PendingKind::Stop));
 }
 
 // ---- the list's order ------------------------------------------------
@@ -4543,9 +4537,126 @@ fn a_second_action_is_refused_with_what_the_first_is_called() {
 
     let mut app = test_app(&["feat+one"]);
     assert!(app.spawn_create("feat/pay".into(), None));
-    press(&mut app, KeyCode::Char('s'));
+    assert!(!app.spawn_create("feat/tax".into(), None));
     let (message, _) = app.active_status().unwrap();
     assert_eq!(message, "already busy creating feat/pay");
+}
+
+// One action at a time for the whole TUI meant a worktree that was
+// stopping held every other one: `s` on another said "already busy" until
+// the stop was done, and two worktrees could never start together. Each
+// worktree has one action in flight now, beside any other worktree's.
+#[test]
+fn a_start_runs_beside_another_worktrees_stop() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+one".into(), PendingKind::Stop, move || {
+        let _ = held.recv();
+        Ok(PendingOutcome::Stopped("feat+one".into()))
+    });
+    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::Char('s'));
+    let kinds: Vec<(String, PendingKind)> = app
+        .pending
+        .iter()
+        .map(|p| (p.name.clone(), p.kind))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ("feat+one".to_string(), PendingKind::Stop),
+            ("feat+two".to_string(), PendingKind::Start),
+        ]
+    );
+    assert_eq!(
+        app.pending_on("feat+one").map(|p| p.kind),
+        Some(PendingKind::Stop)
+    );
+    assert_eq!(
+        app.pending_on("feat+two").map(|p| p.kind),
+        Some(PendingKind::Start)
+    );
+
+    // The stop finishing takes only its own row's action away.
+    drop(hold);
+    while app.pending_on("feat+one").is_some() {
+        app.poll_pending();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.messages.iter().any(|m| m.message == "stopped feat/one"));
+}
+
+#[test]
+fn two_worktrees_start_at_once_and_one_twice_is_refused() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let (hold, held) = mpsc::channel::<()>();
+    let held = std::sync::Arc::new(std::sync::Mutex::new(held));
+    for name in ["feat+one", "feat+two"] {
+        let held = held.clone();
+        assert!(app.spawn_pending(name.into(), PendingKind::Start, move || {
+            let _ = held.lock().unwrap().recv();
+            Err("let go".to_string())
+        }));
+    }
+    assert_eq!(app.pending.len(), 2);
+    assert!(
+        !app.spawn_pending("feat+two".into(), PendingKind::Restart, || {
+            Err("never runs".to_string())
+        })
+    );
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("already busy starting feat/two".to_string())
+    );
+    // Several in flight: the header names each.
+    app.status = None;
+    app.poll_pending();
+    let (message, _) = app.active_status().unwrap();
+    assert!(
+        message.contains("starting feat/one · starting feat/two"),
+        "{message}"
+    );
+    drop(hold);
+}
+
+// A stop-all stops what is live when it takes the lock; a worktree
+// halfway through an isolated start is not live yet, so it runs alone.
+#[test]
+fn a_stop_all_runs_alone_and_repository_writes_take_turns() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+two".into(), PendingKind::Start, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.stop_everything(vec!["feat+one".into()]);
+    assert_eq!(app.pending.len(), 1, "the stop-all waits for the start");
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("already busy starting feat/two".to_string())
+    );
+    drop(hold);
+
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending(
+        "feat+one".into(),
+        PendingKind::Git(crate::actions::git::GitAction::Fetch),
+        move || {
+            let _ = held.recv();
+            Err("let go".to_string())
+        },
+    );
+    assert!(
+        !app.spawn_create("feat/pay".into(), None),
+        "git's refs are one"
+    );
+    assert!(
+        app.spawn_pending("feat+two".into(), PendingKind::Start, || {
+            Err("let go".to_string())
+        })
+    );
+    drop(hold);
 }
 
 // A start blocked on a question is not starting anything: the status line
@@ -4572,8 +4683,7 @@ fn a_message_said_while_an_action_runs_is_not_spun_over() {
         let _ = held.recv();
         Err("let go".to_string())
     });
-    press(&mut app, KeyCode::Char('j'));
-    press(&mut app, KeyCode::Char('s'));
+    press(&mut app, KeyCode::Char('r'));
     for _ in 0..3 {
         app.poll_pending();
     }
@@ -4616,7 +4726,7 @@ fn n_resolves_what_new_needs_before_creating() {
     type_str(&mut app, "feat/new");
     press(&mut app, KeyCode::Enter);
     assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
         Some(PendingKind::Create)
     );
     let rx = app.event_rx.take().expect("the app owns its receiver");
@@ -4917,10 +5027,7 @@ fn a_hand_off_that_failed_says_why() {
 fn r_on_a_stopped_worktree_starts_it() {
     let mut app = test_app(&["feat+one"]);
     press(&mut app, KeyCode::Char('r'));
-    assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
-        Some(PendingKind::Start)
-    );
+    assert_eq!(app.pending.last().map(|p| p.kind), Some(PendingKind::Start));
 }
 
 #[test]
@@ -4938,7 +5045,7 @@ fn shift_p_restarts_only_the_process_the_detail_pane_marks() {
         "{message}"
     );
     press(&mut app, KeyCode::Char('P'));
-    let pending = app.pending.as_ref().expect("P started something");
+    let pending = app.pending.last().expect("P started something");
     assert_eq!(pending.kind, PendingKind::Restart);
     assert_eq!(pending.name, "feat+one");
     assert_eq!(pending.label, format!("{marked} of feat/one"));
@@ -4950,13 +5057,13 @@ fn shift_p_on_one_process_restarts_the_worktree_and_on_none_says_so() {
     with_process(&mut app, "feat+one", running_phase());
     press(&mut app, KeyCode::Char('P'));
     press(&mut app, KeyCode::Char('P'));
-    let pending = app.pending.as_ref().expect("P started something");
+    let pending = app.pending.last().expect("P started something");
     assert_eq!(pending.kind, PendingKind::Restart);
     assert_eq!(pending.label, "feat/one");
 
     let mut app = test_app(&["feat+one"]);
     press(&mut app, KeyCode::Char('P'));
-    assert!(app.pending.is_none());
+    assert!(app.pending.is_empty());
     let (message, error) = app.active_status().expect("an error");
     assert!(error && message.contains("running nothing"), "{message}");
 }
@@ -5001,7 +5108,7 @@ fn x_asks_first_and_esc_keeps_everything_up() {
     );
     press(&mut app, KeyCode::Esc);
     assert!(app.modal.is_none());
-    assert!(app.pending.is_none());
+    assert!(app.pending.is_empty());
 }
 
 #[test]
@@ -5013,7 +5120,7 @@ fn x_confirmed_stops_everything_and_every_running_row_says_so() {
     press(&mut app, KeyCode::Char('y'));
     assert!(app.modal.is_none());
     assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
         Some(PendingKind::StopAll)
     );
     assert!(app.pending_on("feat+one").is_some());
@@ -5100,7 +5207,7 @@ fn a_question_waits_until_the_mode_chooser_is_closed() {
         matches!(app.modal, Some(Modal::Mode { .. })),
         "the chooser stays"
     );
-    assert!(app.queued_question.is_some());
+    assert!(!app.queued_questions.is_empty());
     type_key(&mut app, KeyCode::Esc);
     assert!(matches!(app.modal, Some(Modal::Question { .. })));
     assert!(rx.try_recv().is_err(), "nothing answered it");
@@ -5175,7 +5282,7 @@ fn a_bare_flag_is_still_translated() {
 /// Polls the worker until it has reported, or fails the test.
 fn wait_for_pending(app: &mut App) {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while app.pending.is_some() {
+    while !app.pending.is_empty() {
         assert!(Instant::now() < deadline, "the worker never reported");
         app.poll_pending();
         std::thread::sleep(Duration::from_millis(5));
@@ -5250,7 +5357,7 @@ fn a_create_whose_install_failed_says_it_was_created_and_goes_to_it() {
     );
     let reported = error.clone();
     app.spawn_pending("feat+x".into(), PendingKind::Create, move || Err(reported));
-    app.pending.as_mut().unwrap().label = "feat/x".into();
+    app.pending.last_mut().unwrap().label = "feat/x".into();
     wait_for_pending(&mut app);
     let (message, is_error) = app.active_status().unwrap();
     assert_eq!(message, error);
@@ -5281,7 +5388,7 @@ fn a_create_kept_over_a_raced_record_says_so_and_goes_to_it() {
     );
     let reported = error.clone();
     app.spawn_pending("feat+x".into(), PendingKind::Create, move || Err(reported));
-    app.pending.as_mut().unwrap().label = "feat/x".into();
+    app.pending.last_mut().unwrap().label = "feat/x".into();
     wait_for_pending(&mut app);
     let (message, is_error) = app.active_status().unwrap();
     assert_eq!(message, error);
@@ -5306,7 +5413,7 @@ fn pending_that_says(
         }
         outcome
     });
-    app.pending.as_mut().unwrap().progress_rx = Some(prx);
+    app.pending.last_mut().unwrap().progress_rx = Some(prx);
 }
 
 // `F` with Docker down: the line naming the command that removes the
@@ -5485,7 +5592,7 @@ fn enter_on_a_project_with_nothing_to_run_says_where_to_add_it() {
     let mut app = test_app(&["main-lib"]);
     app.nothing_to_run = true;
     press(&mut app, KeyCode::Enter);
-    assert!(app.pending.is_none(), "enter does not pretend to start");
+    assert!(app.pending.is_empty(), "enter does not pretend to start");
     let (message, is_error) = app.active_status().unwrap();
     assert!(!is_error);
     assert!(
@@ -5498,7 +5605,7 @@ fn enter_on_a_project_with_nothing_to_run_says_where_to_add_it() {
     );
     for code in [KeyCode::Char('s'), KeyCode::Char('i'), KeyCode::Char('r')] {
         press(&mut app, code);
-        assert!(app.pending.is_none(), "{code:?} does not start anything");
+        assert!(app.pending.is_empty(), "{code:?} does not start anything");
     }
 }
 
@@ -5554,7 +5661,7 @@ fn a_start_that_returns_before_ready_waits_to_say_so() {
     let status = app.flash().unwrap();
     assert_eq!(status.kind, StatusKind::Success);
     assert_eq!(status.message, "feat/one is ready — http://localhost:17342");
-    assert!(app.awaiting_ready.is_none());
+    assert!(app.awaiting_ready.is_empty());
 }
 
 // A restart came back while the state on hand was still the run it
@@ -5576,7 +5683,7 @@ fn a_restart_is_not_ready_on_a_read_from_before_it() {
     wait_for_pending(&mut app);
     let status = app.flash().unwrap();
     assert_ne!(status.kind, StatusKind::Success, "{}", status.message);
-    assert!(app.awaiting_ready.is_some());
+    assert!(!app.awaiting_ready.is_empty());
 
     let old_api = app.state.worktrees["feat+one"].processes["api"].clone();
     let refreshed = |app: &mut App, api: Option<Phase>| {
@@ -5596,18 +5703,18 @@ fn a_restart_is_not_ready_on_a_read_from_before_it() {
     // Between the stop and the start: only the sibling, running.
     refreshed(&mut app, None);
     assert!(
-        app.awaiting_ready.is_some(),
+        !app.awaiting_ready.is_empty(),
         "the sibling says nothing of api"
     );
     refreshed(&mut app, Some(Phase::Starting { since: Utc::now() }));
-    assert!(app.awaiting_ready.is_some());
+    assert!(!app.awaiting_ready.is_empty());
     assert_ne!(app.flash().unwrap().kind, StatusKind::Success);
 
     refreshed(&mut app, Some(running_phase()));
     let status = app.flash().unwrap();
     assert_eq!(status.kind, StatusKind::Success);
     assert_eq!(status.message, "feat/one is ready");
-    assert!(app.awaiting_ready.is_none());
+    assert!(app.awaiting_ready.is_empty());
 }
 
 // A whole restart — `r`, or `P` on a worktree with one process — closes
@@ -5638,7 +5745,7 @@ fn a_restart_that_closed_a_public_url_still_says_so_once_it_is_ready() {
     let record = state.worktrees.get_mut("feat+one").unwrap();
     record.processes.get_mut("dev").unwrap().phase = running_phase();
     app.handle_event(refreshed(state));
-    assert!(app.awaiting_ready.is_none(), "ready was said");
+    assert!(app.awaiting_ready.is_empty(), "ready was said");
     assert_eq!(
         app.messages.back().map(|m| m.message.as_str()),
         Some("feat/one is ready — http://localhost:17342"),
@@ -5708,26 +5815,26 @@ fn a_stop_while_a_start_waits_to_be_ready_ends_the_wait() {
     wait_for_pending(&mut app);
     app.handle_event(refreshed(without_dev.clone()));
     assert!(
-        app.awaiting_ready.is_some(),
+        !app.awaiting_ready.is_empty(),
         "a read from before the start says nothing of dev"
     );
     app.handle_event(refreshed(starting));
-    assert!(app.awaiting_ready.is_some(), "dev is still starting");
+    assert!(!app.awaiting_ready.is_empty(), "dev is still starting");
 
     drop(dev);
     app.handle_event(refreshed(without_dev.clone()));
-    assert!(app.awaiting_ready.is_none(), "dev was stopped");
+    assert!(app.awaiting_ready.is_empty(), "dev was stopped");
 
     // Not on a read nothing before it has shown dev in, dead or not: one
     // that died by itself is in the reads after this, failed.
-    app.awaiting_ready = Some(AwaitingReady {
+    app.awaiting_ready = vec![AwaitingReady {
         name: "feat+one".into(),
         url: None,
         spawned: vec![("dev".into(), pid)],
         seen: false,
-    });
+    }];
     app.handle_event(refreshed(without_dev));
-    assert!(app.awaiting_ready.is_some());
+    assert!(!app.awaiting_ready.is_empty());
 }
 
 // ---- commit age ------------------------------------------------------
@@ -5896,7 +6003,7 @@ fn the_main_checkouts_branch_cannot_be_created_from_the_picker() {
     open_create_with(&mut app, &[("main", BranchSource::Local)]);
     type_str(&mut app, "main");
     press(&mut app, KeyCode::Enter);
-    assert!(app.pending.is_none(), "nothing started");
+    assert!(app.pending.is_empty(), "nothing started");
     assert!(
         matches!(app.modal, Some(Modal::Create { .. })),
         "still open"
@@ -6440,7 +6547,7 @@ fn a_config_file_with_no_process_still_lets_enter_start() {
     press(&mut app, KeyCode::Enter);
     press(&mut app, KeyCode::Enter);
     assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
         Some(PendingKind::Start),
         "enter runs the start, and with it the question that finds the command"
     );
@@ -6646,19 +6753,19 @@ fn a_death_that_a_discovery_finds_is_said_too() {
 fn a_death_during_a_start_is_said_once_by_name() {
     let mut app = test_app(&["feat+m"]);
     with_process(&mut app, "feat+m", Phase::Starting { since: Utc::now() });
-    app.awaiting_ready = Some(AwaitingReady {
+    app.awaiting_ready = vec![AwaitingReady {
         name: "feat+m".into(),
         url: None,
         spawned: vec![("dev".into(), 4242)],
         seen: false,
-    });
+    }];
     let mut state = app.state.clone();
     fail_process(&mut state, "feat+m", "dev", "boom");
     let before = app.messages.len();
     app.handle_event(refreshed(state));
     assert_eq!(app.messages.len(), before + 1);
     assert_eq!(app.flash().unwrap().message, "dev of feat/m exited — boom");
-    assert!(app.awaiting_ready.is_none());
+    assert!(app.awaiting_ready.is_empty());
 }
 
 // ---- dogfood: an error about one worktree leaves with the cursor ------
@@ -7373,7 +7480,7 @@ fn v_starts_one_check_once_settings_exist() {
     save_settings(&mut app, &rx);
     press(&mut app, KeyCode::Char('v'));
     assert_eq!(app.checks_started, 1);
-    assert!(app.pending.is_none(), "the action slot stays free");
+    assert!(app.pending.is_empty(), "the action slot stays free");
     assert_eq!(screen(&app).line(), SetupLine::Starting);
     press(&mut app, KeyCode::Char('v'));
     assert_eq!(app.checks_started, 1, "one at a time");
@@ -7508,7 +7615,7 @@ fn v_on_the_list_starts_one_check_when_there_are_settings() {
     );
     press(&mut app, KeyCode::Char('v'));
     assert_eq!(app.checks_started, 1);
-    assert!(app.pending.is_none(), "the action slot stays free");
+    assert!(app.pending.is_empty(), "the action slot stays free");
     assert_eq!(app.setup_row.hint(), Some(SetupHint::Starting));
     press(&mut app, KeyCode::Char('v'));
     assert_eq!(app.checks_started, 1, "one at a time");
@@ -7730,7 +7837,7 @@ fn guess_and_start_the_check(app: &mut App, rx: &Receiver<AppEvent>) {
         SetupLine::OwnGuess(Trying::Resolving),
         "the screen says pando is trying"
     );
-    assert!(app.pending.is_none(), "the action slot stays free");
+    assert!(app.pending.is_empty(), "the action slot stays free");
     press(app, KeyCode::Enter);
     assert!(app.setup_screen.is_some(), "a second ⏎ waits for the first");
     tick_until(app, rx, "the check", |app| app.checks_started == 1);
@@ -7933,7 +8040,7 @@ fn a_main_checkout_pando_never_ran_waits_for_its_record_before_the_first_worktre
     assert!(!app.main_row_shown());
     assert!(app.selected_worktree().is_none());
     press(&mut app, KeyCode::Char('s'));
-    assert!(app.pending.is_none(), "nothing is selected on the welcome");
+    assert!(app.pending.is_empty(), "nothing is selected on the welcome");
 
     let mut state = app.state.clone();
     state.worktrees.insert(
@@ -7959,7 +8066,7 @@ fn the_row_keys_act_on_the_main_checkout() {
         if kind != PendingKind::Start {
             press(&mut app, key);
         }
-        let pending = app.pending.as_ref().expect("the key started something");
+        let pending = app.pending.last().expect("the key started something");
         assert_eq!((pending.name.as_str(), pending.kind), ("acme-shop", kind));
     }
     let mut app = app_with_main(&["feat+one"]);
@@ -7974,7 +8081,7 @@ fn enter_starts_the_main_checkout_with_no_chooser() {
     let mut app = app_with_main(&["feat+one"]);
     press(&mut app, KeyCode::Enter);
     assert!(app.modal.is_none(), "no mode chooser for it");
-    let pending = app.pending.as_ref().expect("enter started it");
+    let pending = app.pending.last().expect("enter started it");
     assert_eq!(
         (pending.name.as_str(), pending.kind),
         ("acme-shop", PendingKind::Start)
@@ -7983,7 +8090,7 @@ fn enter_starts_the_main_checkout_with_no_chooser() {
     let mut app = app_with_main(&["feat+one"]);
     with_process(&mut app, "acme-shop", running_phase());
     press(&mut app, KeyCode::Enter);
-    assert!(app.modal.is_none() && app.pending.is_none());
+    assert!(app.modal.is_none() && app.pending.is_empty());
     let (message, _) = app.active_status().unwrap();
     assert!(message.contains("the main checkout"), "{message}");
 }
@@ -7994,7 +8101,7 @@ fn enter_starts_the_main_checkout_with_no_chooser() {
 fn the_main_checkout_refuses_isolation_and_removal() {
     let mut app = app_with_main(&["feat+one"]);
     press(&mut app, KeyCode::Char('i'));
-    assert!(app.pending.is_none() && app.modal.is_none());
+    assert!(app.pending.is_empty() && app.modal.is_none());
     let (message, is_error) = app.active_status().unwrap();
     assert!(is_error && message.contains("isolated and namespaced are for worktrees"));
 
@@ -8297,7 +8404,7 @@ fn run_git_preview(app: &mut App) -> mpsc::Sender<Result<PendingOutcome, String>
     press(app, KeyCode::Enter);
     assert!(matches!(git_stage(app), GitStage::Running { .. }));
     let (tx, rx) = mpsc::channel();
-    app.pending.as_mut().expect("a run is in flight").rx = rx;
+    app.pending.last_mut().expect("a run is in flight").rx = rx;
     tx
 }
 
@@ -8412,7 +8519,7 @@ fn a_run_cannot_be_stepped_out_of_and_lands_in_the_menu() {
     press(&mut app, KeyCode::Enter);
     let tx = run_git_preview(&mut app);
     assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
         Some(PendingKind::Git(GitAction::Rebase))
     );
     press(&mut app, KeyCode::Esc);
@@ -8425,7 +8532,7 @@ fn a_run_cannot_be_stepped_out_of_and_lands_in_the_menu() {
     )))
     .unwrap();
     app.handle_event(AppEvent::Tick);
-    assert!(app.pending.is_none());
+    assert!(app.pending.is_empty());
     match git_stage(&app) {
         GitStage::Result { ran, restart, .. } => {
             assert!(matches!(ran, Ok(Ran::Moved(_))));
@@ -8459,7 +8566,7 @@ fn a_branch_moved_under_a_running_worktree_restarts_on_one_press() {
     press(&mut app, KeyCode::Char('r'));
     assert!(app.modal.is_none());
     assert_eq!(
-        app.pending.as_ref().map(|p| p.kind),
+        app.pending.last().map(|p| p.kind),
         Some(PendingKind::Restart),
         "one press: the preview was the asking"
     );
@@ -8615,4 +8722,37 @@ fn esc_after_space_takes_it_back() {
     assert!(!app.leader);
     assert!(!app.should_quit, "esc after space does not quit");
     assert!(app.modal.is_none());
+}
+
+// Two starts in flight can each have a question. The one that arrived
+// while the other was open replaced any already held, and the worker
+// whose question was dropped was cancelled: they wait their turn now.
+#[test]
+fn questions_from_two_workers_are_each_asked_in_turn() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let first = open_question(&mut app, a_question());
+    let second = open_question(&mut app, a_question());
+    let third = open_question(&mut app, a_services_question());
+    assert!(matches!(app.modal, Some(Modal::Question { .. })));
+    assert_eq!(app.queued_questions.len(), 2);
+
+    let enter = || {
+        AppEvent::Input(ratatui::crossterm::event::Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+    };
+    app.handle_event(enter());
+    assert!(first.try_recv().unwrap().is_ok());
+    assert!(
+        matches!(app.modal, Some(Modal::Question { .. })),
+        "the next one opens"
+    );
+    app.handle_event(enter());
+    assert!(second.try_recv().unwrap().is_ok());
+    assert!(matches!(
+        app.modal,
+        Some(Modal::Question { ref question, .. }) if question.slot == crate::detect::Slot::Services
+    ));
+    assert!(third.try_recv().is_err(), "still being asked");
 }

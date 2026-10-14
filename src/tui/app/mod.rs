@@ -287,10 +287,12 @@ pub struct App {
     /// A worktree to put the cursor on as soon as a discovery lists it —
     /// the one `n` just created.
     pub select_on_arrival: Option<String>,
-    /// A worker's question that arrived while somebody was typing, held
-    /// until they are done so their keystrokes do not answer it.
-    pub queued_question: Option<QueuedQuestion>,
-    pub pending: Option<PendingAction>,
+    /// Workers' questions that arrived while somebody was typing, or
+    /// while another question was open, held in order until the keyboard
+    /// is free so keystrokes meant for something else do not answer them.
+    pub queued_questions: VecDeque<QueuedQuestion>,
+    /// The actions in flight, oldest first, at most one per worktree.
+    pub pending: Vec<PendingAction>,
     /// Announced reads of git state in flight: the first, and one for the
     /// worktrees each discovery finds, which can overlap. The header says
     /// `reading git` while there is one.
@@ -309,10 +311,10 @@ pub struct App {
     /// is what asks for one. `⏎` then says where to add one instead of
     /// pretending to start.
     pub nothing_to_run: bool,
-    /// A worktree whose start returned before it was ready, the URL the
-    /// start reported, and what it spawned: the refresh that finds those
-    /// processes running says so.
-    pub awaiting_ready: Option<AwaitingReady>,
+    /// Each worktree whose start returned before it was ready, the URL
+    /// the start reported, and what it spawned: the refresh that finds
+    /// those processes running says so.
+    pub awaiting_ready: Vec<AwaitingReady>,
     /// The failure last announced for each worktree's process, by when it
     /// failed, so the same death is never announced twice.
     pub deaths_told: HashMap<(String, String), chrono::DateTime<chrono::Utc>>,
@@ -406,13 +408,13 @@ impl App {
             status: None,
             messages: VecDeque::new(),
             select_on_arrival: None,
-            queued_question: None,
-            pending: None,
+            queued_questions: VecDeque::new(),
+            pending: Vec::new(),
             enriching: 0,
             git_refreshing: false,
             commit_seen: HashMap::new(),
             nothing_to_run: false,
-            awaiting_ready: None,
+            awaiting_ready: Vec::new(),
             deaths_told: HashMap::new(),
             silence_told: std::collections::HashSet::new(),
             should_quit: false,
@@ -472,7 +474,7 @@ impl App {
             AppEvent::Input(_) => false,
             AppEvent::Tick => {
                 self.tick = self.tick.wrapping_add(1);
-                let spinning = self.pending.is_some();
+                let spinning = !self.pending.is_empty();
                 let setup = self.poll_setup() | self.poll_setup_row();
                 self.poll_pending();
                 let grew = self.poll_logs();
@@ -647,7 +649,7 @@ impl App {
                 // It waits until they are done; the status line says a
                 // question is waiting meanwhile.
                 if self.busy_typing() {
-                    self.queued_question = Some(boxed);
+                    self.queued_questions.push_back(boxed);
                     return true;
                 }
                 self.open_question(*boxed);
@@ -698,10 +700,10 @@ impl App {
     /// A question that arrived while somebody was typing, opened once they
     /// are not.
     fn open_queued_question(&mut self) -> bool {
-        if self.queued_question.is_none() || self.busy_typing() {
+        if self.queued_questions.is_empty() || self.busy_typing() {
             return false;
         }
-        match self.queued_question.take() {
+        match self.queued_questions.pop_front() {
             Some(boxed) => {
                 self.open_question(*boxed);
                 true
@@ -976,12 +978,17 @@ impl App {
     /// second press, and esc, which cancels everywhere else, only says so.
     /// ctrl-c still quits at once, whatever is in flight.
     fn quit(&mut self, key: KeyCode) {
-        let Some(pending) = &self.pending else {
+        let Some(first) = self.pending.first() else {
             self.should_quit = true;
             return;
         };
-        let doing = format!("{} {}", pending.kind.verb(), pending.label);
-        let name = pending.name.clone();
+        let name = first.name.clone();
+        let doing = self
+            .pending
+            .iter()
+            .map(|p| format!("{} {}", p.kind.verb(), p.label))
+            .collect::<Vec<_>>()
+            .join(" and ");
         if key == KeyCode::Esc {
             self.set_prompt(format!(
                 "{doing} is in flight — q twice abandons it and quits"
@@ -1533,29 +1540,36 @@ impl App {
     /// that failed or the worktree went away. A failure that `died`
     /// already names is left to it.
     fn announce_ready(&mut self, died: &[Death]) {
-        let Some(mut awaited) = self.awaiting_ready.take() else {
-            return;
-        };
-        let name = awaited.name.clone();
-        match awaited.readiness(self.record_for(&name), crate::process::is_alive) {
-            Readiness::Ready => {
-                let label = self.label_of(&name);
-                self.set_success_behind_error(match awaited.url {
-                    Some(url) => format!("{label} is ready — {url}"),
-                    None => format!("{label} is ready"),
-                });
-            }
-            // Kept, with what this read has shown.
-            Readiness::Waiting => self.awaiting_ready = Some(awaited),
-            Readiness::Failed => {
-                if died.iter().any(|(n, ..)| *n == name) {
-                    return;
+        for mut awaited in std::mem::take(&mut self.awaiting_ready) {
+            let name = awaited.name.clone();
+            match awaited.readiness(self.record_for(&name), crate::process::is_alive) {
+                Readiness::Ready => {
+                    let label = self.label_of(&name);
+                    self.set_success_behind_error(match awaited.url {
+                        Some(url) => format!("{label} is ready — {url}"),
+                        None => format!("{label} is ready"),
+                    });
                 }
-                let label = self.label_of(&name);
-                self.set_error_about(&name, format!("{label} failed — l shows the log"));
+                // Kept, with what this read has shown.
+                Readiness::Waiting => self.awaiting_ready.push(awaited),
+                Readiness::Failed => {
+                    if died.iter().any(|(n, ..)| *n == name) {
+                        continue;
+                    }
+                    let label = self.label_of(&name);
+                    self.set_error_about(&name, format!("{label} failed — l shows the log"));
+                }
+                Readiness::Gone => {}
             }
-            Readiness::Gone => {}
         }
+    }
+
+    /// Waits for a start of `awaited.name` to be ready, in place of any
+    /// earlier start of the same worktree still being waited for: that one
+    /// was replaced, and the others are waited for alongside it.
+    pub(super) fn await_ready(&mut self, awaited: AwaitingReady) {
+        self.awaiting_ready.retain(|a| a.name != awaited.name);
+        self.awaiting_ready.push(awaited);
     }
 
     fn expire_status(&mut self) -> bool {
@@ -1615,13 +1629,13 @@ impl App {
             status: None,
             messages: VecDeque::new(),
             select_on_arrival: None,
-            queued_question: None,
-            pending: None,
+            queued_questions: VecDeque::new(),
+            pending: Vec::new(),
             enriching: 0,
             git_refreshing: false,
             commit_seen: HashMap::new(),
             nothing_to_run: false,
-            awaiting_ready: None,
+            awaiting_ready: Vec::new(),
             deaths_told: HashMap::new(),
             silence_told: std::collections::HashSet::new(),
             should_quit: false,

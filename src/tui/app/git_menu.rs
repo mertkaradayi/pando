@@ -257,7 +257,7 @@ impl App {
         if !started {
             return Some(GitStage::Preview { read, action });
         }
-        if let Some(p) = self.pending.as_mut() {
+        if let Some(p) = self.pending.last_mut() {
             p.progress_rx = Some(prx);
         }
         Some(GitStage::Running { read, action })

@@ -365,14 +365,13 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     // selected row's keys would only be answered once it closes, so the
     // footer says what is being waited for instead of offering them.
     if app.awaiting_answer() {
-        let label = app
-            .pending
-            .as_ref()
-            .map(|p| p.label.clone())
-            .unwrap_or_default();
+        let who = match app.pending.as_slice() {
+            [one] => one.label.clone(),
+            _ => "a question".to_string(),
+        };
         let line = Line::from(vec![
             Span::styled(
-                format!(" ? {label} is waiting for your answer"),
+                format!(" ? {who} is waiting for your answer"),
                 Style::new().fg(yellow()).add_modifier(Modifier::BOLD),
             ),
             Span::styled(" · answer in the dialog", Style::new().fg(text_muted())),

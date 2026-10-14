@@ -307,7 +307,7 @@ impl App {
                 .map(|report| PendingOutcome::started(worker_name.clone(), &report))
                 .map_err(|e| format!("{e:#}"))
         });
-        if started && let Some(p) = self.pending.as_mut() {
+        if started && let Some(p) = self.pending.last_mut() {
             p.progress_rx = Some(prx);
         }
     }
@@ -337,7 +337,7 @@ impl App {
                 })
                 .map_err(|e| format!("{e:#}"))
         });
-        if started && let Some(p) = self.pending.as_mut() {
+        if started && let Some(p) = self.pending.last_mut() {
             p.progress_rx = Some(prx);
         }
     }
@@ -426,7 +426,7 @@ impl App {
                 })
                 .map_err(|e| format!("{e:#}"))
         });
-        if started && let Some(p) = self.pending.as_mut() {
+        if started && let Some(p) = self.pending.last_mut() {
             p.progress_rx = Some(prx);
         }
     }
@@ -525,7 +525,7 @@ impl App {
             .map(|report| PendingOutcome::started(worker_name.clone(), &report))
             .map_err(|e| format!("{e:#}"))
         });
-        if started && let Some(p) = self.pending.as_mut() {
+        if started && let Some(p) = self.pending.last_mut() {
             p.progress_rx = Some(prx);
             if let Some(label) = label {
                 p.label = label;
@@ -567,17 +567,20 @@ impl App {
     pub(super) fn stop_everything(&mut self, listed: Vec<String>) {
         let paths = self.paths.clone();
         let (ptx, prx) = mpsc::channel::<String>();
-        // No worktree's name: the rows it covers are found through
-        // `pending_on`, and an empty name matches no row by itself.
-        let started = self.spawn_pending(String::new(), PendingKind::StopAll, move || {
-            let progress = |msg: &str| {
-                let _ = ptx.send(msg.to_string());
-            };
-            actions::stop_all_listed(&paths, &listed, &progress)
-                .map(PendingOutcome::StoppedAll)
-                .map_err(|e| format!("{e:#}"))
-        });
-        if started && let Some(p) = self.pending.as_mut() {
+        // No worktree's name: the rows it covers are the ones it listed,
+        // found through `pending_on`, and an empty name matches no row by
+        // itself.
+        let covers = listed.clone();
+        let started =
+            self.spawn_pending_on(String::new(), covers, PendingKind::StopAll, move || {
+                let progress = |msg: &str| {
+                    let _ = ptx.send(msg.to_string());
+                };
+                actions::stop_all_listed(&paths, &listed, &progress)
+                    .map(PendingOutcome::StoppedAll)
+                    .map_err(|e| format!("{e:#}"))
+            });
+        if started && let Some(p) = self.pending.last_mut() {
             p.progress_rx = Some(prx);
             p.label = "everything".to_string();
             self.set_progress("stopping everything…");
