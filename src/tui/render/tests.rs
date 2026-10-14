@@ -3196,9 +3196,10 @@ fn the_footer_says_a_question_is_waiting() {
     let mut app = test_app(&["feat+one"]);
     with_process(&mut app, "feat+one", running_phase());
     let (_done, rx) = std::sync::mpsc::channel();
-    app.pending = Some(crate::tui::app::PendingAction {
+    app.pending = vec![crate::tui::app::PendingAction {
         name: "feat+one".into(),
         kind: crate::tui::app::PendingKind::Start,
+        covers: vec!["feat+one".into()],
         rx,
         started_at: std::time::Instant::now(),
         spinner_frame: 0,
@@ -3206,7 +3207,7 @@ fn the_footer_says_a_question_is_waiting() {
         stage: None,
         said: Vec::new(),
         label: "feat/one".into(),
-    });
+    }];
     let (tx, _rx) = std::sync::mpsc::channel();
     app.handle_event(crate::tui::app::AppEvent::AskQuestion(Box::new((
         crate::actions::Question {
@@ -3620,9 +3621,10 @@ fn the_detail_title_shows_the_action_in_flight_as_the_row_does() {
     let mut app = test_app(&["feat+one"]);
     with_process(&mut app, "feat+one", running_phase());
     let (_done, rx) = std::sync::mpsc::channel();
-    app.pending = Some(crate::tui::app::PendingAction {
+    app.pending = vec![crate::tui::app::PendingAction {
         name: "feat+one".into(),
         kind: crate::tui::app::PendingKind::Stop,
+        covers: vec!["feat+one".into()],
         rx,
         started_at: std::time::Instant::now(),
         spinner_frame: 0,
@@ -3630,7 +3632,7 @@ fn the_detail_title_shows_the_action_in_flight_as_the_row_does() {
         stage: None,
         said: Vec::new(),
         label: "feat/one".into(),
-    });
+    }];
     let buf = draw(&mut app, 140, 20);
     let rendered = text_of(&buf);
     assert!(rendered.contains("╭ ◌ feat/one"), "{rendered}");
