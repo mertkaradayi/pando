@@ -7,6 +7,27 @@ may change behaviour.
 
 ## Unreleased
 
+### Fixed
+
+- The TUI runs actions on different worktrees at once. A worktree that
+  was stopping used to refuse a start of any other with "already busy",
+  and two worktrees could never start together; now each worktree has one
+  action in flight, beside any other's. A stop-all still runs alone, and
+  creating, removing and the git menu's moves take turns, since they
+  write the repository's refs. Questions from two starts are asked in
+  turn; the second used to cancel the first.
+- A pull request merged or closed on GitHub shows in the TUI without
+  reopening it. pando asks GitHub again about once a minute, when its
+  pane gets the focus back, after a shell or editor from `!` or `e`, and
+  after a move from the git menu. An `R` pressed while a fetch is out is
+  no longer dropped, nor is a re-read of git state asked for while
+  another runs; `R` re-reads git state too.
+- `stop`, `restart` and a stop-all wait for a worktree's processes to
+  end all together rather than one after another. The wait is under the
+  project's lock, so a dev server slow over SIGTERM held up every other
+  worktree's start, and the TUI's refresh, for up to five seconds per
+  process; now it is as long as the slowest.
+
 ## 0.10.2 — 2026-10-09
 
 ### Added
