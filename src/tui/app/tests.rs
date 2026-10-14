@@ -8756,3 +8756,66 @@ fn questions_from_two_workers_are_each_asked_in_turn() {
     ));
     assert!(third.try_recv().is_err(), "still being asked");
 }
+
+// A git move's re-read, or the one after a shell, arrived while the
+// periodic read of the selected row was out and was dropped: the row kept
+// its old drift until the half-minute read of every row.
+#[test]
+fn a_git_reread_asked_for_while_one_runs_runs_when_it_lands() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    app.git_refreshing = true;
+    app.refresh_git(Some(vec!["feat+one".into()]));
+    app.refresh_git(Some(vec!["feat+two".into()]));
+    app.refresh_git(Some(vec!["feat+one".into()]));
+    assert_eq!(
+        app.git_again,
+        Some(Some(vec!["feat+one".to_string(), "feat+two".to_string()]))
+    );
+    app.refresh_git(None);
+    assert_eq!(app.git_again, Some(None), "every row covers the names");
+
+    app.handle_event(AppEvent::EnrichDone { quiet: true });
+    assert_eq!(app.git_again, None);
+    assert!(app.git_refreshing, "the kept read is out now");
+}
+
+// A pull request merged on GitHub showed only once the TUI was opened
+// again: `gh` was asked at startup, on `R` and by `p`, and an `R` pressed
+// while a fetch was out was dropped.
+#[test]
+fn pull_requests_are_asked_for_again_on_the_minute_and_after_a_fetch_out() {
+    let mut app = test_app(&["feat+one"]);
+    app.pr_fetching = true;
+    press(&mut app, KeyCode::Char('R'));
+    assert!(app.pr_fetch_again, "R behind a fetch out is kept");
+    app.handle_event(AppEvent::PrsReady(Ok(Vec::new())));
+    assert!(!app.pr_fetch_again, "and runs once that one lands");
+
+    let mut app = test_app(&["feat+one"]);
+    app.pr_fetching = true;
+    app.tick = PR_EVERY - 1;
+    app.handle_event(AppEvent::Tick);
+    assert!(app.pr_fetch_again, "the minute's tick asks GitHub");
+
+    let mut app = test_app(&["feat+one"]);
+    app.pr_fetching = true;
+    app.gh_account = Some(crate::worktree::GhAccount::Missing);
+    app.tick = PR_EVERY - 1;
+    app.handle_event(AppEvent::Tick);
+    assert!(!app.pr_fetch_again, "not with no gh to ask");
+}
+
+#[test]
+fn coming_back_to_the_pane_asks_again_at_most_every_few_seconds() {
+    let mut app = test_app(&["feat+one"]);
+    app.pr_fetching = true;
+    let focus = || AppEvent::Input(ratatui::crossterm::event::Event::FocusGained);
+    app.handle_event(focus());
+    assert!(app.pr_fetch_again);
+    app.pr_fetch_again = false;
+    app.handle_event(focus());
+    assert!(!app.pr_fetch_again, "back and forth asks once");
+    app.focus_refreshed = Some(Instant::now() - Duration::from_secs(11));
+    app.handle_event(focus());
+    assert!(app.pr_fetch_again);
+}

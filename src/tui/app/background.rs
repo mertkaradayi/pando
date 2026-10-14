@@ -530,10 +530,16 @@ impl App {
         });
     }
 
-    /// One at a time: `p` pressed twice does not ask GitHub twice.
+    /// One at a time: `p` pressed twice does not ask GitHub twice. One
+    /// asked for while another is out runs when that one lands: the one
+    /// out may have left before the merge it was asked about.
     pub fn spawn_pr_fetch(&mut self) {
+        if self.pr_fetching {
+            self.pr_fetch_again = true;
+            return;
+        }
         // Tests press `p` like any other key; they must not reach GitHub.
-        if cfg!(test) || self.pr_fetching {
+        if cfg!(test) {
             return;
         }
         self.pr_fetching = true;
@@ -543,6 +549,13 @@ impl App {
             let result = worktree::list_prs(&root).map_err(|e| format!("{e:#}"));
             let _ = tx.send(AppEvent::PrsReady(result));
         });
+    }
+
+    /// The fetch asked for while the last one was out.
+    pub(super) fn fetch_prs_again(&mut self) {
+        if std::mem::take(&mut self.pr_fetch_again) {
+            self.spawn_pr_fetch();
+        }
     }
 
     /// Asks `gh` which account it is, from the project's own directory —

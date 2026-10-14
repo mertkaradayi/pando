@@ -301,7 +301,7 @@ impl App {
                 restart,
             };
         }
-        self.spawn_discovery();
-        self.refresh_git(None);
+        // A push or a merge moves what GitHub says of the branch too.
+        self.came_back();
     }
 }

@@ -13,6 +13,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
+use ratatui::crossterm::event::{DisableFocusChange, EnableFocusChange};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -90,7 +91,8 @@ pub fn carry_out(
         Launch::Suspend { program, args, cwd } => {
             gate.pause();
             let _ = disable_raw_mode();
-            let _ = execute!(stdout(), LeaveAlternateScreen);
+            // A shell given focus reports would print them as `^[[I`.
+            let _ = execute!(stdout(), DisableFocusChange, LeaveAlternateScreen);
             // Every frame hides the cursor, and leaving the alternate
             // screen does not bring it back; a shell does not either, so
             // one opened by `!` would be typed into blind. The next frame
@@ -101,7 +103,7 @@ pub fn carry_out(
                 .current_dir(&cwd)
                 .status();
             let _ = enable_raw_mode();
-            let _ = execute!(stdout(), EnterAlternateScreen);
+            let _ = execute!(stdout(), EnterAlternateScreen, EnableFocusChange);
             let _ = terminal.clear();
             gate.resume();
             match ran {
