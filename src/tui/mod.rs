@@ -9,7 +9,9 @@ mod render;
 use anyhow::Result;
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{DebouncedEvent, Debouncer, RecommendedCache, new_debouncer};
-use ratatui::crossterm::event;
+use ratatui::crossterm::event::{self, DisableFocusChange, EnableFocusChange};
+use ratatui::crossterm::execute;
+use std::io::stdout;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -68,7 +70,12 @@ pub fn run(paths: PandoPaths, config: Config) -> Result<()> {
             return Err(anyhow::Error::new(e).context("could not open the terminal for the TUI"));
         }
     };
+    // Focus reports bring a refresh when the pane is come back to: a pull
+    // request merged in a browser or another pane shows then. A terminal
+    // that sends none still has the periodic one.
+    let _ = execute!(stdout(), EnableFocusChange);
     let result = main_loop(&mut terminal, &mut app, &worktrees_dir);
+    let _ = execute!(stdout(), DisableFocusChange);
     ratatui::restore();
     // `q` twice abandons what is in flight, and nothing waits for a hook
     // once the TUI has gone.
@@ -119,10 +126,9 @@ fn main_loop(
                 Err(e) => app.set_error(e),
             }
             // Whatever changed while it ran — a commit, a server stopped
-            // from the shell, a file edited — shows at once rather than on
-            // the slow tick.
-            app.spawn_discovery();
-            app.refresh_git(None);
+            // from the shell, a file edited, a pull request merged with
+            // `gh` — shows at once rather than on the slow tick.
+            app.came_back();
             redraw = true;
         }
         if redraw {

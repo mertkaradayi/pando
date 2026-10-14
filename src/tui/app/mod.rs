@@ -109,6 +109,17 @@ pub const GIT_SELECTED_EVERY: u32 = SLOW_TICK_EVERY;
 /// apiece, so far rarer than the selected one's.
 pub const GIT_ALL_EVERY: u32 = SLOW_TICK_EVERY * 6;
 
+/// Ticks between asks of GitHub for the project's pull requests, about a
+/// minute: a pull request merged or closed on GitHub turns its row's chip
+/// while the TUI is open, rather than only after it is opened again. Two
+/// `gh` calls apiece, so far rarer than anything local.
+pub const PR_EVERY: u32 = SLOW_TICK_EVERY * 12;
+
+/// The least time between two refreshes the terminal's focus asks for:
+/// coming back to the pane is when a merge done elsewhere is looked for,
+/// and switching back and forth must not ask GitHub every time.
+const FOCUS_REFRESH_GAP: Duration = Duration::from_secs(10);
+
 /// Ticks between process-state refreshes. Much faster than discovery,
 /// because a dev server that just died should turn red while the developer
 /// is still looking at it — and far cheaper, because it reads one state file
@@ -255,6 +266,17 @@ pub struct App {
     pub pr_list: Vec<PrInfo>,
     /// A fetch is on its way; the picker says so rather than "none".
     pub pr_fetching: bool,
+    /// A fetch was asked for while one ran — `R` after a merge, while the
+    /// periodic one was still out — and runs once that one lands, so what
+    /// it asked about is read.
+    pub pr_fetch_again: bool,
+    /// When the terminal's focus last brought a refresh, so coming back
+    /// and forth asks GitHub once in [`FOCUS_REFRESH_GAP`].
+    pub focus_refreshed: Option<Instant>,
+    /// A re-read of git state asked for while another ran, kept until it
+    /// lands rather than dropped: `None` inside for every worktree, or
+    /// the names asked for.
+    pub git_again: Option<Option<Vec<String>>>,
     /// An app is being opened on a simulator or a device: a second `o`
     /// waits for it rather than starting the simulator twice.
     pub app_opening: bool,
@@ -392,6 +414,9 @@ impl App {
             prs: HashMap::new(),
             pr_list: Vec::new(),
             pr_fetching: false,
+            pr_fetch_again: false,
+            focus_refreshed: None,
+            git_again: None,
             app_opening: false,
             pr_error: None,
             gh_account: None,
@@ -471,6 +496,10 @@ impl App {
                 true
             }
             AppEvent::Input(Event::Resize(..)) => true,
+            AppEvent::Input(Event::FocusGained) => {
+                self.focus_gained();
+                false
+            }
             AppEvent::Input(_) => false,
             AppEvent::Tick => {
                 self.tick = self.tick.wrapping_add(1);
@@ -482,6 +511,9 @@ impl App {
                     self.spawn_discovery();
                 } else if self.tick.is_multiple_of(REFRESH_EVERY) || self.selection_unprobed() {
                     self.spawn_refresh();
+                }
+                if self.tick.is_multiple_of(PR_EVERY) && self.gh_may_answer() {
+                    self.spawn_pr_fetch();
                 }
                 if self.tick.is_multiple_of(GIT_ALL_EVERY) {
                     self.refresh_git(None);
@@ -538,6 +570,9 @@ impl App {
                     self.enriching = self.enriching.saturating_sub(1);
                 }
                 self.save_enrich_cache();
+                if let Some(only) = self.git_again.take() {
+                    self.refresh_git(only);
+                }
                 true
             }
             AppEvent::BranchesReady(branches) => {
@@ -553,6 +588,7 @@ impl App {
             AppEvent::PrsReady(Ok(prs)) => {
                 self.pr_fetching = false;
                 self.pr_error = None;
+                self.fetch_prs_again();
                 self.prs = worktree::prs_by_branch(&prs).into_iter().collect();
                 self.replace_pr_list(prs);
                 self.save_pr_cache();
@@ -566,6 +602,7 @@ impl App {
             AppEvent::PrsReady(Err(e)) => {
                 self.pr_fetching = false;
                 self.pr_error = Some(e);
+                self.fetch_prs_again();
                 matches!(self.modal, Some(Modal::PullRequests { .. }))
             }
             AppEvent::GhAccountReady(account) => {
@@ -944,6 +981,11 @@ impl App {
             KeyCode::Char(',') => self.cycle_sort(),
             KeyCode::Char('R') => {
                 self.spawn_discovery();
+                // A fetch or a commit in another pane moves the drift and
+                // the `*`, which a discovery keeps from the last read
+                // while the head is the same.
+                self.resolve_base = true;
+                self.refresh_git(None);
                 // An account switched in another terminal shows here too,
                 // and so does a pull request merged, closed or opened
                 // since the last fetch.
@@ -1372,11 +1414,63 @@ impl App {
     /// Re-reads git state off the UI thread: every worktree, or `only`
     /// these. Quiet — the header's `reading git` is for the first read —
     /// and never two at once.
+    ///
+    /// One asked for while another runs is kept, merged with any other
+    /// kept, and runs when that one lands: a git move's re-read, or the
+    /// one after a shell, was dropped behind the periodic read of the
+    /// selected row and the row kept its old drift for half a minute.
     pub fn refresh_git(&mut self, only: Option<Vec<String>>) {
         if self.enriching > 0 || self.git_refreshing {
+            self.git_again = Some(match (self.git_again.take(), only) {
+                (Some(None), _) | (_, None) => None,
+                (None, Some(names)) => Some(names),
+                (Some(Some(mut kept)), Some(names)) => {
+                    for name in names {
+                        if !kept.contains(&name) {
+                            kept.push(name);
+                        }
+                    }
+                    Some(kept)
+                }
+            });
             return;
         }
         self.spawn_enrichment(only, true);
+    }
+
+    /// The terminal has the focus again — the pane switched back to, the
+    /// window raised. What changed while it was away, a pull request merged
+    /// on GitHub above all, is looked for now rather than on the next
+    /// tick that would, at most once in [`FOCUS_REFRESH_GAP`].
+    pub(super) fn focus_gained(&mut self) {
+        if self
+            .focus_refreshed
+            .is_some_and(|at| at.elapsed() < FOCUS_REFRESH_GAP)
+        {
+            return;
+        }
+        self.focus_refreshed = Some(Instant::now());
+        self.came_back();
+    }
+
+    /// What changed while the developer was somewhere else — a shell `!`
+    /// opened, another pane, a browser: the worktrees, their git state
+    /// and their pull requests, read again.
+    pub fn came_back(&mut self) {
+        self.spawn_discovery();
+        self.refresh_git(None);
+        if self.gh_may_answer() {
+            self.spawn_pr_fetch();
+        }
+    }
+
+    /// Whether asking `gh` could tell anything: not when it is missing or
+    /// signed out, which only `R` asks about again.
+    fn gh_may_answer(&self) -> bool {
+        !matches!(
+            self.gh_account,
+            Some(worktree::GhAccount::Missing | worktree::GhAccount::SignedOut)
+        )
     }
 
     /// Remembers what enrichment said a commit's age was, and when.
@@ -1613,6 +1707,9 @@ impl App {
             prs: HashMap::new(),
             pr_list: Vec::new(),
             pr_fetching: false,
+            pr_fetch_again: false,
+            focus_refreshed: None,
+            git_again: None,
             app_opening: false,
             pr_error: None,
             gh_account: None,
