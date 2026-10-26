@@ -141,7 +141,7 @@ fn run(cli: Cli) -> Result<()> {
     }
     // A multi-repo project's repositories are what is on disk, unless its
     // config names fewer.
-    for warning in loaded.config.repos.narrow(&mut paths.project) {
+    for warning in loaded.config.apply_to(&mut paths.project) {
         to_stderr(&format!("pando: {warning}\n"));
     }
     // Once, before dispatch: every command shares the same home, so a home

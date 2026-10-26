@@ -757,6 +757,19 @@ impl Config {
             .or_else(|| self.repo_base(repo))
     }
 
+    /// [`ReposSection::narrow`], then each repository's base, as
+    /// [`Config::repo_base`] names it, onto the project for the reads that
+    /// run without config. Says what `narrow` says.
+    pub fn apply_to(&self, project: &mut crate::project::ProjectRef) -> Vec<String> {
+        let warnings = self.repos.narrow(project);
+        project.repo_bases = project
+            .repos
+            .iter()
+            .filter_map(|repo| Some((repo.clone(), self.repo_base(Some(repo))?.to_string())))
+            .collect();
+        warnings
+    }
+
     /// The base config gives `repo` whatever the branch: its own
     /// `[repos.base]`, then `[project].base`.
     pub fn repo_base(&self, repo: Option<&str>) -> Option<&str> {

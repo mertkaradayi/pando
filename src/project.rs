@@ -52,7 +52,7 @@ where
     crate::platform::process::output_within(command, timeout)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectRef {
     /// `<display_name>-<8 hex chars of a hash of the canonical root path>`.
     pub id: String,
@@ -64,6 +64,11 @@ pub struct ProjectRef {
     /// under `root`, sorted. Empty for a project that is one repository,
     /// which `root` then is.
     pub repos: Vec<String>,
+    /// The base config names for each of [`ProjectRef::repos`] that has
+    /// one, for the reads that run without config — `ls`, the TUI's
+    /// enrichment — to measure a checkout against what `new` forked it
+    /// from. Empty for a project that is one repository.
+    pub repo_bases: std::collections::BTreeMap<String, String>,
 }
 
 impl ProjectRef {
@@ -82,6 +87,7 @@ impl ProjectRef {
             root,
             display_name,
             repos: Vec::new(),
+            repo_bases: Default::default(),
         })
     }
 
@@ -682,6 +688,7 @@ mod tests {
             root: PathBuf::from("/product"),
             display_name: "product".into(),
             repos: vec!["backend".into(), "frontend".into()],
+            ..Default::default()
         };
         let set = Path::new("/set");
         assert_eq!(

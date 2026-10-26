@@ -289,12 +289,41 @@ fn project_now(
 ) -> String {
     let mut out = String::from("## This project, as pando sees it now\n\n");
     let root = paths.root();
-    let branch = crate::worktree::discover_all(&paths.project)
+    let main = crate::worktree::discover_all(&paths.project)
         .ok()
-        .and_then(|found| found.main.branch)
-        .map(|branch| format!(", on branch {branch}"))
-        .unwrap_or_default();
-    let _ = writeln!(out, "- root: {}{branch}", root.display());
+        .map(|found| found.main);
+    match paths.project.is_multi_repo() {
+        // The paths an agent writes are not this root's but a
+        // repository's, which nothing else in the job says.
+        true => {
+            let repos: Vec<String> = main
+                .iter()
+                .flat_map(|main| &main.repos)
+                .map(|repo| match &repo.branch {
+                    Some(branch) => format!("{} (on {branch})", repo.name),
+                    None => repo.name.clone(),
+                })
+                .collect();
+            let _ = writeln!(
+                out,
+                "- root: {}, a folder of {} git repositories: {}. Each worktree is a set \
+                 holding a checkout of every one at `<set>/<repo>`, so a path in the settings \
+                 — a process's `cwd`, `provision`, `clone` — starts with the repository it is \
+                 in, as `{}/.env` does",
+                root.display(),
+                repos.len(),
+                repos.join(", "),
+                paths.project.example_repo()
+            );
+        }
+        false => {
+            let branch = main
+                .and_then(|main| main.branch)
+                .map(|branch| format!(", on branch {branch}"))
+                .unwrap_or_default();
+            let _ = writeln!(out, "- root: {}{branch}", root.display());
+        }
+    }
     let settings = paths.config_file();
     let _ = writeln!(
         out,

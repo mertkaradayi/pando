@@ -712,15 +712,15 @@ fn enrich_sets(
         if listed.is_empty() {
             continue;
         }
+        // The base config names for it, where it names one this
+        // repository has: what `new` forked its checkouts from.
+        let base = project
+            .repo_bases
+            .get(repo)
+            .and_then(|base| first_existing_ref(&root, &[&format!("origin/{base}"), base]))
+            .or_else(|| resolve_base_branch(&root));
         let (tx, rx) = mpsc::channel();
-        enrich_listed(
-            &root,
-            listed,
-            porcelain,
-            resolve_base_branch(&root),
-            tx,
-            pool_cap,
-        );
+        enrich_listed(&root, listed, porcelain, base, tx, pool_cap);
         while let Ok(mut update) = rx.recv() {
             let set = std::mem::replace(&mut update.name, repo.clone());
             by_set.entry(set).or_default().push(update);
