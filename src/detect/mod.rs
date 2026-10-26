@@ -53,4 +53,4 @@ pub use services::{
 pub use signals::{
     AppDir, EnvExample, Signals, Target, is_gitignored, is_ignored_in, signals, signals_of,
 };
-pub use workspaces::{UNSTARTED, WorkspaceApp, workspace_apps};
+pub use workspaces::{START_ONLY, UNSTARTED, WorkspaceApp, workspace_apps};

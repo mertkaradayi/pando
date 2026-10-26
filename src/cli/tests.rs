@@ -854,6 +854,13 @@ fn the_contract_documents_the_exit_3_for_an_app_directory_nothing_starts() {
         )),
         "{flat}"
     );
+    assert!(
+        flat.contains(&format!(
+            "`frontend has no dev script, so its start script runs it: {}`",
+            crate::detect::START_ONLY
+        )),
+        "{flat}"
+    );
 }
 
 #[test]
