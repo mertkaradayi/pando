@@ -27,6 +27,18 @@ pub(super) fn validate_config(paths: &PandoPaths, config: &Config, findings: &mu
 fn check_repos(paths: &PandoPaths, config: &Config, findings: &mut Vec<Finding>) {
     let project = &paths.project;
     if !project.is_multi_repo() {
+        if let Some(folder) = crate::project::folder_of(project) {
+            findings.push(Finding::note(
+                Section::Config,
+                format!(
+                    "this repository sits in {} beside other repositories ({}): pando runs \
+                     that folder as one project, a worktree of each on one branch, when it is \
+                     started there",
+                    folder.root.display(),
+                    folder.repos.join(", ")
+                ),
+            ));
+        }
         return;
     }
     let repos = project.repos.join(", ");

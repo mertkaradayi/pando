@@ -28,6 +28,7 @@ use crate::actions;
 use crate::config::Config;
 use crate::detect::{self, Slot};
 use crate::paths::PandoPaths;
+use crate::project::ProjectRef;
 
 use super::answers::slot_name;
 
@@ -88,12 +89,24 @@ pub(super) fn job_on(paths: &PandoPaths, machine: &actions::Machine<'_>) -> Stri
         "# Set up pando for {project} (pando {})\n",
         env!("CARGO_PKG_VERSION")
     );
+    let what = match paths.project.is_multi_repo() {
+        true => {
+            "pando runs each git branch of these repositories as one worktree set, with its \
+                 own\nports, logs and services."
+        }
+        false => {
+            "pando runs each git branch of this repository in its own worktree, with its \
+                  own\nports, logs and services."
+        }
+    };
     let _ = writeln!(
         out,
-        "pando runs each git branch of this repository in its own worktree, with its own\n\
-         ports, logs and services. You are done when `pando check` passes and you have told\n\
+        "{what} You are done when `pando check` passes and you have told\n\
          the developer so, as the steps below say.\n"
     );
+    if let Some(folder) = crate::project::folder_of(&paths.project) {
+        out.push_str(&beside_others(&paths.project, &folder));
+    }
 
     let (config, error) = load(paths);
     if let Some(error) = &error {
@@ -309,11 +322,11 @@ fn project_now(
                 "- root: {}, a folder of {} git repositories: {}. Each worktree is a set \
                  holding a checkout of every one at `<set>/<repo>`, so a path in the settings \
                  — a process's `cwd`, `provision`, `clone` — starts with the repository it is \
-                 in, as `{}/.env` does",
+                 in: `<repo>/.env`. A base one repository needs of its own is `repos.base` in \
+                 the answers",
                 root.display(),
                 repos.len(),
                 repos.join(", "),
-                paths.project.example_repo()
             );
         }
         false => {
@@ -416,6 +429,9 @@ fn project_now(
             }
             // No proposal here is no gap: origin/HEAD is close enough to
             // the main checkout's branch to be where work starts.
+            (false, None) if slot == Slot::Base && paths.project.is_multi_repo() => {
+                "each repository's own default branch".to_string()
+            }
             (false, None) if slot == Slot::Base => "origin/HEAD".to_string(),
             // Never proposed, and what it is about is only known once
             // pando's choices are saved: which services stay on main's.
@@ -663,6 +679,29 @@ fn services_now(
         .collect()
 }
 
+/// What the job says first for a repository that sits in a folder beside
+/// other repositories: pando can run that folder as one project, and
+/// which of the two to set up is the developer's shape, not pando's — so
+/// the agent is told how to tell, and to say which it chose.
+fn beside_others(project: &ProjectRef, folder: &ProjectRef) -> String {
+    let others: Vec<&str> = folder
+        .repos
+        .iter()
+        .map(String::as_str)
+        .filter(|repo| Some(*repo) != project.root.file_name().and_then(|n| n.to_str()))
+        .collect();
+    format!(
+        "**This repository sits in {} beside {}.** pando runs such a folder as one \
+         project, a worktree of every repository on one branch, when it is set up from \
+         there. If this app needs theirs to run — a web app and its API — set pando up \
+         from the folder instead: run `pando init --agent` in {} and follow that job, not \
+         this one. Say in your report which you chose and why.\n\n",
+        folder.root.display(),
+        others.join(", "),
+        folder.root.display()
+    )
+}
+
 /// What each command the job names writes, and what it needs, so an agent
 /// in a sandbox knows which two to hand to the developer.
 fn writes(paths: &PandoPaths) -> String {
@@ -671,13 +710,18 @@ fn writes(paths: &PandoPaths) -> String {
          - `pando signals`, `pando doctor --json`: read only.\n\
          - `pando init --answers -`: writes under {project} (this project's settings and its \
          decisions log), and {user} only for a runtime prelude.\n\
-         - `pando check`: writes under {home} and inside .git (a throwaway worktree it removes); \
+         - `pando check`: writes under {home} and inside {git} (a throwaway worktree it \
+         removes); \
          runs the project's install, which may need the network.\n\n\
          In a sandbox that blocks either (Codex's workspace-write blocks both), end your \
          report on these two commands, for the developer to run outside it.\n\n",
         project = paths.project_dir().display(),
         user = paths.user_config_file().display(),
         home = paths.home.display(),
+        git = match paths.project.is_multi_repo() {
+            true => "each repository's .git",
+            false => ".git",
+        },
     )
 }
 

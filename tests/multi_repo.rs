@@ -252,3 +252,24 @@ fn doctor_names_what_in_the_config_no_repository_of_the_folder_holds() {
         assert!(said.contains(line), "{line}\n{said}");
     }
 }
+
+#[test]
+fn from_inside_one_repository_the_agents_job_names_the_folder_beside_it() {
+    let f = Folder::new();
+    let job = ok(&f.pando_in(&f.root.join("backend"), &["init", "--agent"]));
+    assert!(
+        job.contains(&format!(
+            "This repository sits in {} beside frontend.",
+            f.root.display()
+        )),
+        "{job}"
+    );
+    // From the folder, the job is the folder's, and says what a set is.
+    let job = ok(&f.pando(&["init", "--agent"]));
+    assert!(
+        job.contains("each git branch of these repositories as one worktree set"),
+        "{job}"
+    );
+    assert!(job.contains("inside each repository's .git"), "{job}");
+    assert!(!job.contains("This repository sits in"), "{job}");
+}
