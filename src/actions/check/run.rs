@@ -32,7 +32,7 @@ use super::super::readiness::{ReadyVerdict, ready_limit, ready_line, ready_verdi
 use super::super::refresh::{failure_tail, refresh};
 use super::super::services::{observed_port_for_role, url_role};
 use super::super::worktree::{
-    CREATED_BUT_INSTALL_FAILED, new_detached, ref_exists, resolve_create_base,
+    CREATED_BUT_INSTALL_FAILED, new_detached, ref_exists, repo_checkouts, resolve_create_base,
 };
 use super::super::{INSTALL_HOOK, Mode};
 use super::base::{Standing, on_the_base};
@@ -125,12 +125,24 @@ pub fn check_at(
     ran_by: RanBy,
     say: &Narration<'_>,
 ) -> Result<Checked> {
-    if let Some(base) = base
-        && !ref_exists(paths.root(), &resolve_create_base(paths.root(), base))
-    {
-        bail!("base {base:?} does not exist in this repository — nothing was tested");
+    if let Some(base) = base {
+        for (repo, root) in repo_checkouts(paths, paths.root()) {
+            if !ref_exists(&root, &resolve_create_base(&root, base)) {
+                match repo {
+                    Some(repo) => bail!(
+                        "base {base:?} does not exist in the repository {repo} — nothing was \
+                         tested"
+                    ),
+                    None => {
+                        bail!(
+                            "base {base:?} does not exist in this repository — nothing was tested"
+                        )
+                    }
+                }
+            }
+        }
     }
-    let mut probe = probe_of(paths.root(), config, base);
+    let mut probe = probe_of(paths, config, base);
     paths.ensure_home()?;
     // One at a time, for the whole run.
     let Some(_lock) = state::try_lock(&paths.check_lock_file())? else {
@@ -198,7 +210,7 @@ pub fn check_at(
         ));
     }
     // The commit a new worktree would fork from, or the one asked for.
-    let Some((commit, base_ref)) = commit_to_test(paths.root(), &config, base) else {
+    let Some(Tested { commits, base_ref }) = tested(paths, &config, base) else {
         return Ok(run.end(
             failed(
                 FailureKind::Settings,
@@ -208,7 +220,13 @@ pub fn check_at(
             None,
         ));
     };
-    let short: String = commit.chars().take(7).collect();
+    // One commit per repository, in the project's order, for several.
+    let commit = commits.join(" ");
+    let short = commits
+        .iter()
+        .map(|commit| commit.chars().take(7).collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ");
     run.record.commit = Some(commit.clone());
     run.record.base_ref = base_ref.clone();
     // Where the data runs. The hooks after the services — the schema
@@ -238,8 +256,8 @@ pub fn check_at(
     // `new` does not fork from: said now, so a pass is not read as the
     // setup's.
     if let Some(given) = run.probe.clone() {
-        let default = commit_to_test(paths.root(), &config, None)
-            .and_then(|(_, base_ref)| base_ref)
+        let default = tested(paths, &config, None)
+            .and_then(|tested| tested.base_ref)
             .unwrap_or_else(|| "HEAD".to_string());
         // A base already answered is one only `--replace` changes.
         let answer = match config.project.base {
@@ -291,7 +309,7 @@ pub fn check_at(
     // The last check's logs are kept until this one needs the place, and
     // a probe's never take it.
     logs::claim(paths, run.probe.is_some())?;
-    let outcome = run.test(&config, &commit, namespaced);
+    let outcome = run.test(&config, &commits, namespaced);
     // A step that failed for want of a file the tested commit never had
     // is the base's, not the settings'.
     let install = (run.record.failed_process.as_deref() == Some(INSTALL_HOOK))
@@ -388,11 +406,53 @@ fn not_set_up(
 /// The base `given` names, when a run at it is a probe: the ref it
 /// resolves to is not the one the settings choose. A `--base` naming the
 /// settings' own, however it is spelled, is no probe.
-fn probe_of(root: &Path, config: &Config, given: Option<&str>) -> Option<String> {
+fn probe_of(paths: &PandoPaths, config: &Config, given: Option<&str>) -> Option<String> {
     let given = given?;
-    let tested = commit_to_test(root, config, Some(given)).and_then(|(_, base_ref)| base_ref);
-    let chosen = commit_to_test(root, config, None).and_then(|(_, base_ref)| base_ref);
-    (tested != chosen).then(|| given.to_string())
+    let at = |given| tested(paths, config, given).and_then(|tested| tested.base_ref);
+    (at(Some(given)) != at(None)).then(|| given.to_string())
+}
+
+/// What a check tests: a commit of every repository, in the project's
+/// order — the one commit of a project that is one repository — and the
+/// ref they were read from, the same in all, or each beside its
+/// repository's name when they differ.
+pub(super) struct Tested {
+    pub(super) commits: Vec<String>,
+    pub(super) base_ref: Option<String>,
+}
+
+/// [`commit_to_test`] in every repository of the project, each against its
+/// own configured base. `None` when any has no commit at all.
+pub(super) fn tested(paths: &PandoPaths, config: &Config, given: Option<&str>) -> Option<Tested> {
+    let mut commits = Vec::new();
+    let mut refs = Vec::new();
+    for (repo, root) in repo_checkouts(paths, paths.root()) {
+        let configured = match &repo {
+            Some(repo) => config.repos.base.get(repo).map(String::as_str),
+            None => None,
+        }
+        .or(config.project.base.as_deref());
+        let (commit, base_ref) = commit_to_test(&root, configured, given)?;
+        commits.push(commit);
+        refs.push((repo, base_ref));
+    }
+    let same = refs.windows(2).all(|pair| pair[0].1 == pair[1].1);
+    let base_ref = match same {
+        true => refs.first().and_then(|(_, base_ref)| base_ref.clone()),
+        false => Some(
+            refs.iter()
+                .map(|(repo, base_ref)| {
+                    format!(
+                        "{} {}",
+                        repo.as_deref().unwrap_or_default(),
+                        base_ref.as_deref().unwrap_or("HEAD")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+    };
+    Some(Tested { commits, base_ref })
 }
 
 /// A slot's published name, as `pando signals` and the answers file spell
@@ -417,11 +477,11 @@ fn failed(kind: FailureKind, reason: &str) -> CheckOutcome {
 /// repository with no commit at all.
 pub(super) fn commit_to_test(
     root: &Path,
-    config: &Config,
+    configured: Option<&str>,
     given: Option<&str>,
 ) -> Option<(String, Option<String>)> {
     let base = given
-        .or(config.project.base.as_deref())
+        .or(configured)
         .map(|base| resolve_create_base(root, base))
         .filter(|base| ref_exists(root, base))
         .or_else(|| worktree::resolve_base_branch(root));
@@ -548,7 +608,7 @@ impl<'a> Run<'a> {
     /// when it runs namespaced, start, wait, and ask for a page. Whatever
     /// it returns, the caller tears the worktree down, and its namespaces
     /// with it.
-    fn test(&mut self, config: &Config, commit: &str, namespaced: bool) -> CheckOutcome {
+    fn test(&mut self, config: &Config, commits: &[String], namespaced: bool) -> CheckOutcome {
         let installs = config
             .project
             .install
@@ -562,7 +622,7 @@ impl<'a> Run<'a> {
             self.step("installing");
         }
         let began = Instant::now();
-        if let Err(e) = new_detached(self.paths, config, commit, self.say.detail) {
+        if let Err(e) = new_detached(self.paths, config, commits, self.say.detail) {
             // A Ctrl-C reaches the install too, which then fails: that is
             // the interruption, not the settings.
             if interrupted() {

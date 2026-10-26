@@ -176,6 +176,10 @@ pub struct WorktreeRecord {
     /// `release` rebased onto `main` takes every commit of `release` along.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    /// [`WorktreeRecord::base`] for a multi-repo project's set, by
+    /// repository: each repository's new branch forks from its own.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bases: BTreeMap<String, String>,
 }
 
 impl WorktreeRecord {
@@ -198,6 +202,7 @@ impl WorktreeRecord {
             pending_shares: Vec::new(),
             last_started: None,
             base: None,
+            bases: BTreeMap::new(),
         }
     }
 

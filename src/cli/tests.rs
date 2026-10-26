@@ -3371,6 +3371,7 @@ fn ls_json_fills_the_pr_field_from_the_cache() {
     prs.prs.insert(
         "feat/one".into(),
         crate::worktree::PrInfo {
+            repo: None,
             number: 42,
             title: "feat: one".into(),
             branch: "feat/one".into(),

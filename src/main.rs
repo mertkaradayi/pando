@@ -110,11 +110,12 @@ fn run(cli: Cli) -> Result<()> {
     let cwd = std::env::current_dir().context(
         "cannot read the current directory — it may have been deleted; cd somewhere that exists",
     )?;
-    let project = project::discover(&cwd)?;
     // A relative `PANDO_HOME` is resolved here rather than compared as-is:
     // `.pando` looks like it is outside the repository until the moment it
     // is created inside it.
-    let paths = PandoPaths::new(cwd.join(default_home()), project);
+    let home = cwd.join(default_home());
+    let project = project::discover(&cwd, &home)?;
+    let mut paths = PandoPaths::new(home, project);
     // `new`, `start`, `restart` and the TUI act on `pando.toml`; nothing
     // else needs it. A home layer pando cannot use stops those and only
     // those — you need `stop` most when that file is broken, and `ls` to
@@ -138,6 +139,9 @@ fn run(cli: Cli) -> Result<()> {
     for warning in &loaded.warnings {
         to_stderr(&format!("pando: {warning}\n"));
     }
+    // A multi-repo project's repositories are what is on disk, unless its
+    // config names fewer.
+    loaded.config.repos.narrow(&mut paths.project)?;
     // Once, before dispatch: every command shares the same home, so a home
     // in the working tree is worth refusing even on a read-only command.
     actions::guard_write_locations(&paths, &loaded.config)?;

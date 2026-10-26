@@ -225,6 +225,10 @@ pub fn pr_rows<'a>(prs: &'a [PrInfo], input: &str) -> Vec<&'a PrInfo> {
                 || pr.title.to_lowercase().contains(&needle)
                 || pr.branch.to_lowercase().contains(&needle)
                 || pr.author.to_lowercase().contains(&needle)
+                || pr
+                    .repo
+                    .as_deref()
+                    .is_some_and(|repo| repo.contains(&needle))
         })
         .collect()
 }

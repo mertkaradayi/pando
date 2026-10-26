@@ -479,6 +479,7 @@ mod tests {
                 id: "acme-shop-3f9a2c1d".into(),
                 root: PathBuf::from("/tmp/code/acme-shop"),
                 display_name: "acme-shop".into(),
+                repos: Vec::new(),
             },
         )
     }
@@ -703,6 +704,7 @@ mod tests {
             id: "acme-shop-3f9a2c1d".into(),
             root: root.clone(),
             display_name: "acme-shop".into(),
+            repos: Vec::new(),
         };
         let home = root.join(".pando");
         let p = PandoPaths::new(&home, project);

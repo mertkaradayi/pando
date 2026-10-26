@@ -665,7 +665,32 @@ struct Ignored {
 }
 
 impl Ignored {
+    /// A folder of repositories is no repository itself: its listing is
+    /// each repository's, under the repository's name.
     fn read(root: &Path) -> Ignored {
+        let repos = match root.join(".git").exists() {
+            true => Vec::new(),
+            false => crate::project::repos_in(root),
+        };
+        if repos.is_empty() {
+            return Self::read_repository(root);
+        }
+        let entries = repos
+            .iter()
+            .flat_map(|repo| {
+                Self::read_repository(&root.join(repo))
+                    .entries
+                    .into_iter()
+                    .map(move |entry| format!("{repo}/{entry}"))
+            })
+            .collect();
+        Ignored {
+            root: root.to_path_buf(),
+            entries,
+        }
+    }
+
+    fn read_repository(root: &Path) -> Ignored {
         let out = crate::project::git(
             root,
             [
@@ -785,4 +810,14 @@ pub fn is_gitignored(root: &Path, rel: &str) -> bool {
     crate::project::git(root, ["check-ignore", "-q", "--", rel])
         .map(|out| out.status.code() == Some(0))
         .unwrap_or(false)
+}
+
+/// [`is_gitignored`] for `rel`, a path relative to `dir`, a checkout of
+/// `project`: asked in the repository it is in, which for a multi-repo
+/// project is the checkout of the repository the path starts with. A path
+/// in none of them is not ignored by any.
+pub fn is_ignored_in(project: &crate::project::ProjectRef, dir: &Path, rel: &str) -> bool {
+    project
+        .repo_path(dir, rel)
+        .is_some_and(|(checkout, rel)| is_gitignored(&checkout, &rel))
 }

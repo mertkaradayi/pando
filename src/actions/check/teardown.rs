@@ -152,40 +152,42 @@ pub(super) fn tear_down(
 }
 
 /// `git worktree remove --force` on the check's worktree, then `git
-/// worktree prune`. A worktree git will not remove — a submodule checked
+/// worktree prune` — of each repository's checkout in it, for a multi-repo
+/// project's set. A worktree git will not remove — a submodule checked
 /// out in it, a lock — is deleted by path instead, which is safe for this
-/// one directory alone: it is pando's, at a name no branch can have.
+/// one directory alone: it is pando's, at a name no branch can have. So is
+/// what is left of a set once its checkouts are gone.
 fn remove_worktree(paths: &PandoPaths, config: &Config) -> Result<()> {
     let expected = config.check_worktree_path(paths);
-    let root = paths.root();
+    let roots = paths.project.checkouts_in(paths.root());
     let listed = worktree::discover(&paths.project)?
         .into_iter()
         .find(|w| worktree::is_check(&w.name) && same_path(&w.path, &expected));
     if listed.is_some() {
-        let removed = crate::project::git(
-            root,
-            [
-                "worktree",
-                "remove",
-                "--force",
-                expected.to_str().context("the check's path is not UTF-8")?,
-            ],
-        )
-        .is_ok_and(|out| out.status.success());
-        if !removed && is_real_dir(&expected) {
-            std::fs::remove_dir_all(&expected)
-                .with_context(|| format!("remove {}", expected.display()))?;
+        for (root, checkout) in roots.iter().zip(paths.project.checkouts_in(&expected)) {
+            let _ = crate::project::git(
+                root,
+                [
+                    "worktree",
+                    "remove",
+                    "--force",
+                    checkout.to_str().context("the check's path is not UTF-8")?,
+                ],
+            );
         }
-    } else if is_real_dir(&expected) {
-        // A directory git no longer lists: a check killed between the
-        // checkout and its entry, or one whose entry was pruned by hand.
+    }
+    // A directory git no longer lists: a check killed between the checkout
+    // and its entry, or one whose entry was pruned by hand.
+    if is_real_dir(&expected) {
         std::fs::remove_dir_all(&expected)
             .with_context(|| format!("remove {}", expected.display()))?;
     }
-    let pruned =
-        crate::project::git(root, ["worktree", "prune"]).is_ok_and(|out| out.status.success());
-    if !pruned {
-        bail!("`git worktree prune` failed in {}", root.display());
+    for root in &roots {
+        let pruned =
+            crate::project::git(root, ["worktree", "prune"]).is_ok_and(|out| out.status.success());
+        if !pruned {
+            bail!("`git worktree prune` failed in {}", root.display());
+        }
     }
     if is_real_dir(&expected) {
         bail!("{} is still there", expected.display());

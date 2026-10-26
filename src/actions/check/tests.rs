@@ -36,7 +36,7 @@ fn sha(root: &std::path::Path, refname: &str) -> String {
 #[test]
 fn the_commit_tested_is_the_one_new_would_fork_from_not_head() {
     let (_dir, root) = repo_ahead_of_main();
-    let (commit, base) = commit_to_test(&root, &Config::default(), None).unwrap();
+    let (commit, base) = commit_to_test(&root, None, None).unwrap();
     assert_eq!(base.as_deref(), Some("main"));
     assert_eq!(commit, sha(&root, "main"));
     assert_ne!(commit, sha(&root, "HEAD"));
@@ -44,12 +44,13 @@ fn the_commit_tested_is_the_one_new_would_fork_from_not_head() {
     // The project's own base wins, as it does for `new`.
     let mut config = Config::default();
     config.project.base = Some("feat/wip".to_string());
-    let (commit, base) = commit_to_test(&root, &config, None).unwrap();
+    let (commit, base) = commit_to_test(&root, config.project.base.as_deref(), None).unwrap();
     assert_eq!(base.as_deref(), Some("feat/wip"));
     assert_eq!(commit, sha(&root, "HEAD"));
 
     // And a base given for the run wins over both.
-    let (commit, base) = commit_to_test(&root, &config, Some("main")).unwrap();
+    let (commit, base) =
+        commit_to_test(&root, config.project.base.as_deref(), Some("main")).unwrap();
     assert_eq!(base.as_deref(), Some("main"));
     assert_eq!(commit, sha(&root, "main"));
 }
@@ -88,10 +89,10 @@ fn with_no_default_branch_the_commit_is_head_and_with_no_commit_there_is_none() 
     let root = dir.path().join("repo");
     std::fs::create_dir_all(&root).unwrap();
     git(&root, &["init", "--quiet", "--initial-branch=trunk"]);
-    assert_eq!(commit_to_test(&root, &Config::default(), None), None);
+    assert_eq!(commit_to_test(&root, None, None), None);
 
     git(&root, &["commit", "--quiet", "--allow-empty", "-m", "root"]);
-    let (commit, base) = commit_to_test(&root, &Config::default(), None).unwrap();
+    let (commit, base) = commit_to_test(&root, None, None).unwrap();
     assert_eq!(base, None, "HEAD is said as HEAD");
     assert_eq!(commit, sha(&root, "HEAD"));
 }

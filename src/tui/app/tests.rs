@@ -36,6 +36,7 @@ pub fn wt(name: &str) -> Worktree {
         dirty: Some(false),
         ahead_behind: Some((1, 0)),
         in_progress: None,
+        repos: Vec::new(),
     }
 }
 
@@ -49,6 +50,7 @@ pub fn test_app(names: &[&str]) -> App {
             id: "acme-shop-3f9a2c1d".into(),
             root: PathBuf::from("/pando-test-does-not-exist/acme-shop"),
             display_name: "acme-shop".into(),
+            repos: Vec::new(),
         },
     );
     let worktrees: Vec<Worktree> = names.iter().map(|n| wt(n)).collect();
@@ -764,6 +766,7 @@ fn the_create_modal_goes_to_a_worktree_that_already_exists() {
 
 fn a_pr(number: u32, branch: &str, state: crate::worktree::PrState) -> crate::worktree::PrInfo {
     crate::worktree::PrInfo {
+        repo: None,
         number,
         title: format!("title of {number}"),
         branch: branch.into(),
@@ -894,6 +897,7 @@ fn a_fetch_that_lands_in_the_picker_keeps_the_cursor_on_its_pull_request() {
 fn a_forks_pull_request_is_not_the_chip_of_the_main_branch() {
     let mut app = test_app(&["feat+one"]);
     let fork = crate::worktree::PrInfo {
+        repo: None,
         cross_repository: true,
         ..a_pr(5, "main", crate::worktree::PrState::Open)
     };
@@ -2535,6 +2539,7 @@ pub fn app_with_logs(names: &[&str]) -> (tempfile::TempDir, App) {
             id: "acme-shop-3f9a2c1d".into(),
             root: dir.path().join("acme-shop"),
             display_name: "acme-shop".into(),
+            repos: Vec::new(),
         },
     );
     let worktrees: Vec<Worktree> = names.iter().map(|n| wt(n)).collect();
@@ -5966,6 +5971,7 @@ fn an_enrichment_that_finds_changes_marks_the_worktree_dirty() {
         dirty: Some(true),
         ahead_behind: Some((1, 0)),
         in_progress: None,
+        repos: Vec::new(),
     };
     assert!(
         app.handle_event(AppEvent::Enrich(update.clone())),
@@ -6535,6 +6541,7 @@ fn a_config_file_with_no_process_still_lets_enter_start() {
             id: "acme-shop-3f9a2c1d".into(),
             root: dir.path().join("acme-shop"),
             display_name: "acme-shop".into(),
+            repos: Vec::new(),
         },
     );
     std::fs::create_dir_all(paths.config_file().parent().unwrap()).unwrap();
@@ -7519,6 +7526,7 @@ pub fn app_on_setup_screen(settings: bool) -> (tempfile::TempDir, App) {
             id: "acme-shop-3f9a2c1d".into(),
             root: dir.path().join("acme-shop"),
             display_name: "acme-shop".into(),
+            repos: Vec::new(),
         },
     );
     let mut config = Config::default();

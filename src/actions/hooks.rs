@@ -233,7 +233,7 @@ fn run_hook(
     env.extend(ctx.service_env.iter().map(|(k, v)| (k.clone(), v.clone())));
     // What the worktree looked like before, so anything the hook leaves
     // behind can be named rather than merely counted.
-    let before = porcelain_status(ctx.worktree);
+    let before = checkouts_status(&paths.project, ctx.worktree);
     hooks::run_with_fallback(
         &log_file,
         &with_prelude(config, &cmd),
@@ -259,7 +259,7 @@ fn run_hook(
     // fingerprint can say nothing about. `docs/02-principles.md`: a hook
     // that writes a new file into the worktree is misconfigured, and the
     // developer can only know that if pando says which file.
-    let appeared = newly_dirty(&before, &porcelain_status(ctx.worktree));
+    let appeared = newly_dirty(&before, &checkouts_status(&paths.project, ctx.worktree));
     if !appeared.is_empty() {
         progress(&format!(
             "warning: the {} hook changed this worktree: {} — `git status` there will show \
@@ -425,6 +425,27 @@ pub(super) fn run_probes(
         );
     }
     Ok(())
+}
+
+/// [`porcelain_status`] of every checkout in `worktree`: for a multi-repo
+/// project's set, each repository's, its paths under the repository's
+/// directory.
+fn checkouts_status(project: &crate::project::ProjectRef, worktree: &Path) -> Vec<String> {
+    if !project.is_multi_repo() {
+        return porcelain_status(worktree);
+    }
+    project
+        .repos
+        .iter()
+        .flat_map(|repo| {
+            porcelain_status(&worktree.join(repo))
+                .into_iter()
+                .map(move |line| match line.split_at_checked(3) {
+                    Some((code, path)) => format!("{code}{repo}/{path}"),
+                    None => line,
+                })
+        })
+        .collect()
 }
 
 /// `git status --porcelain --untracked-files=all` inside a worktree, one

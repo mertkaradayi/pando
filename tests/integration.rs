@@ -20,6 +20,7 @@ mod git;
 mod hooks;
 mod invariant;
 mod isolation;
+mod multi_repo;
 mod namespaced;
 mod native;
 mod services;

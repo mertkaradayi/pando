@@ -28,6 +28,10 @@ pub struct Config {
     pub probes: Vec<ProbeConfig>,
     #[serde(default, skip_serializing_if = "BranchesSection::is_empty")]
     pub branches: BranchesSection,
+    /// A multi-repo project's repositories: which of the folder's are in
+    /// it, and the base of each that is not its repository's own default.
+    #[serde(default, skip_serializing_if = "ReposSection::is_empty")]
+    pub repos: ReposSection,
     #[serde(default, skip_serializing_if = "ShareSection::is_empty")]
     pub share: ShareSection,
     #[serde(default, skip_serializing_if = "UiSection::is_empty")]
@@ -559,6 +563,51 @@ impl BranchesSection {
     }
 }
 
+/// `[repos]`: the repositories of a multi-repo project — a plain folder of
+/// git repositories, which is one project with a set of worktrees, one of
+/// each repository, for a worktree. Read for such a project only.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReposSection {
+    /// The folder's repositories the project is made of, by directory
+    /// name. Empty is every repository directly under the folder.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
+    /// The branch a repository's new branches fork from and its checkouts
+    /// are measured against, by repository, over its own `origin/HEAD`,
+    /// `main` or `master` and over `[project] base`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub base: BTreeMap<String, String>,
+}
+
+impl ReposSection {
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Narrows a multi-repo project to the repositories `members` names,
+    /// each of which must be one of the folder's. A project that is one
+    /// repository is left as it is: the section is not about it.
+    pub fn narrow(&self, project: &mut crate::project::ProjectRef) -> anyhow::Result<()> {
+        if !project.is_multi_repo() || self.members.is_empty() {
+            return Ok(());
+        }
+        if let Some(stranger) = self.members.iter().find(|m| !project.repos.contains(m)) {
+            anyhow::bail!(
+                "[repos] members names {stranger:?}, which is not a git repository directly \
+                 under {} — the repositories there are {}",
+                project.root.display(),
+                project.repos.join(", ")
+            );
+        }
+        let mut members = self.members.clone();
+        members.sort();
+        members.dedup();
+        project.repos = members;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BranchRule {
@@ -677,6 +726,16 @@ impl Config {
             }
         }
         self.project.base.as_deref()
+    }
+
+    /// [`Config::base_for_branch`] for one repository of a multi-repo
+    /// project: its own `[repos.base]` first.
+    pub fn base_for_repo(&self, repo: &str, branch: &str) -> Option<&str> {
+        self.repos
+            .base
+            .get(repo)
+            .map(String::as_str)
+            .or_else(|| self.base_for_branch(branch))
     }
 }
 

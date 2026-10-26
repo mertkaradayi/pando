@@ -7,6 +7,24 @@ may change behaviour.
 
 ## Unreleased
 
+### Added
+
+- Projects split across several git repositories (#18). `pando` in a
+  plain folder of sibling repositories runs it as one project, and its
+  worktree is a set: a directory laid out like the folder with a worktree
+  of each repository on one branch, which every repository takes where it
+  has it and forks from its own base where it does not. `start` runs
+  every process of the set in one port window, so a frontend's process is
+  told its backend's port; `stop`, `rm`, `status`, `open`, `share` and
+  `check` act on the whole set, and the TUI shows it as one row with each
+  repository's branch and changes in its detail. The pull request picker
+  lists every repository's, each named with its repository. A configured
+  path names its repository first (`provision = ["backend/.env"]`), and
+  is checked against that repository's own gitignore. `[repos] members`
+  narrows which repositories are in the project, and `[repos.base]` sets
+  one's base. `ls --json` adds `project.repos` and each entry's `repos`.
+  The git menu is not offered on a set yet.
+
 ## 0.10.3 — 2026-10-14
 
 ### Fixed

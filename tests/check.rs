@@ -9,25 +9,10 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 
-use common::{Kind, build, git_raw, python3_available, wait_until};
+use common::{Kind, answering, build, git_raw, python3_available, wait_until};
 use pando::paths::{CHECK_HELD_LOGS, CHECK_PROBE_LOGS, CHECK_WORKTREE, PandoPaths};
 use pando::setup::{CheckOutcome, CheckRecord, FailureKind, SetupState};
 use tempfile::TempDir;
-
-/// A dev server that answers every request with `status`.
-///
-/// Brace-free: `{` is pando's template syntax. Served by a `TCPServer`
-/// that reuses its address, as `HTTPServer` does, rather than by
-/// `HTTPServer` itself, whose bind looks the address up in reverse DNS
-/// before it listens: on a CI runner, in a session of its own, that lookup
-/// never returned, and the port was bound and never listening.
-fn answering(status: u16) -> String {
-    format!(
-        "python3 -u -c \"import http.server as h,os;C=type('C',(h.BaseHTTPRequestHandler,),\
-         dict(do_GET=lambda s:(s.send_response({status}),s.end_headers())));\
-         type('S',(h.socketserver.TCPServer,),dict(allow_reuse_address=1))(('127.0.0.1',int(os.environ['PORT'])),C).serve_forever()\""
-    )
-}
 
 /// pando's config for a project whose one process runs `cmd` on the `web`
 /// role, with an install step that does nothing, and `extra` after it.

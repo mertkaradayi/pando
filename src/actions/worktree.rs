@@ -9,6 +9,7 @@ use std::process::Command;
 
 use crate::config::{self, Config, ProvisionMode};
 use crate::paths::PandoPaths;
+use crate::project::ProjectRef;
 use crate::state::{self, WorktreeRecord};
 use crate::worktree::{self, PrInfo, Worktree};
 
@@ -81,10 +82,69 @@ pub fn new(
         .iter()
         .filter(|rel| is_present(&root.join(rel)))
     {
-        ensure_gitignored(&root, &as_ignore_query(&root, rel), "clone")?;
+        ensure_ignored(&paths.project, &root, &as_ignore_query(&root, rel), "clone")?;
     }
-    let source = resolve_create_source(&root, branch, base, config, progress)?;
-    create(paths, config, &dir_name, &target, branch, &source, progress)
+    let mut sources = Vec::new();
+    for (repo, checkout) in repo_checkouts(paths, &root) {
+        let requested = base.map(str::to_string).or_else(|| {
+            match &repo {
+                Some(repo) => config.base_for_repo(repo, branch),
+                None => config.base_for_branch(branch),
+            }
+            .map(str::to_string)
+        });
+        let source = resolve_create_source(&checkout, branch, requested, progress)
+            .with_context(|| in_repo(&repo))?;
+        sources.push(RepoSource {
+            repo,
+            root: checkout,
+            source,
+        });
+    }
+    create(
+        paths, config, &dir_name, &target, branch, &sources, progress,
+    )
+}
+
+/// One repository's part of a new worktree: which repository (none for a
+/// project that is one), its main checkout, and what is checked out.
+#[derive(Debug, Clone)]
+struct RepoSource {
+    repo: Option<String>,
+    root: PathBuf,
+    source: CreateSource,
+}
+
+impl RepoSource {
+    /// Where its checkout goes in the worktree at `target`.
+    fn target(&self, target: &Path) -> PathBuf {
+        match &self.repo {
+            Some(repo) => target.join(repo),
+            None => target.to_path_buf(),
+        }
+    }
+}
+
+/// Every repository's main checkout under `root`, the project's main
+/// checkout: `root` itself, unnamed, for one repository.
+pub(super) fn repo_checkouts(paths: &PandoPaths, root: &Path) -> Vec<(Option<String>, PathBuf)> {
+    match paths.project.is_multi_repo() {
+        false => vec![(None, root.to_path_buf())],
+        true => paths
+            .project
+            .repos
+            .iter()
+            .map(|repo| (Some(repo.clone()), root.join(repo)))
+            .collect(),
+    }
+}
+
+/// What an error about one repository of several says first.
+fn in_repo(repo: &Option<String>) -> String {
+    match repo {
+        Some(repo) => format!("in the repository {repo}"),
+        None => "in this repository".to_string(),
+    }
 }
 
 /// Creates the worktree `pando check` tests in, at [`crate::paths::CHECK_WORKTREE`]
@@ -92,19 +152,44 @@ pub fn new(
 /// through `new`'s own steps — the refusals, the provisioning, the state
 /// record and the install — less the branch, which a check never makes,
 /// and the fetch, which the commit it was handed does not need.
+///
+/// `commits` is one commit per repository, in the project's order: the one
+/// commit of a project that is one repository.
 pub(super) fn new_detached(
     paths: &PandoPaths,
     config: &Config,
-    commit: &str,
+    commits: &[String],
     progress: &dyn Fn(&str),
 ) -> Result<String> {
     let dir_name = crate::paths::CHECK_WORKTREE.to_string();
     let target = refuse_taken_target(paths, config, &dir_name)?;
-    let short: String = commit.chars().take(7).collect();
-    let source = CreateSource::Detached {
-        commit: commit.to_string(),
-    };
-    create(paths, config, &dir_name, &target, &short, &source, progress)
+    let checkouts = repo_checkouts(paths, paths.root());
+    if checkouts.len() != commits.len() {
+        bail!(
+            "{} commits for {} repositories",
+            commits.len(),
+            checkouts.len()
+        );
+    }
+    let short = commits
+        .iter()
+        .map(|commit| commit.chars().take(7).collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let sources: Vec<RepoSource> = checkouts
+        .into_iter()
+        .zip(commits)
+        .map(|((repo, root), commit)| RepoSource {
+            repo,
+            root,
+            source: CreateSource::Detached {
+                commit: commit.clone(),
+            },
+        })
+        .collect();
+    create(
+        paths, config, &dir_name, &target, &short, &sources, progress,
+    )
 }
 
 /// Where a worktree called `dir_name` goes, once nothing is in the way:
@@ -157,7 +242,7 @@ fn refuse_taken_target(paths: &PandoPaths, config: &Config, dir_name: &str) -> R
     // worktree gets asked again once it exists, because it may have a
     // different `.gitignore` checked out.
     for rel in config.project.provision_paths() {
-        ensure_gitignored(root, rel, "provision")?;
+        ensure_ignored(&paths.project, root, rel, "provision")?;
     }
 
     let target = config.worktrees_dir(paths).join(dir_name);
@@ -180,17 +265,24 @@ fn refuse_taken_target(paths: &PandoPaths, config: &Config, dir_name: &str) -> R
 }
 
 /// `new` from the checkout on: git makes the worktree at `target` from
-/// `source`, and it is provisioned, recorded and installed. `branch` is
+/// `sources`, and it is provisioned, recorded and installed. `branch` is
 /// what the messages call it — the short commit for a detached one.
+///
+/// `sources` is one per repository: the worktree itself for a project
+/// that is one repository, and for several a set, the directory `target`
+/// holding each repository's checkout under the repository's name.
 fn create(
     paths: &PandoPaths,
     config: &Config,
     dir_name: &str,
     target: &Path,
     branch: &str,
-    source: &CreateSource,
+    sources: &[RepoSource],
     progress: &dyn Fn(&str),
 ) -> Result<String> {
+    let Some(first) = sources.first() else {
+        bail!("{} has no repository to check out", paths.root().display());
+    };
     let root = paths.root().to_path_buf();
     let dir_name = dir_name.to_string();
     let target = target.to_path_buf();
@@ -213,7 +305,7 @@ fn create(
     // TUI worker would wait on it.
     std::fs::create_dir_all(&worktrees_dir)
         .with_context(|| format!("create {}", worktrees_dir.display()))?;
-    let target_str = target.to_str().context("worktree path is not utf-8")?;
+    target.to_str().context("worktree path is not utf-8")?;
     let left = {
         let _lock = state::lock(&paths.lock_file())?;
         let mut store = state::load(&paths.state_file())?;
@@ -228,7 +320,7 @@ fn create(
         for notice in sweep_orphaned_groups(&mut store)? {
             progress(&notice);
         }
-        drop_stale_worktree_records(&mut store, &root);
+        drop_stale_worktree_records(&mut store, &paths.project);
         if store != loaded {
             state::save(&paths.state_file(), &store)?;
         }
@@ -248,69 +340,48 @@ fn create(
         store.worktrees.get(&dir_name).cloned()
     };
 
-    let checkout = super::checkout::plan(&root, config, &worktrees_dir, progress);
-    let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(&root).args(["worktree", "add"]);
-    if matches!(checkout, CheckoutPlan::CopyOnWrite(_)) {
-        cmd.arg("--no-checkout");
-    }
-    match source {
-        CreateSource::Local => {
-            cmd.args([target_str, branch]);
+    // Each repository's checkout in turn, into the directory claimed
+    // above. A failure in any is undone with every one made before it,
+    // below, under the lock.
+    let mut added: Vec<(&RepoSource, PathBuf)> = Vec::new();
+    let mut filled = None;
+    for source in sources {
+        let at = source.target(&target);
+        match add_checkout(source, &at, branch, config, &worktrees_dir, progress) {
+            Ok((plan, failed_add)) => {
+                added.push((source, at.clone()));
+                // Still part of the checkout, so still without the lock:
+                // git writes the files a copy-on-write checkout could not
+                // clone. Its result waits for the lock, like every other
+                // failure here: a failed fill is undone with the lock
+                // held, and never under a record a `start` wrote.
+                filled = match (failed_add, &plan) {
+                    (Some(failed), _) => Some(failed),
+                    (None, CheckoutPlan::CopyOnWrite(from)) => {
+                        super::checkout::fill(&at, from, progress).err()
+                    }
+                    (None, CheckoutPlan::Git) => None,
+                }
+                // Told to stop during the checkout: what it made goes, as
+                // `git worktree add` takes its own half-made worktree
+                // down.
+                .or_else(|| {
+                    super::checkout::told_to_stop()
+                        .then(|| anyhow::anyhow!(super::checkout::INTERRUPTED))
+                });
+            }
+            // Nothing of this checkout is left: with nothing made before
+            // it, the claimed directory goes too and that is the whole
+            // undo, with no lock to take.
+            Err(e) if added.is_empty() => {
+                let _ = std::fs::remove_dir(&target);
+                return Err(e);
+            }
+            Err(e) => filled = Some(e),
         }
-        CreateSource::Detached { commit } => {
-            cmd.args(["--detach", target_str, commit]);
+        if filled.is_some() {
+            break;
         }
-        CreateSource::Remote => {
-            cmd.args([
-                "--track",
-                "-b",
-                branch,
-                target_str,
-                &format!("origin/{branch}"),
-            ]);
-        }
-        CreateSource::Fork { base } => {
-            // --no-track, or the new branch's upstream becomes the base and a
-            // later `git pull` merges the base into the feature branch.
-            cmd.args(["--no-track", "-b", branch, target_str, base]);
-        }
-    }
-    // What a failed add may delete: a branch `-b` made in this call, and
-    // only while it is still where `-b` put it.
-    let made = match source {
-        CreateSource::Fork { base } => Some(base.clone()),
-        CreateSource::Remote => Some(format!("origin/{branch}")),
-        _ => None,
-    }
-    .filter(|_| !ref_exists(&root, &format!("refs/heads/{branch}")))
-    .and_then(|start| commit_of(&root, &start));
-    progress(&format!("checking out {branch}"));
-    // Captured, not inherited: `git worktree add` narrates on stdout and
-    // stderr, which would paint over the TUI's alternate screen. And never
-    // prompting, like the fetches: the checkout runs the LFS filter, whose
-    // download can ask for a password — over the TUI, whose keys then went
-    // nowhere, and for ever.
-    cmd.env("GIT_TERMINAL_PROMPT", "0");
-    let out = match cmd.output() {
-        Ok(out) => out,
-        Err(e) => {
-            let _ = std::fs::remove_dir(&target);
-            return Err(e).context("spawn git worktree add");
-        }
-    };
-    // git removes a worktree whose checkout failed, but keeps the branch
-    // `-b` made for it; and it keeps the worktree itself when only its
-    // `post-checkout` hook failed. A worktree still there is unwound like
-    // any failure after the add — under the lock, below.
-    let mut failed_add = None;
-    if !out.status.success() {
-        let failed = anyhow::anyhow!("git worktree add failed: {}", git_failure_reason(&out));
-        if !is_registered(&root, &target) {
-            let _ = std::fs::remove_dir(&target);
-            return Err(drop_made_branch(&root, branch, made.as_deref(), failed));
-        }
-        failed_add = Some(failed);
     }
 
     // Past this point the worktree exists, so every failure has something to
@@ -319,23 +390,7 @@ fn create(
     // runs with the lock still held: let go first, a `start` waiting on it
     // could record a dev server in the worktree the undo then removes, and
     // the next sweep drops that record as stale with the server running.
-    let undo = |e| unwind_new(&root, &target, branch, source, e);
-    // Still part of the checkout, so still without the lock: git writes
-    // the files a copy-on-write checkout could not clone. Its result waits
-    // for the lock, like every other failure here: a failed fill is undone
-    // with the lock held, and never under a record a `start` wrote.
-    let filled = match (failed_add, &checkout) {
-        (Some(failed), _) => Some(failed),
-        (None, CheckoutPlan::CopyOnWrite(from)) => {
-            super::checkout::fill(&target, from, progress).err()
-        }
-        (None, CheckoutPlan::Git) => None,
-    }
-    // Told to stop during the checkout: what it made goes, as `git
-    // worktree add` takes its own half-made worktree down.
-    .or_else(|| {
-        super::checkout::told_to_stop().then(|| anyhow::anyhow!(super::checkout::INTERRUPTED))
-    });
+    let undo = |e| unwind_checkouts(&added, &target, branch, e);
     let lock = state::lock(&paths.lock_file()).map_err(undo)?;
     let mut store = state::load(&paths.state_file()).map_err(undo)?;
     // A `start` from another terminal can find the worktree while git is
@@ -361,14 +416,27 @@ fn create(
     // The clones themselves come after the lock, but the check that allows
     // them is made here, where a refusal still unwinds: the worktree's own
     // gitignore has the last word, and nothing else writes it meanwhile.
-    let clones = clones_for(config, source);
+    let clones = clones_for(config, &first.source);
     for rel in clones.iter().filter(|rel| is_present(&root.join(rel))) {
-        ensure_gitignored(&target, &as_ignore_query(&root, rel), "clone").map_err(undo)?;
+        ensure_ignored(
+            &paths.project,
+            &target,
+            &as_ignore_query(&root, rel),
+            "clone",
+        )
+        .map_err(undo)?;
     }
     let canonical = std::fs::canonicalize(&target).unwrap_or_else(|_| target.clone());
     let mut record = WorktreeRecord::new(canonical, true);
-    if let CreateSource::Fork { base } = source {
-        record.base = Some(base.clone());
+    for source in sources {
+        if let CreateSource::Fork { base } = &source.source {
+            match &source.repo {
+                Some(repo) => {
+                    record.bases.insert(repo.clone(), base.clone());
+                }
+                None => record.base = Some(base.clone()),
+            }
+        }
     }
     store.worktrees.insert(dir_name.clone(), record);
     state::save(&paths.state_file(), &store).map_err(undo)?;
@@ -387,15 +455,17 @@ fn create(
     // Said only when there is something to install: a project with no
     // install command and no create hook used to print it anyway.
     clone_ignored_paths(
-        &root,
+        &paths.project,
         clones,
         config.project.install.as_deref(),
         &target,
         progress,
     );
     let installs = has_install_step(config);
-    for line in uninitialised_submodules(&target) {
-        progress(&line);
+    for (_, at) in &added {
+        for line in uninitialised_submodules(at) {
+            progress(&line);
+        }
     }
     if installs {
         progress("installing");
@@ -404,7 +474,7 @@ fn create(
     let no_services: BTreeMap<String, String> = BTreeMap::new();
     let ctx = HookContext {
         name: &dir_name,
-        branch: match source {
+        branch: match first.source {
             CreateSource::Detached { .. } => None,
             _ => Some(branch),
         },
@@ -417,6 +487,104 @@ fn create(
     run_hooks(paths, config, config::HookPoint::Create, &ctx, progress)
         .with_context(|| format!("{branch} {CREATED_BUT_INSTALL_FAILED}"))?;
     Ok(dir_name)
+}
+
+/// `git worktree add` of one repository's checkout at `at`, copy-on-write
+/// where the filesystem clones: the plan it was made with, and the error
+/// of an add git kept the worktree after — its `post-checkout` hook
+/// failed — for the caller to unwind with the rest.
+///
+/// An error is an add that left nothing: git removes a worktree whose
+/// checkout failed, and the branch `-b` made for it is deleted here.
+fn add_checkout(
+    source: &RepoSource,
+    at: &Path,
+    branch: &str,
+    config: &Config,
+    worktrees_dir: &Path,
+    progress: &dyn Fn(&str),
+) -> Result<(CheckoutPlan, Option<anyhow::Error>)> {
+    let root = &source.root;
+    let at_str = at.to_str().context("worktree path is not utf-8")?;
+    let checkout = super::checkout::plan(root, config, worktrees_dir, progress);
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(root).args(["worktree", "add"]);
+    if matches!(checkout, CheckoutPlan::CopyOnWrite(_)) {
+        cmd.arg("--no-checkout");
+    }
+    match &source.source {
+        CreateSource::Local => {
+            cmd.args([at_str, branch]);
+        }
+        CreateSource::Detached { commit } => {
+            cmd.args(["--detach", at_str, commit]);
+        }
+        CreateSource::Remote => {
+            cmd.args(["--track", "-b", branch, at_str, &format!("origin/{branch}")]);
+        }
+        CreateSource::Fork { base } => {
+            // --no-track, or the new branch's upstream becomes the base and a
+            // later `git pull` merges the base into the feature branch.
+            cmd.args(["--no-track", "-b", branch, at_str, base]);
+        }
+    }
+    // What a failed add may delete: a branch `-b` made in this call, and
+    // only while it is still where `-b` put it.
+    let made = match &source.source {
+        CreateSource::Fork { base } => Some(base.clone()),
+        CreateSource::Remote => Some(format!("origin/{branch}")),
+        _ => None,
+    }
+    .filter(|_| !ref_exists(root, &format!("refs/heads/{branch}")))
+    .and_then(|start| commit_of(root, &start));
+    progress(&match &source.repo {
+        Some(repo) => format!("checking out {branch} in {repo}"),
+        None => format!("checking out {branch}"),
+    });
+    // Captured, not inherited: `git worktree add` narrates on stdout and
+    // stderr, which would paint over the TUI's alternate screen. And never
+    // prompting, like the fetches: the checkout runs the LFS filter, whose
+    // download can ask for a password — over the TUI, whose keys then went
+    // nowhere, and for ever.
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    let out = cmd.output().context("spawn git worktree add")?;
+    // git removes a worktree whose checkout failed, but keeps the branch
+    // `-b` made for it; and it keeps the worktree itself when only its
+    // `post-checkout` hook failed. A worktree still there is the caller's
+    // to unwind, like any failure after the add.
+    if out.status.success() {
+        return Ok((checkout, None));
+    }
+    let failed = anyhow::anyhow!("git worktree add failed: {}", git_failure_reason(&out));
+    let failed = match &source.repo {
+        Some(repo) => failed.context(format!("in the repository {repo}")),
+        None => failed,
+    };
+    if !is_registered(root, at) {
+        return Err(drop_made_branch(root, branch, made.as_deref(), failed));
+    }
+    Ok((checkout, Some(failed)))
+}
+
+/// [`unwind_new`] of every checkout `new` made, the last first; for a set,
+/// its directory after them once they are gone. The error says what was
+/// undone in each.
+fn unwind_checkouts(
+    added: &[(&RepoSource, PathBuf)],
+    target: &Path,
+    branch: &str,
+    err: anyhow::Error,
+) -> anyhow::Error {
+    let mut err = err;
+    for (source, at) in added.iter().rev() {
+        err = unwind_new(&source.root, at, branch, &source.source, err);
+    }
+    if added.iter().any(|(source, _)| source.repo.is_some()) {
+        // Empty once every checkout is gone, and kept when one is not: a
+        // checkout git still lists is not pando's to delete by hand.
+        let _ = std::fs::remove_dir(target);
+    }
+    err
 }
 
 /// Whether `new` has an install step to run: the project's install
@@ -475,12 +643,13 @@ fn as_ignore_query(root: &Path, rel: &str) -> String {
 /// workspace links are relative and resolve inside the worktree, so they
 /// pass.
 fn clone_ignored_paths(
-    root: &Path,
+    project: &ProjectRef,
     clones: &[String],
     install: Option<&str>,
     worktree: &Path,
     progress: &dyn Fn(&str),
 ) {
+    let root = project.root.as_path();
     let cleared = install.and_then(crate::catalog::package_managers::cleared_by);
     for rel in clones {
         let src = root.join(rel);
@@ -507,7 +676,7 @@ fn clone_ignored_paths(
             continue;
         }
         // Invariant 1, immediately before the write, as provisioning asks.
-        if let Err(e) = ensure_gitignored(worktree, &as_ignore_query(root, rel), "clone") {
+        if let Err(e) = ensure_ignored(project, worktree, &as_ignore_query(root, rel), "clone") {
             progress(&format!("not cloning {rel}: {e:#}"));
             continue;
         }
@@ -751,6 +920,43 @@ fn submodule_in(worktree: &Worktree) -> Result<Option<String>> {
     Ok(modules.is_dir().then(|| modules.display().to_string()))
 }
 
+/// git's two refusals of `git worktree remove` without `--force`, asked of
+/// one checkout of `target` — the worktree itself, or one of a set's —
+/// before `rm` stops or removes anything.
+fn refuse_what_git_would(shown: &str, target: &Worktree, checkout: &Worktree) -> Result<()> {
+    let shown = match target.is_set() {
+        true => format!("{shown} ({})", checkout.name),
+        false => shown.to_string(),
+    };
+    match submodule_in(checkout) {
+        Ok(None) => {}
+        Ok(Some(what)) => bail!(
+            "{shown} has submodules in it ({what}), and git removes such a worktree only \
+             when forced — nothing was stopped or removed; {}",
+            remedy::DISCARD_CHANGES
+        ),
+        Err(e) => bail!(
+            "could not tell whether {shown} has submodules in it: {e:#} — nothing was \
+             stopped or removed; check it with `git submodule status`, or {}",
+            remedy::DISCARD_CHANGES
+        ),
+    }
+    match dirty_entry(checkout) {
+        Ok(None) => Ok(()),
+        Ok(Some(entry)) => bail!(
+            "{shown} contains modified or untracked files ({entry}) — commit or remove \
+             them, or {}",
+            remedy::DISCARD_CHANGES
+        ),
+        // Before anything destructive: not knowing is not "clean".
+        Err(e) => bail!(
+            "could not tell whether {shown} has changes: {e:#} — nothing was stopped or \
+             removed; check it with `git status`, or {}",
+            remedy::DISCARD_CHANGES
+        ),
+    }
+}
+
 /// Undoes a `new` that failed after `git worktree add`. The worktree goes;
 /// so does the branch, but only when pando created it in this same call —
 /// a branch that existed before is the user's work, not pando's to delete.
@@ -910,7 +1116,7 @@ pub fn rm(
     state::save(&paths.state_file(), &store)?;
     let (shown, recorded_at) = match target {
         Some(target) => {
-            drop_stale_worktree_records(&mut store, paths.root());
+            drop_stale_worktree_records(&mut store, &paths.project);
             (target.display_name(), target.path.clone())
         }
         // Not dropped as stale: that record is the one this removes.
@@ -942,32 +1148,8 @@ pub fn rm(
     // `--force`, in its order; ignored files never block a removal and do
     // not show here.
     if !force && let Some(target) = target {
-        match submodule_in(target) {
-            Ok(None) => {}
-            Ok(Some(what)) => bail!(
-                "{shown} has submodules in it ({what}), and git removes such a worktree only \
-                 when forced — nothing was stopped or removed; {}",
-                remedy::DISCARD_CHANGES
-            ),
-            Err(e) => bail!(
-                "could not tell whether {shown} has submodules in it: {e:#} — nothing was \
-                 stopped or removed; check it with `git submodule status`, or {}",
-                remedy::DISCARD_CHANGES
-            ),
-        }
-        match dirty_entry(target) {
-            Ok(None) => {}
-            Ok(Some(entry)) => bail!(
-                "{shown} contains modified or untracked files ({entry}) — commit or remove \
-                 them, or {}",
-                remedy::DISCARD_CHANGES
-            ),
-            // Before anything destructive: not knowing is not "clean".
-            Err(e) => bail!(
-                "could not tell whether {shown} has changes: {e:#} — nothing was stopped or \
-                 removed; check it with `git status`, or {}",
-                remedy::DISCARD_CHANGES
-            ),
+        for checkout in target.checkouts() {
+            refuse_what_git_would(&shown, target, checkout)?;
         }
     }
 
@@ -1043,27 +1225,64 @@ pub fn rm(
     // global and would sweep entries pando has no business touching. A
     // worktree git no longer lists has nothing left for it to remove.
     if let Some(target) = target {
-        let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(paths.root()).args(["worktree", "remove"]);
-        if force {
-            cmd.arg("--force");
-        }
-        cmd.arg(target.path.to_str().context("worktree path is not utf-8")?);
-        let out = cmd.output().context("spawn git worktree remove")?;
-        if !out.status.success() {
-            // Anything that was running has already been stopped by now
-            // and that cannot be taken back, so the cleared record is saved
-            // rather than left behind to resurface as a phantom failure —
-            // and the message says what actually happened.
-            state::save(&paths.state_file(), &store)?;
-            let reason = git_failure_reason(&out);
-            if matches!(stopped, StopOutcome::Stopped(_)) {
-                bail!(
-                    "git worktree remove failed: {reason} — what was running was stopped, and \
-                     any public URL closed; the worktree was kept"
-                );
+        let mut removed: Vec<&str> = Vec::new();
+        for checkout in target.checkouts() {
+            let root = match target.is_set() {
+                true => paths.root().join(&checkout.name),
+                false => paths.root().to_path_buf(),
+            };
+            let mut cmd = Command::new("git");
+            cmd.arg("-C").arg(&root).args(["worktree", "remove"]);
+            if force {
+                cmd.arg("--force");
             }
-            bail!("git worktree remove failed: {reason}");
+            cmd.arg(
+                checkout
+                    .path
+                    .to_str()
+                    .context("worktree path is not utf-8")?,
+            );
+            let out = cmd.output().context("spawn git worktree remove")?;
+            if !out.status.success() {
+                // Anything that was running has already been stopped by
+                // now and that cannot be taken back, so the cleared record
+                // is saved rather than left behind to resurface as a
+                // phantom failure — and the message says what actually
+                // happened.
+                state::save(&paths.state_file(), &store)?;
+                let reason = match target.is_set() {
+                    true => format!("in {}: {}", checkout.name, git_failure_reason(&out)),
+                    false => git_failure_reason(&out),
+                };
+                let kept = match removed.is_empty() {
+                    true => "the worktree was kept".to_string(),
+                    false => format!(
+                        "the checkouts of {} were removed, the rest kept",
+                        removed.join(", ")
+                    ),
+                };
+                if matches!(stopped, StopOutcome::Stopped(_)) {
+                    bail!(
+                        "git worktree remove failed: {reason} — what was running was stopped, \
+                         and any public URL closed; {kept}"
+                    );
+                }
+                match removed.is_empty() {
+                    true => bail!("git worktree remove failed: {reason}"),
+                    false => bail!("git worktree remove failed: {reason} — {kept}"),
+                }
+            }
+            removed.push(&checkout.name);
+        }
+        // A set's own directory is pando's, not git's: what is left in it
+        // once every checkout is gone is no repository's. Taken whole when
+        // pando made it, as `--force` takes a worktree's ignored files;
+        // only while empty otherwise.
+        if target.is_set() {
+            let _ = match created_by_pando {
+                true => std::fs::remove_dir_all(&target.path),
+                false => std::fs::remove_dir(&target.path),
+            };
         }
     }
 
@@ -1146,8 +1365,24 @@ pub(super) fn find_live_checkout(paths: &PandoPaths, name: &str) -> Result<Check
 /// bash being missing. `rm` keeps the plain lookup: clearing such an entry
 /// is what it is for.
 pub(super) fn refuse_a_gone_directory(worktree: &Worktree) -> Result<()> {
+    // A set whose own directory is there can still have lost a checkout:
+    // a process whose `cwd` is that repository's would fail the same way.
     if !worktree.prunable && worktree.path.is_dir() {
-        return Ok(());
+        return match worktree
+            .repos
+            .iter()
+            .find(|checkout| checkout.prunable || !checkout.path.is_dir())
+        {
+            None => Ok(()),
+            Some(gone) => bail!(
+                "the checkout of {} in {} is gone: git still lists it at {}, but nothing can \
+                 run there — `pando rm {}` removes the set, and `pando new` makes it again",
+                gone.name,
+                worktree.display_name(),
+                gone.path.display(),
+                worktree.display_name()
+            ),
+        };
     }
     let why = worktree
         .prunable_reason
@@ -1194,7 +1429,7 @@ pub fn guard_write_locations(paths: &PandoPaths, config: &Config) -> Result<()> 
 pub fn ls(paths: &PandoPaths) -> Result<Vec<Worktree>> {
     let mut worktrees = worktree::discover(&paths.project)?;
     worktrees.retain(|w| !worktree::is_check(&w.name));
-    worktree::enrich_from_git(&mut worktrees, paths.root()).ok();
+    worktree::enrich_from_git(&mut worktrees, &paths.project).ok();
     Ok(worktrees)
 }
 
@@ -1206,7 +1441,7 @@ pub fn ls_all(paths: &PandoPaths) -> Result<worktree::Discovery> {
     let mut all: Vec<Worktree> = std::iter::once(discovery.main)
         .chain(discovery.worktrees)
         .collect();
-    worktree::enrich_from_git(&mut all, paths.root()).ok();
+    worktree::enrich_from_git(&mut all, &paths.project).ok();
     let main = all.remove(0);
     Ok(worktree::Discovery {
         main,
@@ -1293,14 +1528,28 @@ pub fn new_for_pr(
     let (name, remote) = checkout_for_pr(paths, config, pr, progress)?;
     // The branch it is going onto is the pull request's, not the config's.
     if !pr.base.is_empty() {
-        remember_base(paths, &name, &format!("{remote}/{}", pr.base));
+        remember_base(
+            paths,
+            &name,
+            pr_repo(paths, pr),
+            &format!("{remote}/{}", pr.base),
+        );
     }
     Ok(name)
 }
 
-/// Writes down the base a worktree goes onto. Best effort: a worktree
-/// that has not got one falls back to the config's rule.
-fn remember_base(paths: &PandoPaths, name: &str, base: &str) {
+/// The repository of a multi-repo project a pull request was opened in,
+/// when it is one of the project's.
+fn pr_repo<'a>(paths: &PandoPaths, pr: &'a PrInfo) -> Option<&'a str> {
+    pr.repo
+        .as_deref()
+        .filter(|repo| paths.project.repos.iter().any(|r| r == repo))
+}
+
+/// Writes down the base a worktree goes onto — for a set, the base of its
+/// checkout of `repo`. Best effort: a worktree that has not got one falls
+/// back to the config's rule.
+fn remember_base(paths: &PandoPaths, name: &str, repo: Option<&str>, base: &str) {
     let Ok(_lock) = state::lock(&paths.lock_file()) else {
         return;
     };
@@ -1308,7 +1557,12 @@ fn remember_base(paths: &PandoPaths, name: &str, base: &str) {
         return;
     };
     if let Some(record) = store.worktrees.get_mut(name) {
-        record.base = Some(base.to_string());
+        match repo {
+            Some(repo) => {
+                record.bases.insert(repo.to_string(), base.to_string());
+            }
+            None => record.base = Some(base.to_string()),
+        }
         let _ = state::save(&paths.state_file(), &store);
     }
 }
@@ -1321,7 +1575,19 @@ fn checkout_for_pr(
     progress: &dyn Fn(&str),
 ) -> Result<(String, String)> {
     let branch = pr.local_branch();
-    let root = paths.root().to_path_buf();
+    // A multi-repo project's pull request is fetched in its own
+    // repository, and the set is `new` of its branch: the other
+    // repositories take that branch where they have it.
+    let root = match (paths.project.is_multi_repo(), pr_repo(paths, pr)) {
+        (false, _) => paths.root().to_path_buf(),
+        (true, Some(repo)) => paths.root().join(repo),
+        (true, None) => bail!(
+            "#{} names no repository of this project ({}) — refresh the pull requests and \
+             try again",
+            pr.number,
+            paths.project.repos.join(", ")
+        ),
+    };
     validate_branch_name(&root, &branch)?;
     let origin = || "origin".to_string();
     if ref_exists(&root, &format!("refs/heads/{branch}")) {
@@ -1482,8 +1748,8 @@ fn forgotten_record<'a>(
 /// Drops records for worktrees git no longer lists. Callers hold the flock;
 /// best effort, because a porcelain that cannot be read is not a reason to
 /// refuse the command that is running.
-fn drop_stale_worktree_records(store: &mut state::State, root: &Path) {
-    let Ok(live) = worktree::porcelain_paths(root) else {
+fn drop_stale_worktree_records(store: &mut state::State, project: &ProjectRef) {
+    let Ok(live) = worktree::listed_paths(project) else {
         return;
     };
     store
@@ -1491,11 +1757,12 @@ fn drop_stale_worktree_records(store: &mut state::State, root: &Path) {
         .retain(|_, record| live.contains(&crate::paths::resolve_for_compare(&record.path)));
 }
 
+/// `requested` is the base the caller or config named, if any; none forks
+/// from the repository's own.
 fn resolve_create_source(
     root: &Path,
     branch: &str,
-    base: Option<&str>,
-    config: &Config,
+    requested: Option<String>,
     progress: &dyn Fn(&str),
 ) -> Result<CreateSource> {
     if ref_exists(root, &format!("refs/heads/{branch}")) {
@@ -1519,9 +1786,6 @@ fn resolve_create_source(
         progress("no remote named origin; treating this as a new branch");
     }
 
-    let requested = base
-        .map(str::to_string)
-        .or_else(|| config.base_for_branch(branch).map(str::to_string));
     let base = match requested {
         Some(b) => {
             let resolved = resolve_create_base(root, &b);
@@ -1622,6 +1886,28 @@ fn ensure_gitignored(dir: &Path, rel: &str, key: &str) -> Result<()> {
     }
 }
 
+/// [`ensure_gitignored`] for `rel`, a path relative to `dir`, a checkout
+/// of the project: asked in the repository it is in, which for a
+/// multi-repo project is the checkout of the repository the path starts
+/// with. A path in none of them is refused: it would be a file of no
+/// repository, which nothing in the project reads.
+fn ensure_ignored(project: &ProjectRef, dir: &Path, rel: &str, key: &str) -> Result<()> {
+    let Some((checkout, rel)) = project.repo_path(dir, rel) else {
+        bail!(
+            "{key} path {:?} is in none of the repositories ({}) — in a project of several \
+             repositories, a {key} path starts with the one it is in, as `{}/.env` does",
+            rel.trim_end_matches('/'),
+            project.repos.join(", "),
+            project
+                .repos
+                .first()
+                .map(String::as_str)
+                .unwrap_or("backend")
+        );
+    };
+    ensure_gitignored(&checkout, &rel, key)
+}
+
 /// Links (or copies) the configured files into a new worktree.
 ///
 /// The caller proved every path gitignored in the main checkout, but this
@@ -1662,7 +1948,7 @@ fn provision_path(
     // Invariant 1, checked in the worktree the file lands in and
     // immediately before the write — a seeded file is no different, and
     // the example it comes from being tracked buys it nothing.
-    ensure_gitignored(worktree, rel, "provision")?;
+    ensure_ignored(&paths.project, worktree, rel, "provision")?;
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create dir {}", parent.display()))?;
@@ -1818,7 +2104,7 @@ pub fn unprovisioned(paths: &PandoPaths, config: &Config, worktree: &Path) -> Ve
                 rel: rel.clone(),
                 target: worktree.join(rel),
                 link: !seeded && config.project.provision_mode == ProvisionMode::Link,
-                ignored: crate::detect::is_gitignored(worktree, rel),
+                ignored: crate::detect::is_ignored_in(&paths.project, worktree, rel),
                 seeded_from: seeded
                     .then(|| config.project.provision_from.get(rel).cloned())
                     .flatten(),
@@ -1888,7 +2174,7 @@ fn provision_source(paths: &PandoPaths, config: &Config, rel: &str) -> Option<(P
     if !seed.exists() {
         return None;
     }
-    let seeded = !crate::detect::is_gitignored(paths.root(), from);
+    let seeded = !crate::detect::is_ignored_in(&paths.project, paths.root(), from);
     Some((seed, seeded))
 }
 

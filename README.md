@@ -177,7 +177,9 @@ Your repository works the same way.
 
 ## What it does
 
-- Lists, creates, and removes git worktrees for the repo you are in
+- Lists, creates, and removes git worktrees for the repo you are in — or,
+  for a product split across sibling repositories in one folder, a set of
+  worktrees, one of each, on one branch and one row
 - Keeps them light on disk: where the filesystem can clone (APFS on macOS;
   btrfs, XFS on Linux), a new worktree's files are copy-on-write clones of
   your main checkout's, and git writes only what the branch changed;
@@ -422,6 +424,43 @@ process's when there are several. `1`–`9` switch tabs, `/` searches, `f`
 filters by level, and `e`/`E` jump between errors.
 
 </details>
+
+### Several repositories
+
+A product split across repositories cloned side by side is one project:
+run `pando` in the folder that holds them.
+
+```text
+product/            a plain folder, not a repository
+├── backend/        a git repository
+└── frontend/       a git repository
+```
+
+Its worktree is a set laid out like the folder: `pando new feat/x` makes
+`<set>/backend` and `<set>/frontend`, each a worktree of its repository on
+`feat/x` — the branch where a repository already has it, here or on
+`origin`, and a new one from that repository's own base where it does not.
+`start` runs every process of the set in one port window, so a process
+with `cwd = "frontend"` reaches the backend's port through `{port:api}`;
+`stop`, `rm`, `status`, `open`, `share` and `check` act on the set, and the
+TUI shows it as one row, with each repository's branch and changes in its
+detail. A path in config names its repository first: `provision =
+["backend/.env"]`.
+
+Every repository directly under the folder is in the project. In
+`~/.pando/projects/<id>/pando.toml`, `[repos] members` narrows that, and
+`[repos.base]` gives one repository a base other than its own default:
+
+```toml
+[repos]
+members = ["backend", "frontend"]
+base = { backend = "develop" }
+```
+
+From inside a set, or one of its checkouts, pando finds the folder's
+project. From a repository's own main checkout it is that repository, as
+before. The git menu acts on one checkout, so it is not offered on a set
+yet: `!` opens a shell there.
 
 ### Shared, namespaced, isolated
 

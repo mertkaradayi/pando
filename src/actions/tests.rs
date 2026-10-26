@@ -8486,6 +8486,7 @@ fn new_fetches_a_remote_branch_that_has_not_been_fetched_yet() {
 
 fn open_pr(number: u32, branch: &str, cross_repository: bool) -> worktree::PrInfo {
     worktree::PrInfo {
+        repo: None,
         number,
         title: format!("PR {number}"),
         branch: branch.into(),
@@ -9356,7 +9357,7 @@ fn a_clone_path_that_is_not_ignored_does_not_stop_a_check() {
         .output()
         .unwrap();
     let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
-    new_detached(&fx.paths, &fx.config, &head, &noop).unwrap();
+    new_detached(&fx.paths, &fx.config, std::slice::from_ref(&head), &noop).unwrap();
 }
 
 // git removes a worktree whose checkout failed but keeps the branch `-b`
@@ -9933,7 +9934,7 @@ fn the_check_worktree_is_never_given_cloned_dependencies() {
         .output()
         .unwrap();
     let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
-    let name = new_detached(&fx.paths, &fx.config, &head, &noop).unwrap();
+    let name = new_detached(&fx.paths, &fx.config, std::slice::from_ref(&head), &noop).unwrap();
     assert!(!fx.worktrees_dir().join(name).join("node_modules").exists());
 }
 
@@ -18680,4 +18681,236 @@ mod update {
             "{line}"
         );
     }
+}
+
+// ---- multi-repo projects ----------------------------------------------
+
+/// `product/`, a plain folder holding the repositories `backend` and
+/// `frontend`, each ignoring `.env` and `node_modules/`, with a local
+/// `.env` in `backend`.
+fn multi_repo_fixture() -> Fx {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("product");
+    for repo in ["backend", "frontend"] {
+        let at = root.join(repo);
+        std::fs::create_dir_all(&at).unwrap();
+        git(&at, &["init", "--quiet", "--initial-branch=main"]);
+        std::fs::write(at.join(".gitignore"), ".env\nnode_modules/\n").unwrap();
+        std::fs::write(at.join("README.md"), format!("# {repo}\n")).unwrap();
+        git(&at, &["add", "."]);
+        git(&at, &["commit", "--quiet", "-m", "root"]);
+    }
+    std::fs::write(root.join("backend").join(".env"), "SECRET=1\n").unwrap();
+    let project = ProjectRef::multi_repo(&root, vec!["backend".into(), "frontend".into()]).unwrap();
+    let paths = PandoPaths::new(dir.path().join("pando-home"), project);
+    Fx {
+        root: paths.root().to_path_buf(),
+        paths,
+        config: Config::default(),
+        _dir: dir,
+    }
+}
+
+/// What `git worktree list` names in one repository of `fx`, main first.
+fn listed_in(fx: &Fx, repo: &str) -> Vec<PathBuf> {
+    worktree::porcelain_paths(&fx.root.join(repo)).unwrap()
+}
+
+#[test]
+fn new_in_a_multi_repo_project_makes_a_set_of_every_repository() {
+    let fx = multi_repo_fixture();
+    let name = new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    assert_eq!(name, "feat+x");
+
+    let set = fx.worktrees_dir().join("feat+x");
+    for repo in ["backend", "frontend"] {
+        let checkout = set.join(repo);
+        assert!(checkout.join("README.md").is_file(), "{repo} checked out");
+        assert_eq!(
+            worktree::checked_out_branch(&checkout).as_deref(),
+            Some("feat/x")
+        );
+    }
+    let found = worktree::discover_all(&fx.paths.project).unwrap();
+    assert_eq!(found.main.name, "product");
+    assert_eq!(found.main.branch.as_deref(), Some("main"));
+    let [listed] = &found.worktrees[..] else {
+        panic!("one set: {:?}", found.worktrees);
+    };
+    assert_eq!(listed.name, "feat+x");
+    assert_eq!(listed.branch.as_deref(), Some("feat/x"));
+    assert_eq!(listed.display_name(), "feat/x");
+    let repos: Vec<&str> = listed.repos.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(repos, ["backend", "frontend"]);
+
+    let record = fx.state().worktrees["feat+x"].clone();
+    assert!(record.created_by_pando);
+    assert_eq!(record.base, None);
+    assert_eq!(
+        record.bases,
+        BTreeMap::from([
+            ("backend".to_string(), "main".to_string()),
+            ("frontend".to_string(), "main".to_string()),
+        ])
+    );
+}
+
+#[test]
+fn a_set_takes_a_branch_a_repository_already_has_and_forks_it_in_the_rest() {
+    let fx = multi_repo_fixture();
+    let frontend = fx.root.join("frontend");
+    git(&frontend, &["branch", "feat/x"]);
+    git(
+        &frontend,
+        &["commit", "--quiet", "--allow-empty", "-m", "on main"],
+    );
+
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+
+    let record = fx.state().worktrees["feat+x"].clone();
+    assert_eq!(
+        record.bases,
+        BTreeMap::from([("backend".to_string(), "main".to_string())]),
+        "the existing branch is checked out as it stands, with no base of pando's"
+    );
+    let checkout = fx.worktrees_dir().join("feat+x").join("frontend");
+    let at = |dir: &Path, rev: &str| {
+        let out = crate::project::git(dir, ["rev-parse", rev]).unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    assert_eq!(at(&checkout, "HEAD"), at(&frontend, "feat/x"));
+}
+
+#[test]
+fn a_repository_whose_checkout_fails_unwinds_the_whole_set() {
+    let fx = multi_repo_fixture();
+    // git checks out no branch twice: the main checkout of `frontend` is on
+    // it already.
+    git(
+        &fx.root.join("frontend"),
+        &["checkout", "--quiet", "-b", "feat/x"],
+    );
+
+    let err = new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap_err();
+    let text = format!("{err:#}");
+    assert!(text.contains("in the repository frontend"), "{text}");
+    assert!(!fx.worktrees_dir().join("feat+x").exists(), "{text}");
+    assert_eq!(listed_in(&fx, "backend").len(), 1, "{text}");
+    assert!(
+        !ref_exists(&fx.root.join("backend"), "refs/heads/feat/x"),
+        "the branch made in backend went with it: {text}"
+    );
+    assert!(fx.state().worktrees.is_empty());
+}
+
+#[test]
+fn a_provisioned_path_is_asked_about_in_its_own_repository() {
+    let mut fx = multi_repo_fixture();
+    fx.config.project.provision = Some(vec!["backend/.env".into()]);
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let env = fx
+        .worktrees_dir()
+        .join("feat+x")
+        .join("backend")
+        .join(".env");
+    assert_eq!(std::fs::read_to_string(env).unwrap(), "SECRET=1\n");
+
+    fx.config.project.provision = Some(vec![".env".into()]);
+    let err = new(&fx.paths, &fx.config, "feat/y", None, &noop).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("is in none of the repositories (backend, frontend)"),
+        "{err:#}"
+    );
+    assert!(!fx.worktrees_dir().join("feat+y").exists());
+}
+
+#[test]
+fn a_base_one_repository_lacks_is_refused_naming_it() {
+    let mut fx = multi_repo_fixture();
+    git(&fx.root.join("backend"), &["branch", "develop"]);
+    let err = new(&fx.paths, &fx.config, "feat/x", Some("develop"), &noop).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("in the repository frontend"),
+        "{err:#}"
+    );
+    assert!(!fx.worktrees_dir().join("feat+x").exists());
+
+    fx.config.repos.base = BTreeMap::from([("backend".to_string(), "develop".to_string())]);
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    assert_eq!(
+        fx.state().worktrees["feat+x"].bases,
+        BTreeMap::from([
+            ("backend".to_string(), "develop".to_string()),
+            ("frontend".to_string(), "main".to_string()),
+        ])
+    );
+}
+
+#[test]
+fn rm_of_a_set_removes_every_checkout_and_its_directory() {
+    let fx = multi_repo_fixture();
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let set = fx.worktrees_dir().join("feat+x");
+
+    rm(&fx.paths, "feat+x", false, false).unwrap();
+    assert!(!set.exists());
+    for repo in ["backend", "frontend"] {
+        assert_eq!(listed_in(&fx, repo).len(), 1, "{repo}");
+        assert!(
+            ref_exists(&fx.root.join(repo), "refs/heads/feat/x"),
+            "the branch is kept in {repo}"
+        );
+    }
+    assert!(fx.state().worktrees.is_empty());
+}
+
+#[test]
+fn rm_of_a_set_refuses_over_one_dirty_checkout_before_touching_any() {
+    let fx = multi_repo_fixture();
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let set = fx.worktrees_dir().join("feat+x");
+    std::fs::write(set.join("frontend").join("notes.txt"), "mine\n").unwrap();
+
+    let err = rm(&fx.paths, "feat+x", false, false).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("feat/x (frontend) contains modified or untracked files"),
+        "{err:#}"
+    );
+    assert_eq!(listed_in(&fx, "backend").len(), 2, "backend kept too");
+    assert!(set.join("frontend").join("notes.txt").is_file());
+
+    rm(&fx.paths, "feat+x", false, true).unwrap();
+    assert!(!set.exists());
+}
+
+#[test]
+fn ls_of_a_set_reads_every_repository_against_its_own_base() {
+    let fx = multi_repo_fixture();
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let checkout = fx.worktrees_dir().join("feat+x").join("backend");
+    git(
+        &checkout,
+        &["commit", "--quiet", "--allow-empty", "-m", "backend work"],
+    );
+    std::fs::write(
+        fx.worktrees_dir()
+            .join("feat+x")
+            .join("frontend")
+            .join("README.md"),
+        "changed\n",
+    )
+    .unwrap();
+
+    let found = ls_all(&fx.paths).unwrap();
+    let [set] = &found.worktrees[..] else {
+        panic!("{:?}", found.worktrees);
+    };
+    assert_eq!(set.branch.as_deref(), Some("feat/x"));
+    assert_eq!(set.ahead_behind, Some((1, 0)));
+    assert_eq!(set.dirty, Some(true));
+    assert_eq!(set.head_subject.as_deref(), Some("backend work"));
+    let backend = &set.repos[0];
+    assert_eq!(backend.dirty, Some(false));
+    assert_eq!(set.repos[1].dirty, Some(true));
+    assert_eq!(found.main.dirty, Some(false));
 }

@@ -536,6 +536,21 @@ pub(super) struct ProjectOut {
     pub(super) id: String,
     pub(super) root: String,
     pub(super) name: String,
+    /// A multi-repo project's repositories, by directory name under
+    /// `root`; absent for a project that is one repository.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) repos: Vec<String>,
+}
+
+impl ProjectOut {
+    pub(super) fn of(project: &crate::project::ProjectRef) -> Self {
+        Self {
+            id: project.id.clone(),
+            root: project.root.display().to_string(),
+            name: project.display_name.clone(),
+            repos: project.repos.clone(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -558,6 +573,40 @@ struct WorktreeOut {
     /// `null` when unlocked; the lock reason, possibly empty, when locked.
     locked: Option<String>,
     pr: Option<PrOut>,
+    /// A multi-repo project's checkout is a set: each repository's
+    /// checkout in it. Absent for a project that is one repository.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    repos: Vec<RepoOut>,
+}
+
+/// One repository's checkout in a set, as `git` describes it.
+#[derive(Serialize)]
+struct RepoOut {
+    name: String,
+    path: String,
+    branch: Option<String>,
+    head: Option<String>,
+    detached: bool,
+    dirty: Option<bool>,
+    ahead: Option<u32>,
+    behind: Option<u32>,
+    prunable: bool,
+}
+
+impl RepoOut {
+    fn of(checkout: &Worktree) -> Self {
+        Self {
+            name: checkout.name.clone(),
+            path: checkout.path.display().to_string(),
+            branch: checkout.branch.clone(),
+            head: short_head(checkout),
+            detached: checkout.detached,
+            dirty: checkout.dirty,
+            ahead: checkout.ahead_behind.map(|(a, _)| a),
+            behind: checkout.ahead_behind.map(|(_, b)| b),
+            prunable: checkout.prunable,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -591,11 +640,7 @@ pub fn ls_json<W: Write>(paths: &PandoPaths, out: &mut W) -> Result<()> {
 
     let output = LsOutput {
         version: JSON_VERSION,
-        project: ProjectOut {
-            id: paths.project.id.clone(),
-            root: paths.project.root.display().to_string(),
-            name: paths.project.display_name.clone(),
-        },
+        project: ProjectOut::of(&paths.project),
         worktrees: worktrees
             .into_iter()
             .map(|w| {
@@ -616,6 +661,7 @@ pub fn ls_json<W: Write>(paths: &PandoPaths, out: &mut W) -> Result<()> {
                     .map(WorktreeRecord::mode)
                     .unwrap_or_default();
                 WorktreeOut {
+                    repos: w.repos.iter().map(RepoOut::of).collect(),
                     created_by_pando: owned.get(&w.name).copied().unwrap_or(false),
                     mode,
                     main: w.name == main_name,
