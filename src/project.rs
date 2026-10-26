@@ -256,10 +256,16 @@ fn known_multi_repo(dir: &Path, home: &Path) -> Option<ProjectRef> {
         .then_some(project)
 }
 
-/// The folder `dir` is a set of, when it is one: no checkout itself, and
-/// every checkout directly in it a linked worktree of the repository of
-/// its own name, all of them in one folder.
+/// The folder `dir` is a set of, when it is one of a folder pando knows.
 fn set_root(dir: &Path, home: &Path) -> Option<PathBuf> {
+    let root = set_folder(dir)?;
+    known_multi_repo(&root, home).map(|_| root)
+}
+
+/// The folder `dir` looks like a set of: no checkout itself, and every
+/// checkout directly in it a linked worktree of the repository of its own
+/// name, all of them in one folder.
+pub fn set_folder(dir: &Path) -> Option<PathBuf> {
     if dir.join(".git").exists() {
         return None;
     }
@@ -292,8 +298,7 @@ fn set_root(dir: &Path, home: &Path) -> Option<PathBuf> {
             None => root = Some(folder),
         }
     }
-    let root = root?;
-    known_multi_repo(&root, home).map(|_| root)
+    root
 }
 
 /// The git directory a linked checkout's `.git` file names —

@@ -110,7 +110,7 @@ pub(super) fn job_on(paths: &PandoPaths, machine: &actions::Machine<'_>) -> Stri
     }
     // Read once: the proposals come from these, and the services section
     // reads the app directories they list.
-    let signals = detect::signals(paths.root());
+    let signals = detect::signals_of(&paths.project);
     let proposals = proposals_from(paths, &signals);
     let device_note = crate::setup::device_note(&config, &proposals);
     // The lead has said there is nothing left to set up; a line telling
@@ -153,7 +153,7 @@ fn load(paths: &PandoPaths) -> (Config, Option<String>) {
 /// What the rules propose for the project, from the same places `signals`
 /// reads, with no process spawned.
 fn proposals(paths: &PandoPaths) -> Vec<detect::Proposal> {
-    proposals_from(paths, &detect::signals(paths.root()))
+    proposals_from(paths, &detect::signals_of(&paths.project))
 }
 
 fn proposals_from(paths: &PandoPaths, signals: &detect::Signals) -> Vec<detect::Proposal> {

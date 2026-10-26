@@ -138,7 +138,7 @@ struct ServiceHintOut {
 
 pub fn signals_json<W: Write>(paths: &PandoPaths, config: &Config, out: &mut W) -> Result<()> {
     let root = paths.root();
-    let signals = crate::detect::signals(root);
+    let signals = crate::detect::signals_of(&paths.project);
     // No resolver: asking `docker compose config` would spawn a process and
     // make the answer depend on this laptop. What this build's own reader
     // could not follow is published instead, under `compose`.

@@ -165,8 +165,9 @@ pub fn snapshot(paths: &PandoPaths, known_base: Option<String>, scan: bool) -> R
     thread::scope(|scope| {
         // Beside the listing rather than after it: on the first frame the
         // two are most of the wait.
-        let resolving = known_base
-            .is_none()
+        // A multi-repo project has a base per repository and none of its
+        // own: its folder is no repository to ask.
+        let resolving = (known_base.is_none() && !paths.project.is_multi_repo())
             .then(|| scope.spawn(|| worktree::resolve_base_branch(paths.root())));
         let mut discovery = worktree::discover_all(&paths.project)?;
         // A check's throwaway worktree is not a row: it comes and goes on
@@ -287,15 +288,8 @@ impl App {
         self.worktrees = std::iter::once(snapshot.main.clone())
             .chain(snapshot.worktrees)
             .map(|mut w| {
-                match known.get(&w.name) {
-                    Some(old) if old.head == w.head => {
-                        w.head_sha = old.head_sha.clone();
-                        w.head_subject = old.head_subject.clone();
-                        w.head_age = old.head_age.clone();
-                        w.dirty = old.dirty;
-                        w.ahead_behind = old.ahead_behind;
-                    }
-                    _ => fresh.push(w.name.clone()),
+                if !known.get(&w.name).is_some_and(|old| w.keep_enrichment(old)) {
+                    fresh.push(w.name.clone());
                 }
                 w
             })

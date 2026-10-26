@@ -259,11 +259,11 @@ impl App {
     /// What detection proposes for the project, read off the UI thread:
     /// it reads manifests, scripts and what git ignores.
     fn spawn_setup_detection(&self) {
-        let root = self.paths.root().to_path_buf();
+        let project = self.paths.project.clone();
         let tx = self.event_tx.clone();
         thread::spawn(move || {
-            let signals = detect::signals(&root);
-            let proposals = detect::propose(&root, &signals);
+            let signals = detect::signals_of(&project);
+            let proposals = detect::propose(&project.root, &signals);
             let _ = tx.send(AppEvent::SetupDetected(Box::new(proposals)));
         });
     }

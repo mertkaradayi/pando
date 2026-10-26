@@ -125,7 +125,7 @@ pub fn init(
 /// `init` prints is what a setup agent reports, so the services pando
 /// could not tell about reach it without a question being asked.
 fn say_what_namespaced_leaves_shared(paths: &PandoPaths, config: &Config, progress: &dyn Fn(&str)) {
-    let compose = detect::signals(paths.root()).compose_files;
+    let compose = detect::signals_of(&paths.project).compose_files;
     let left: Vec<String> = super::namespaced::namespaced_report(paths, config, &compose)
         .into_iter()
         .filter(|service| matches!(service.how, "shared" | "undeclared"))

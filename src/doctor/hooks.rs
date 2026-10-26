@@ -123,7 +123,7 @@ fn schema_slot_finding(paths: &PandoPaths, config: &Config, findings: &mut Vec<F
     if actions::settled(detect::Slot::SchemaHook, config) {
         return;
     }
-    let signals = detect::signals(paths.root());
+    let signals = detect::signals_of(&paths.project);
     let undecided = detect::propose(paths.root(), &signals)
         .into_iter()
         .any(|p| p.slot == detect::Slot::SchemaHook && !p.decided && !p.candidates.is_empty());

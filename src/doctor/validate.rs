@@ -35,7 +35,7 @@ fn check_something_to_run(paths: &PandoPaths, config: &Config, findings: &mut Ve
     if !config.processes.is_empty() {
         return;
     }
-    let signals = detect::signals(paths.root());
+    let signals = detect::signals_of(&paths.project);
     let detected = detect::propose(paths.root(), &signals)
         .into_iter()
         .any(|p| {
@@ -62,6 +62,27 @@ fn check_something_to_run(paths: &PandoPaths, config: &Config, findings: &mut Ve
 fn check_provision(paths: &PandoPaths, config: &Config, findings: &mut Vec<Finding>) {
     for entry in config.project.provision_paths() {
         if detect::is_ignored_in(&paths.project, paths.root(), entry) {
+            continue;
+        }
+        if paths.project.repo_path(paths.root(), entry).is_none() {
+            findings.push(Finding::problem(
+                Section::Config,
+                format!(
+                    "`project.provision` names {entry:?}, which is in none of the repositories \
+                     ({}) — `pando new` refuses a path that no repository's gitignore can allow",
+                    paths.project.repos.join(", ")
+                ),
+                format!(
+                    "start it with the repository it is in, as `{}/{entry}`, or drop it from \
+                     provision",
+                    paths
+                        .project
+                        .repos
+                        .first()
+                        .map(String::as_str)
+                        .unwrap_or("backend")
+                ),
+            ));
             continue;
         }
         findings.push(Finding::problem(

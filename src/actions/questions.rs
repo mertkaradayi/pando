@@ -896,7 +896,7 @@ fn resolve_pass(
     {
         return Ok(config);
     }
-    let signals = detect::signals(paths.root());
+    let signals = detect::signals_of(&paths.project);
     // Only ever called for a compose file pando's own reader could not
     // follow — `extends:`, a top-level `include:`, a YAML alias — so a
     // plain project costs no process spawn. `config` prints; it creates

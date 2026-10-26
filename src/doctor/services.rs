@@ -154,7 +154,7 @@ fn isolation_report(
     recipes: &recipes::Recipes,
 ) -> IsolationReport {
     let answered = !config.services.is_empty() || config.isolation.none;
-    let signals = detect::signals(paths.root());
+    let signals = detect::signals_of(&paths.project);
     let (script, names) = actions::machine_evidence_script(paths, recipes);
     let evidence = match (machine.shell)(&script) {
         Some(text) => actions::machine_evidence_from(&text, &names),

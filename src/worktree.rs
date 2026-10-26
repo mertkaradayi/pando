@@ -171,6 +171,33 @@ impl Worktree {
         }
     }
 
+    /// Takes over what `old`, an earlier read of the same checkout, was
+    /// enriched with, when it was read at the same commits — the one thing
+    /// discovery sees without asking git anything more. A set's is its
+    /// checkouts', each of which must be at the head it was. Whether it
+    /// did, so a caller re-reads one that moved.
+    pub fn keep_enrichment(&mut self, old: &Worktree) -> bool {
+        let same = self.head == old.head
+            && self.repos.len() == old.repos.len()
+            && self
+                .repos
+                .iter()
+                .zip(&old.repos)
+                .all(|(new, old)| new.name == old.name && new.head == old.head);
+        if !same {
+            return false;
+        }
+        self.head_sha = old.head_sha.clone();
+        self.head_subject = old.head_subject.clone();
+        self.head_age = old.head_age.clone();
+        self.dirty = old.dirty;
+        self.ahead_behind = old.ahead_behind;
+        for (new, old) in self.repos.iter_mut().zip(&old.repos) {
+            new.keep_enrichment(old);
+        }
+        true
+    }
+
     /// Whether this is a multi-repo project's set of checkouts.
     pub fn is_set(&self) -> bool {
         !self.repos.is_empty()
@@ -285,8 +312,29 @@ pub fn discover_all(project: &ProjectRef) -> Result<Discovery> {
         anyhow::bail!("git listed no worktrees for {}", project.root.display());
     }
     let main = Worktree::from_entry(entries.remove(0));
-    let worktrees: Vec<Worktree> = entries.into_iter().map(Worktree::from_entry).collect();
+    // A multi-repo project's set holds a checkout of this repository under
+    // the repository's own name, one per set: they are the set's, and
+    // listed here they would all be called what the main checkout is.
+    let worktrees: Vec<Worktree> = entries
+        .into_iter()
+        .filter(|entry| !in_a_set(entry, &main.path))
+        .map(Worktree::from_entry)
+        .collect();
     in_list_order(main, worktrees)
+}
+
+/// Whether `entry`, a linked worktree of the repository at `main`, is one
+/// of a multi-repo project's sets: named as the repository is, in a
+/// directory laid out as a set, or gone with it. pando makes no worktree
+/// of one repository under the main checkout's own name.
+fn in_a_set(entry: &PorcelainEntry, main: &Path) -> bool {
+    entry.path.file_name() == main.file_name()
+        && (entry.prunable
+            || entry
+                .path
+                .parent()
+                .and_then(crate::project::set_folder)
+                .is_some())
 }
 
 /// A multi-repo project's checkouts: the folder itself, of every
@@ -1400,12 +1448,20 @@ fn merge_pr_lists(open: Vec<PrInfo>, recent: Vec<PrInfo>) -> Vec<PrInfo> {
 /// Pull requests by the local branch a worktree for each checks out, so
 /// a fork's `main` is not the main checkout's. Where two share a branch
 /// — one merged, a later one opened from the same name — the newest wins.
+///
+/// In a multi-repo project a set's branch can have a pull request in more
+/// than one repository, and their numbers are not comparable: an open one
+/// wins there, so a set is never shown merged while one of its pull
+/// requests is still open.
 pub fn prs_by_branch(prs: &[PrInfo]) -> std::collections::BTreeMap<String, PrInfo> {
     let mut by_branch = std::collections::BTreeMap::new();
     for pr in prs {
         let newer = by_branch
             .get(&pr.local_branch())
-            .is_none_or(|kept: &PrInfo| kept.number < pr.number);
+            .is_none_or(|kept: &PrInfo| match kept.repo == pr.repo {
+                true => kept.number < pr.number,
+                false => kept.state != PrState::Open && pr.state == PrState::Open,
+            });
         if newer {
             by_branch.insert(pr.local_branch(), pr.clone());
         }
@@ -2489,5 +2545,82 @@ bare
             std::fs::canonicalize(&gitdir).unwrap(),
             std::fs::canonicalize(repo.join(".git/worktrees/rel")).unwrap()
         );
+    }
+
+    /// A set's checkout read at `head`, enriched as dirty when `dirty`.
+    fn checkout(name: &str, head: &str, dirty: bool) -> Worktree {
+        let mut w = Worktree::from_entry(PorcelainEntry {
+            path: PathBuf::from(format!("/set/{name}")),
+            head: Some(head.to_string()),
+            branch: Some("feat/x".to_string()),
+            ..Default::default()
+        });
+        w.dirty = Some(dirty);
+        w
+    }
+
+    #[test]
+    fn a_set_keeps_its_checkouts_reads_while_none_has_moved() {
+        let old = Worktree::set(
+            "feat+x".into(),
+            PathBuf::from("/set"),
+            vec![
+                checkout("backend", "a1", true),
+                checkout("frontend", "b1", false),
+            ],
+        );
+        let reread = |backend: &str| {
+            let mut w = Worktree::set(
+                "feat+x".into(),
+                PathBuf::from("/set"),
+                vec![
+                    checkout("backend", backend, false),
+                    checkout("frontend", "b1", false),
+                ],
+            );
+            for checkout in &mut w.repos {
+                checkout.dirty = None;
+            }
+            w
+        };
+
+        let mut same = reread("a1");
+        assert!(same.keep_enrichment(&old));
+        assert_eq!(same.repos[0].dirty, Some(true));
+        assert_eq!(same.repos[1].dirty, Some(false));
+
+        let mut moved = reread("a2");
+        assert!(
+            !moved.keep_enrichment(&old),
+            "a commit in one checkout is news"
+        );
+        assert_eq!(moved.repos[0].dirty, None);
+    }
+
+    #[test]
+    fn a_sets_open_pull_request_wins_over_another_repositorys_merged_one() {
+        let pr = |repo: &str, number: u32, state: PrState| PrInfo {
+            repo: Some(repo.to_string()),
+            number,
+            title: String::new(),
+            branch: "feat/x".into(),
+            author: String::new(),
+            draft: false,
+            state,
+            url: String::new(),
+            cross_repository: false,
+            base: String::new(),
+        };
+        let prs = [
+            pr("backend", 41, PrState::Merged),
+            pr("frontend", 12, PrState::Open),
+        ];
+        let by_branch = prs_by_branch(&prs);
+        assert_eq!(by_branch["feat/x"].label(), "frontend#12");
+        let prs = [
+            pr("frontend", 12, PrState::Open),
+            pr("backend", 41, PrState::Merged),
+        ];
+        assert_eq!(prs_by_branch(&prs)["feat/x"].label(), "frontend#12");
     }
 }

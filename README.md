@@ -449,7 +449,8 @@ detail. A path in config names its repository first: `provision =
 
 Every repository directly under the folder is in the project. In
 `~/.pando/projects/<id>/pando.toml`, `[repos] members` narrows that, and
-`[repos.base]` gives one repository a base other than its own default:
+`[repos.base]` gives one repository a base other than its own default (a
+`[branches]` rule that matches the branch still comes first):
 
 ```toml
 [repos]

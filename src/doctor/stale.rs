@@ -2,7 +2,6 @@
 //! longer write.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use crate::config::Config;
 use crate::detect::{self, Slot};
@@ -95,7 +94,7 @@ pub(super) fn stale_detection_findings(
     if detected.is_empty() {
         return;
     }
-    let offers = detectable_now(paths.root());
+    let offers = detectable_now(&paths.project);
     for (layer, key, why) in detected {
         let (Some(raw), Some(text)) = (&key.raw, &key.value) else {
             continue;
@@ -291,8 +290,9 @@ fn effective_keys(config: &ConfigReport) -> Vec<(&LayerReport, &KeyReport)> {
 /// candidate to the keys it becomes — the same function the answer path
 /// writes through. A second reading of what a candidate means would be a
 /// second opinion, and the two would drift.
-fn detectable_now(root: &Path) -> BTreeMap<String, Vec<Offer>> {
-    let signals = detect::signals(root);
+fn detectable_now(project: &crate::project::ProjectRef) -> BTreeMap<String, Vec<Offer>> {
+    let root = project.root.as_path();
+    let signals = detect::signals_of(project);
     let mut out: BTreeMap<String, Vec<Offer>> = BTreeMap::new();
     for proposal in detect::propose(root, &signals) {
         for candidate in &proposal.candidates {

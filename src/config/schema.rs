@@ -575,7 +575,8 @@ pub struct ReposSection {
     pub members: Vec<String>,
     /// The branch a repository's new branches fork from and its checkouts
     /// are measured against, by repository, over its own `origin/HEAD`,
-    /// `main` or `master` and over `[project] base`.
+    /// `main` or `master` and over `[project] base`; a `[branches]` rule
+    /// that matches the branch still comes first.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub base: BTreeMap<String, String>,
 }
@@ -586,25 +587,42 @@ impl ReposSection {
     }
 
     /// Narrows a multi-repo project to the repositories `members` names,
-    /// each of which must be one of the folder's. A project that is one
-    /// repository is left as it is: the section is not about it.
-    pub fn narrow(&self, project: &mut crate::project::ProjectRef) -> anyhow::Result<()> {
+    /// and says which it names that are not one of the folder's: a
+    /// repository renamed or removed since is left out, not a reason to
+    /// stop `stop`, `ls` or `doctor`. Naming none that is there leaves
+    /// every one in. A project that is one repository is left as it is:
+    /// the section is not about it.
+    pub fn narrow(&self, project: &mut crate::project::ProjectRef) -> Vec<String> {
         if !project.is_multi_repo() || self.members.is_empty() {
-            return Ok(());
+            return Vec::new();
         }
-        if let Some(stranger) = self.members.iter().find(|m| !project.repos.contains(m)) {
-            anyhow::bail!(
-                "[repos] members names {stranger:?}, which is not a git repository directly \
-                 under {} — the repositories there are {}",
-                project.root.display(),
+        let (mut members, strangers): (Vec<String>, Vec<String>) = self
+            .members
+            .iter()
+            .cloned()
+            .partition(|m| project.repos.contains(m));
+        let mut warnings: Vec<String> = strangers
+            .iter()
+            .map(|stranger| {
+                format!(
+                    "[repos] members names {stranger:?}, which is not a git repository directly \
+                     under {} — left out; the repositories there are {}",
+                    project.root.display(),
+                    project.repos.join(", ")
+                )
+            })
+            .collect();
+        if members.is_empty() {
+            warnings.push(format!(
+                "[repos] members names none of the repositories there, so every one is in: {}",
                 project.repos.join(", ")
-            );
+            ));
+            return warnings;
         }
-        let mut members = self.members.clone();
         members.sort();
         members.dedup();
         project.repos = members;
-        Ok(())
+        warnings
     }
 }
 
@@ -729,13 +747,17 @@ impl Config {
     }
 
     /// [`Config::base_for_branch`] for one repository of a multi-repo
-    /// project: its own `[repos.base]` first.
+    /// project: a `[branches].rules` match first, as it is about this
+    /// branch, then the repository's own `[repos.base]`, then
+    /// `[project].base`.
     pub fn base_for_repo(&self, repo: &str, branch: &str) -> Option<&str> {
-        self.repos
-            .base
-            .get(repo)
-            .map(String::as_str)
-            .or_else(|| self.base_for_branch(branch))
+        self.branches
+            .rules
+            .iter()
+            .find(|rule| glob_match(&rule.match_, branch))
+            .map(|rule| rule.base.as_str())
+            .or_else(|| self.repos.base.get(repo).map(String::as_str))
+            .or(self.project.base.as_deref())
     }
 }
 
