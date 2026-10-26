@@ -183,6 +183,25 @@ pub struct WorktreeRecord {
 }
 
 impl WorktreeRecord {
+    /// The base recorded for its checkout of `repo` — of a multi-repo
+    /// project's set — or for the worktree itself when `repo` is none.
+    pub fn base_of(&self, repo: Option<&str>) -> Option<&str> {
+        match repo {
+            Some(repo) => self.bases.get(repo).map(String::as_str),
+            None => self.base.as_deref(),
+        }
+    }
+
+    /// Records `base` where [`WorktreeRecord::base_of`] reads it.
+    pub fn set_base(&mut self, repo: Option<&str>, base: &str) {
+        match repo {
+            Some(repo) => {
+                self.bases.insert(repo.to_string(), base.to_string());
+            }
+            None => self.base = Some(base.to_string()),
+        }
+    }
+
     /// A record for a worktree with nothing running yet.
     pub fn new(path: impl Into<PathBuf>, created_by_pando: bool) -> Self {
         Self {

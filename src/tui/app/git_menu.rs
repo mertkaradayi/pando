@@ -9,6 +9,7 @@ use std::thread;
 
 use crate::actions;
 use crate::actions::git::{GitAction, GitRead, Ran};
+use crate::project::ProjectRef;
 use crate::worktree::Worktree;
 
 use super::App;
@@ -112,13 +113,20 @@ impl App {
         self.spawn_git_read(wt.name.clone(), repo, checkout);
     }
 
+    /// The set `name`, and which of its checkouts `read` is of. `None` for
+    /// a worktree of one repository.
+    pub(crate) fn set_position(&self, name: &str, read: &GitRead) -> Option<(&Worktree, usize)> {
+        let set = self.worktrees.iter().find(|w| w.name == name)?;
+        let at = set.repos.iter().position(|c| c.path == read.checkout)?;
+        Some((set, at))
+    }
+
     /// The checkout of the set `name` after (or, `back`, before) the one
     /// `read` is of, skipping any whose directory is gone. `None` for a
     /// worktree of one repository, and for a set with no other.
     fn other_repo(&self, name: &str, read: &GitRead, back: bool) -> Option<Worktree> {
-        let set = self.worktrees.iter().find(|w| w.name == name)?;
+        let (set, at) = self.set_position(name, read)?;
         let count = set.repos.len();
-        let at = set.repos.iter().position(|c| c.path == read.checkout)?;
         (1..count)
             .map(|step| match back {
                 true => (at + count - step) % count,
@@ -137,16 +145,13 @@ impl App {
         if cfg!(test) {
             return;
         }
-        let root = match &repo {
-            Some(repo) => self.paths.root().join(repo),
-            None => self.paths.root().to_path_buf(),
-        };
+        let root = ProjectRef::checkout_of(self.paths.root(), repo.as_deref());
         let config = self.config.clone();
         let main = self.is_main(&name);
-        let recorded = self.record_for(&name).and_then(|record| match &repo {
-            Some(repo) => record.bases.get(repo).cloned(),
-            None => record.base.clone(),
-        });
+        let recorded = self
+            .record_for(&name)
+            .and_then(|record| record.base_of(repo.as_deref()))
+            .map(str::to_string);
         let (path, branch) = (checkout.path.clone(), checkout.branch.clone());
         let tx = self.event_tx.clone();
         thread::spawn(move || {

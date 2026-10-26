@@ -85,21 +85,16 @@ pub fn new(
         ensure_ignored(&paths.project, &root, &as_ignore_query(&root, rel), "clone")?;
     }
     let mut sources = Vec::new();
-    for (repo, checkout) in repo_checkouts(paths, &root) {
-        let requested = base.map(str::to_string).or_else(|| {
-            match &repo {
-                Some(repo) => config.base_for_repo(repo, branch),
-                None => config.base_for_branch(branch),
-            }
-            .map(str::to_string)
-        });
-        let source = resolve_create_source(&checkout, branch, requested, progress);
-        let source = match &repo {
-            Some(repo) => source.with_context(|| format!("in the repository {repo}"))?,
-            None => source?,
-        };
-        sources.push(RepoSource {
+    for (repo, checkout) in paths.project.repo_checkouts_in(&root) {
+        let requested = base
+            .or_else(|| config.base_for(repo, Some(branch)))
+            .map(str::to_string);
+        let source = in_repo(
+            resolve_create_source(&checkout, branch, requested, progress),
             repo,
+        )?;
+        sources.push(RepoSource {
+            repo: repo.map(str::to_string),
             root: checkout,
             source,
         });
@@ -121,25 +116,27 @@ struct RepoSource {
 impl RepoSource {
     /// Where its checkout goes in the worktree at `target`.
     fn target(&self, target: &Path) -> PathBuf {
-        match &self.repo {
-            Some(repo) => target.join(repo),
-            None => target.to_path_buf(),
-        }
+        ProjectRef::checkout_of(target, self.repo.as_deref())
     }
 }
 
-/// Every repository's main checkout under `root`, the project's main
-/// checkout: `root` itself, unnamed, for one repository.
-pub(super) fn repo_checkouts(paths: &PandoPaths, root: &Path) -> Vec<(Option<String>, PathBuf)> {
-    match paths.project.is_multi_repo() {
-        false => vec![(None, root.to_path_buf())],
-        true => paths
-            .project
-            .repos
-            .iter()
-            .map(|repo| (Some(repo.clone()), root.join(repo)))
-            .collect(),
+/// `result`, an answer about one repository of a project, saying which
+/// when the project has several.
+fn in_repo<T>(result: Result<T>, repo: Option<&str>) -> Result<T> {
+    match repo {
+        Some(repo) => result.with_context(|| format!("in the repository {repo}")),
+        None => result,
     }
+}
+
+/// Commits as a message names them: seven characters each, one beside
+/// the next.
+pub(super) fn short_commits(commits: &[String]) -> String {
+    commits
+        .iter()
+        .map(|commit| commit.chars().take(7).collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Creates the worktree `pando check` tests in, at [`crate::paths::CHECK_WORKTREE`]
@@ -158,7 +155,7 @@ pub(super) fn new_detached(
 ) -> Result<String> {
     let dir_name = crate::paths::CHECK_WORKTREE.to_string();
     let target = refuse_taken_target(paths, config, &dir_name)?;
-    let checkouts = repo_checkouts(paths, paths.root());
+    let checkouts = paths.project.repo_checkouts_in(paths.root());
     if checkouts.len() != commits.len() {
         bail!(
             "{} commits for {} repositories",
@@ -166,16 +163,12 @@ pub(super) fn new_detached(
             checkouts.len()
         );
     }
-    let short = commits
-        .iter()
-        .map(|commit| commit.chars().take(7).collect::<String>())
-        .collect::<Vec<_>>()
-        .join(" ");
+    let short = short_commits(commits);
     let sources: Vec<RepoSource> = checkouts
         .into_iter()
         .zip(commits)
         .map(|((repo, root), commit)| RepoSource {
-            repo,
+            repo: repo.map(str::to_string),
             root,
             source: CreateSource::Detached {
                 commit: commit.clone(),
@@ -300,6 +293,8 @@ fn create(
     // TUI worker would wait on it.
     std::fs::create_dir_all(&worktrees_dir)
         .with_context(|| format!("create {}", worktrees_dir.display()))?;
+    // Before the directory is claimed: each checkout's path is asked again
+    // where git is given it, by which time there is a claim to undo.
     target.to_str().context("worktree path is not utf-8")?;
     let left = {
         let _lock = state::lock(&paths.lock_file())?;
@@ -425,12 +420,7 @@ fn create(
     let mut record = WorktreeRecord::new(canonical, true);
     for source in sources {
         if let CreateSource::Fork { base } = &source.source {
-            match &source.repo {
-                Some(repo) => {
-                    record.bases.insert(repo.clone(), base.clone());
-                }
-                None => record.base = Some(base.clone()),
-            }
+            record.set_base(source.repo.as_deref(), base);
         }
     }
     store.worktrees.insert(dir_name.clone(), record);
@@ -915,6 +905,90 @@ fn submodule_in(worktree: &Worktree) -> Result<Option<String>> {
     Ok(modules.is_dir().then(|| modules.display().to_string()))
 }
 
+/// What `rm` refuses over unless forced, before it stops or removes
+/// anything: git's own refusals of each checkout, and for a set anything
+/// in its directory beside its checkouts.
+fn refuse_unforced(shown: &str, target: &Worktree) -> Result<()> {
+    for checkout in target.checkouts() {
+        refuse_what_git_would(shown, target, checkout)?;
+    }
+    // A set's directory may hold more than its checkouts: notes, a
+    // repository cloned into it by hand, or the checkout of one the
+    // project no longer counts. None of it is git's to judge, and all of
+    // it would go with the set.
+    let strangers = beside_checkouts(target);
+    if !strangers.is_empty() {
+        bail!(
+            "{shown} holds {} beside its repositories' checkouts, in {} — nothing was stopped \
+             or removed; move it out, or {}",
+            strangers.join(", "),
+            target.path.display(),
+            remedy::DISCARD_CHANGES
+        );
+    }
+    Ok(())
+}
+
+/// `git worktree remove` of each checkout of `target`, in its own
+/// repository: the worktree itself, or each of a set's. A removal git
+/// refuses saves `store` — what was running has been stopped by then, and
+/// that cannot be taken back — and says what was and was not removed.
+fn remove_checkouts(
+    paths: &PandoPaths,
+    store: &state::State,
+    target: &Worktree,
+    force: bool,
+    stopped: &StopOutcome,
+) -> Result<()> {
+    let mut removed: Vec<&str> = Vec::new();
+    for checkout in target.checkouts() {
+        let repo = target.is_set().then_some(checkout.name.as_str());
+        let root = ProjectRef::checkout_of(paths.root(), repo);
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(&root).args(["worktree", "remove"]);
+        if force {
+            cmd.arg("--force");
+        }
+        cmd.arg(
+            checkout
+                .path
+                .to_str()
+                .context("worktree path is not utf-8")?,
+        );
+        let out = cmd.output().context("spawn git worktree remove")?;
+        if out.status.success() {
+            removed.push(&checkout.name);
+            continue;
+        }
+        // The cleared record is saved rather than left behind to resurface
+        // as a phantom failure, and the message says what actually
+        // happened.
+        state::save(&paths.state_file(), store)?;
+        let reason = match repo {
+            Some(repo) => format!("in {repo}: {}", git_failure_reason(&out)),
+            None => git_failure_reason(&out),
+        };
+        let kept = match removed.is_empty() {
+            true => "the worktree was kept".to_string(),
+            false => format!(
+                "the checkouts of {} were removed, the rest kept",
+                removed.join(", ")
+            ),
+        };
+        if matches!(stopped, StopOutcome::Stopped(_)) {
+            bail!(
+                "git worktree remove failed: {reason} — what was running was stopped, and any \
+                 public URL closed; {kept}"
+            );
+        }
+        match removed.is_empty() {
+            true => bail!("git worktree remove failed: {reason}"),
+            false => bail!("git worktree remove failed: {reason} — {kept}"),
+        }
+    }
+    Ok(())
+}
+
 /// git's two refusals of `git worktree remove` without `--force`, asked of
 /// one checkout of `target` — the worktree itself, or one of a set's —
 /// before `rm` stops or removes anything.
@@ -1203,23 +1277,7 @@ pub fn rm(
     // `--force`, in its order; ignored files never block a removal and do
     // not show here.
     if !force && let Some(target) = target {
-        for checkout in target.checkouts() {
-            refuse_what_git_would(&shown, target, checkout)?;
-        }
-        // A set's directory may hold more than its checkouts: notes, a
-        // repository cloned into it by hand, or the checkout of one the
-        // project no longer counts. None of it is git's to judge, and all
-        // of it would go with the set.
-        let strangers = beside_checkouts(target);
-        if !strangers.is_empty() {
-            bail!(
-                "{shown} holds {} beside its repositories' checkouts, in {} — nothing was \
-                 stopped or removed; move it out, or {}",
-                strangers.join(", "),
-                target.path.display(),
-                remedy::DISCARD_CHANGES
-            );
-        }
+        refuse_unforced(&shown, target)?;
     }
 
     // And Docker's, for the same reason. `rm` is what takes a worktree's
@@ -1294,55 +1352,7 @@ pub fn rm(
     // global and would sweep entries pando has no business touching. A
     // worktree git no longer lists has nothing left for it to remove.
     if let Some(target) = target {
-        let mut removed: Vec<&str> = Vec::new();
-        for checkout in target.checkouts() {
-            let root = match target.is_set() {
-                true => paths.root().join(&checkout.name),
-                false => paths.root().to_path_buf(),
-            };
-            let mut cmd = Command::new("git");
-            cmd.arg("-C").arg(&root).args(["worktree", "remove"]);
-            if force {
-                cmd.arg("--force");
-            }
-            cmd.arg(
-                checkout
-                    .path
-                    .to_str()
-                    .context("worktree path is not utf-8")?,
-            );
-            let out = cmd.output().context("spawn git worktree remove")?;
-            if !out.status.success() {
-                // Anything that was running has already been stopped by
-                // now and that cannot be taken back, so the cleared record
-                // is saved rather than left behind to resurface as a
-                // phantom failure — and the message says what actually
-                // happened.
-                state::save(&paths.state_file(), &store)?;
-                let reason = match target.is_set() {
-                    true => format!("in {}: {}", checkout.name, git_failure_reason(&out)),
-                    false => git_failure_reason(&out),
-                };
-                let kept = match removed.is_empty() {
-                    true => "the worktree was kept".to_string(),
-                    false => format!(
-                        "the checkouts of {} were removed, the rest kept",
-                        removed.join(", ")
-                    ),
-                };
-                if matches!(stopped, StopOutcome::Stopped(_)) {
-                    bail!(
-                        "git worktree remove failed: {reason} — what was running was stopped, \
-                         and any public URL closed; {kept}"
-                    );
-                }
-                match removed.is_empty() {
-                    true => bail!("git worktree remove failed: {reason}"),
-                    false => bail!("git worktree remove failed: {reason} — {kept}"),
-                }
-            }
-            removed.push(&checkout.name);
-        }
+        remove_checkouts(paths, &store, target, force, &stopped)?;
         if target.is_set()
             && let Some(kept) = clear_set_dir(target, created_by_pando)
         {
@@ -1621,12 +1631,7 @@ fn remember_base(paths: &PandoPaths, name: &str, repo: Option<&str>, base: &str)
         return;
     };
     if let Some(record) = store.worktrees.get_mut(name) {
-        match repo {
-            Some(repo) => {
-                record.bases.insert(repo.to_string(), base.to_string());
-            }
-            None => record.base = Some(base.to_string()),
-        }
+        record.set_base(repo, base);
         let _ = state::save(&paths.state_file(), &store);
     }
 }
@@ -1962,11 +1967,7 @@ fn ensure_ignored(project: &ProjectRef, dir: &Path, rel: &str, key: &str) -> Res
              repositories, a {key} path starts with the one it is in, as `{}/.env` does",
             rel.trim_end_matches('/'),
             project.repos.join(", "),
-            project
-                .repos
-                .first()
-                .map(String::as_str)
-                .unwrap_or("backend")
+            project.example_repo()
         );
     };
     ensure_gitignored(&checkout, &rel, key)

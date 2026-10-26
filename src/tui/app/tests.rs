@@ -897,7 +897,6 @@ fn a_fetch_that_lands_in_the_picker_keeps_the_cursor_on_its_pull_request() {
 fn a_forks_pull_request_is_not_the_chip_of_the_main_branch() {
     let mut app = test_app(&["feat+one"]);
     let fork = crate::worktree::PrInfo {
-        repo: None,
         cross_repository: true,
         ..a_pr(5, "main", crate::worktree::PrState::Open)
     };

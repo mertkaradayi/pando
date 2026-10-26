@@ -70,18 +70,8 @@ pub fn base_for(
     {
         return Some(recorded.to_string());
     }
-    let configured = match (repo, branch) {
-        (Some(repo), Some(branch)) => config.base_for_repo(repo, branch),
-        (Some(repo), None) => config
-            .repos
-            .base
-            .get(repo)
-            .map(String::as_str)
-            .or(config.project.base.as_deref()),
-        (None, Some(branch)) => config.base_for_branch(branch),
-        (None, None) => config.project.base.as_deref(),
-    };
-    configured
+    config
+        .base_for(repo, branch)
         .map(|base| resolve_create_base(root, base))
         .or_else(|| worktree::resolve_base_branch(root))
 }

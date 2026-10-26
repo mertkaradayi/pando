@@ -2350,17 +2350,29 @@ fn repos_names_only_the_folders_repositories() {
 
     config.repos.base = BTreeMap::from([("backend".to_string(), "develop".to_string())]);
     validate(&config, &project).unwrap();
-    assert_eq!(config.base_for_repo("backend", "feat/x"), Some("develop"));
-    assert_eq!(config.base_for_repo("frontend", "feat/x"), None);
+    assert_eq!(
+        config.base_for(Some("backend"), Some("feat/x")),
+        Some("develop")
+    );
+    assert_eq!(config.base_for(Some("frontend"), Some("feat/x")), None);
     // A rule is about the branch, and comes first in every repository.
     config.branches.rules = vec![BranchRule {
         match_: "hotfix/*".into(),
         base: "release".into(),
     }];
     config.project.base = Some("trunk".into());
-    assert_eq!(config.base_for_repo("backend", "hotfix/1"), Some("release"));
-    assert_eq!(config.base_for_repo("backend", "feat/x"), Some("develop"));
-    assert_eq!(config.base_for_repo("frontend", "feat/x"), Some("trunk"));
+    assert_eq!(
+        config.base_for(Some("backend"), Some("hotfix/1")),
+        Some("release")
+    );
+    assert_eq!(
+        config.base_for(Some("backend"), Some("feat/x")),
+        Some("develop")
+    );
+    assert_eq!(
+        config.base_for(Some("frontend"), Some("feat/x")),
+        Some("trunk")
+    );
 
     config.repos.members = vec!["frontend".into(), "infra".into()];
     let mut narrowed = project.clone();
