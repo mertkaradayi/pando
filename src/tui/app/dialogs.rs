@@ -381,11 +381,20 @@ impl App {
                     .map(String::as_str)
                     .collect();
                 let choices = base_choices(&leading, branches.as_slice());
-                if !choices.is_empty() {
-                    let current = base
-                        .as_ref()
-                        .or(implied.as_ref())
-                        .and_then(|b| choices.iter().position(|c| c == b));
+                // A multi-repo project's untouched choice — no one base,
+                // each repository forking from its own — is a choice of
+                // its own, first in the walk, so tab comes back to it.
+                let own_bases = self.paths.project.is_multi_repo() && implied.is_none();
+                let options: Vec<Option<String>> = own_bases
+                    .then_some(None)
+                    .into_iter()
+                    .chain(choices.into_iter().map(Some))
+                    .collect();
+                if !options.is_empty() {
+                    let current = match base.as_ref().or(implied.as_ref()) {
+                        Some(b) => options.iter().position(|o| o.as_ref() == Some(b)),
+                        None => own_bases.then_some(0),
+                    };
                     let forward = key.code == KeyCode::Tab;
                     // With no base yet — no default the repository could
                     // name — the first tab lands on the first choice, not
@@ -393,12 +402,12 @@ impl App {
                     let next = match current {
                         Some(at) => {
                             let step: isize = if forward { 1 } else { -1 };
-                            (at as isize + step).rem_euclid(choices.len() as isize) as usize
+                            (at as isize + step).rem_euclid(options.len() as isize) as usize
                         }
                         None if forward => 0,
-                        None => choices.len() - 1,
+                        None => options.len() - 1,
                     };
-                    base = Some(choices[next].clone());
+                    base = options[next].clone();
                 }
             }
             KeyCode::Down => selected = (selected + 1).min(rows.len().saturating_sub(1)),

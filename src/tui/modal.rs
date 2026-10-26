@@ -441,20 +441,50 @@ fn render_create(
     // every branch the picker read.
     let chosen = base.is_some();
     let implied = app.implied_base(input);
-    let unchosen = match app.paths.project.is_multi_repo() {
-        true => "each repository's own base",
-        false => "the default base",
+    let named = base.or(implied.as_deref());
+    // Said in full where it fits, and shorter where it does not — the
+    // reminder first, since the key row says tab as well, then the
+    // lead-in, then the repositories' word — so the base itself is never
+    // what gets cut.
+    let tiers: [(&str, &str, &str); 4] = match app.paths.project.is_multi_repo() {
+        true => [
+            (
+                "new branches fork from ",
+                "each repository's own base",
+                "  tab changes it",
+            ),
+            ("new branches fork from ", "each repository's own base", ""),
+            ("fork from ", "each repository's own base", ""),
+            ("fork from ", "each repo's own base", ""),
+        ],
+        false => [
+            (
+                "new branches fork from ",
+                "the default base",
+                "  tab changes it",
+            ),
+            ("new branches fork from ", "the default base", ""),
+            ("fork from ", "the default base", ""),
+            ("fork from ", "the default base", ""),
+        ],
     };
-    let base = base.or(implied.as_deref()).unwrap_or(unchosen);
+    let (lead, base, tail) = tiers
+        .iter()
+        .map(|&(lead, unchosen, tail)| (lead, named.unwrap_or(unchosen), tail))
+        .find(|(lead, base, tail)| text_width(lead) + text_width(base) + text_width(tail) <= width)
+        .unwrap_or_else(|| {
+            let (lead, unchosen, tail) = tiers[3];
+            (lead, named.unwrap_or(unchosen), tail)
+        });
     let base_line = Line::from(vec![
-        Span::styled("new branches fork from ", Style::new().fg(text_muted())),
+        Span::styled(lead, Style::new().fg(text_muted())),
         Span::styled(
             base.to_string(),
             Style::new()
                 .fg(if chosen { orange() } else { text_dim() })
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("  tab changes it", Style::new().fg(text_muted())),
+        Span::styled(tail, Style::new().fg(text_muted())),
     ]);
     f.render_widget(
         Paragraph::new(super::render::truncate_line(base_line, width)),
@@ -512,18 +542,25 @@ fn render_create(
             // A branch that already has a worktree says so before enter
             // is pressed, and enter goes to it rather than failing.
             let (tag, color) = if app.is_main_branch(&label) {
-                ("checked out in the main checkout", text_muted())
+                ("checked out in the main checkout".to_string(), text_muted())
             } else if app.worktree_for_branch(&label).is_some() {
-                ("has a worktree · ⏎ selects it", orange())
+                ("has a worktree · ⏎ selects it".to_string(), orange())
             } else {
                 match row {
-                    CreateRow::NewBranch(_) => ("new branch", green()),
-                    CreateRow::Existing(entry) => match entry.source {
-                        BranchSource::Local => ("local", text_dim()),
-                        BranchSource::Remote => ("remote", text_dim()),
-                    },
+                    CreateRow::NewBranch(_) => ("new branch".to_string(), green()),
+                    CreateRow::Existing(entry) => {
+                        let source = match entry.source {
+                            BranchSource::Local => "local",
+                            BranchSource::Remote => "remote",
+                        };
+                        (
+                            partial_tag(source, entry, marker, &label, width),
+                            text_dim(),
+                        )
+                    }
                 }
             };
+            let tag = tag.as_str();
             let tag_width = text_width(tag) + 2;
             let label_width = width.saturating_sub(text_width(marker) + tag_width);
             let shown = truncate_middle(&label, label_width);
@@ -552,6 +589,28 @@ fn render_create(
         })
         .collect();
     f.render_widget(Paragraph::new(lines), list_area);
+}
+
+/// An existing branch's tag in the create picker: where it is, and for a
+/// branch only some of a multi-repo project's repositories have, that it
+/// is not in every one — the others fork it from their own base, which is
+/// worth knowing before enter. Shorter while the branch's name would not
+/// fit beside it whole.
+fn partial_tag(
+    source: &str,
+    entry: &crate::worktree::BranchEntry,
+    marker: &str,
+    label: &str,
+    width: usize,
+) -> String {
+    if entry.in_every_repo {
+        return source.to_string();
+    }
+    ["not in every repository", "not in every repo", "some repos"]
+        .iter()
+        .map(|what| format!("{source} · {what}"))
+        .find(|tag| text_width(marker) + text_width(label) + text_width(tag) + 2 <= width)
+        .unwrap_or_else(|| format!("{source} · some repos"))
 }
 
 /// The open pull requests, one a row: number, title, and what enter does
