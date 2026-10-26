@@ -91,20 +91,46 @@ pub struct NativeChanges {
 /// bundler serves reaches for it.
 ///
 /// Empty when git cannot say: a base the worktree does not have, say.
+///
+/// `base_of` names the base of each repository of the project, by name,
+/// or of the worktree itself, by none: a multi-repo project's set is a
+/// checkout per repository, each with its own base and its own git, and
+/// an app is measured in the repository its directory is in.
 pub fn native_changes(
     config: &Config,
+    project: &crate::project::ProjectRef,
     record: &WorktreeRecord,
-    base: &str,
+    base_of: &dyn Fn(Option<&str>) -> Option<String>,
 ) -> BTreeMap<String, NativeChanges> {
     let apps = device_processes(config, record);
     if apps.is_empty() {
         return BTreeMap::new();
     }
-    let Some(changed) = changed_since(&record.path, base) else {
-        return BTreeMap::new();
-    };
+    // What changed in each checkout, under its path in the worktree.
+    let mut changes: BTreeMap<Option<&str>, (String, Vec<String>)> = BTreeMap::new();
+    for (repo, dir) in project.repo_checkouts_in(&record.path) {
+        let Some(base) = base_of(repo) else {
+            continue;
+        };
+        let Some(changed) = changed_since(&dir, &base) else {
+            continue;
+        };
+        let changed = changed
+            .into_iter()
+            .map(|path| match repo {
+                Some(repo) => format!("{repo}/{path}"),
+                None => path,
+            })
+            .collect();
+        changes.insert(repo, (base, changed));
+    }
     apps.into_iter()
         .filter_map(|app| {
+            let repo = match project.is_multi_repo() {
+                true => app.cwd.and_then(|cwd| cwd.split('/').next()),
+                false => None,
+            };
+            let (base, changed) = changes.get(&repo)?;
             let native: Vec<String> = changed
                 .iter()
                 .filter(|path| {
@@ -118,7 +144,7 @@ pub fn native_changes(
                 .collect();
             (!native.is_empty()).then(|| {
                 let changes = NativeChanges {
-                    base: base.to_string(),
+                    base: base.clone(),
                     changed: native,
                     builds: app
                         .device

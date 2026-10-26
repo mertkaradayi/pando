@@ -221,6 +221,7 @@ fn row_cells(app: &App, wt: &Worktree) -> RowCells {
         _ if main => Some("main checkout".to_string()),
         Some(branch) if actions::sanitize_branch_to_dir(branch) != wt.name => Some(wt.name.clone()),
         Some(_) => None,
+        None if wt.is_mixed() => Some("mixed branches".to_string()),
         None => Some("detached".to_string()),
     };
     if let Some(aside) = aside {

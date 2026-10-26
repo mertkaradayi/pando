@@ -930,16 +930,22 @@ fn submodule_in(worktree: &Worktree) -> Result<Option<String>> {
     Ok(modules.is_dir().then(|| modules.display().to_string()))
 }
 
+/// The git checkouts among what a set's directory holds beside its own,
+/// [`beside_checkouts`]: never pando's to remove, forced or not.
+pub fn foreign_checkouts(target: &Worktree) -> Vec<String> {
+    beside_checkouts(target)
+        .into_iter()
+        .filter(|name| target.path.join(name).join(".git").exists())
+        .collect()
+}
+
 /// What `rm` refuses over even when forced, before it stops or removes
 /// anything: a git checkout of its own in a set's directory beside the
 /// checkouts the set is made of — a repository cloned there, or the
 /// checkout of one the project no longer counts — which is never pando's
 /// to delete, and which would keep the set's directory there after it.
 fn refuse_foreign_checkouts(shown: &str, target: &Worktree) -> Result<()> {
-    let foreign: Vec<String> = beside_checkouts(target)
-        .into_iter()
-        .filter(|name| target.path.join(name).join(".git").exists())
-        .collect();
+    let foreign = foreign_checkouts(target);
     if foreign.is_empty() {
         return Ok(());
     }
@@ -1075,7 +1081,7 @@ fn refuse_what_git_would(shown: &str, target: &Worktree, checkout: &Worktree) ->
 
 /// What a set's directory holds besides the checkouts git lists in it, by
 /// name, sorted. Empty for a worktree of one repository.
-fn beside_checkouts(target: &Worktree) -> Vec<String> {
+pub fn beside_checkouts(target: &Worktree) -> Vec<String> {
     if !target.is_set() {
         return Vec::new();
     }
@@ -1091,46 +1097,47 @@ fn beside_checkouts(target: &Worktree) -> Vec<String> {
     strangers
 }
 
-/// Removes a set's directory once its checkouts are gone, saying what kept
-/// it when something did. What is left in one pando made is no
+/// Removes a set's directory once its checkouts are gone, saying what
+/// went with it and what kept it. What is left in one pando made is no
 /// repository's, and goes as `--force` takes a checkout's ignored files —
-/// except a git checkout of its own, a repository cloned there or a
-/// worktree the project no longer counts, which is never pando's to
-/// delete. One pando did not make goes only while empty.
-fn clear_set_dir(target: &Worktree, ours: bool) -> Option<String> {
-    let mut kept = Vec::new();
+/// except a git checkout of its own, which `rm` refuses before it gets
+/// here and which is kept should one have appeared since. One pando did
+/// not make goes only while empty.
+fn clear_set_dir(target: &Worktree, ours: bool) -> Vec<String> {
+    let mut said = Vec::new();
+    let mut gone = Vec::new();
     if ours {
         for name in beside_checkouts(target) {
             let path = target.path.join(&name);
             if path.join(".git").exists() {
-                kept.push(name);
                 continue;
             }
             let removed = match path.symlink_metadata().is_ok_and(|m| m.is_dir()) {
                 true => std::fs::remove_dir_all(&path),
                 false => std::fs::remove_file(&path),
             };
-            if removed.is_err() {
-                kept.push(name);
+            if removed.is_ok() {
+                gone.push(name);
             }
         }
     }
+    if !gone.is_empty() {
+        said.push(format!("removed {} with the set", gone.join(", ")));
+    }
     match std::fs::remove_dir(&target.path) {
-        Ok(()) => None,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => {
-            let left = match kept.is_empty() {
-                true => beside_checkouts(target),
-                false => kept,
-            };
-            Some(format!(
+            let left = beside_checkouts(target);
+            said.push(format!(
                 "kept {}: {} in it {} not pando's to remove",
                 target.path.display(),
                 left.join(", "),
                 if left.len() == 1 { "is" } else { "are" }
-            ))
+            ));
         }
     }
+    said
 }
 
 /// Undoes a `new` that failed after `git worktree add`. The worktree goes;
@@ -1417,10 +1424,10 @@ pub fn rm(
     // worktree git no longer lists has nothing left for it to remove.
     if let Some(target) = target {
         remove_checkouts(paths, &store, target, force, &stopped)?;
-        if target.is_set()
-            && let Some(kept) = clear_set_dir(target, created_by_pando)
-        {
-            progress(&kept);
+        if target.is_set() {
+            for line in clear_set_dir(target, created_by_pando) {
+                progress(&line);
+            }
         }
     }
 

@@ -1082,6 +1082,7 @@ fn branches_arriving_populate_an_open_create_modal() {
     let branches = vec![BranchEntry {
         name: "main".into(),
         source: BranchSource::Local,
+        in_every_repo: true,
     }];
     app.handle_event(AppEvent::BranchesReady(branches));
     match &app.modal {
@@ -1289,10 +1290,12 @@ fn create_rows_offers_the_typed_name_then_matching_branches() {
         BranchEntry {
             name: "main".into(),
             source: BranchSource::Local,
+            in_every_repo: true,
         },
         BranchEntry {
             name: "feat/one".into(),
             source: BranchSource::Remote,
+            in_every_repo: true,
         },
     ];
     let rows = create_rows("", &branches);
@@ -1322,6 +1325,7 @@ fn create_rows_matching_is_case_insensitive_and_input_is_trimmed() {
     let branches = vec![BranchEntry {
         name: "Feat/One".into(),
         source: BranchSource::Local,
+        in_every_repo: true,
     }];
     let rows = create_rows("  feat  ", &branches);
     assert_eq!(rows[0], CreateRow::NewBranch("feat".into()));
@@ -5992,6 +5996,7 @@ fn open_create_with(app: &mut App, branches: &[(&str, BranchSource)]) {
         .map(|(name, source)| BranchEntry {
             name: name.to_string(),
             source: source.clone(),
+            in_every_repo: true,
         })
         .collect();
     app.handle_event(AppEvent::BranchesReady(entries));
@@ -6106,10 +6111,12 @@ fn base_choices_lead_with_the_default_and_name_each_branch_once() {
         BranchEntry {
             name: "main".into(),
             source: BranchSource::Local,
+            in_every_repo: true,
         },
         BranchEntry {
             name: "main".into(),
             source: BranchSource::Remote,
+            in_every_repo: true,
         },
     ];
     assert_eq!(
@@ -8871,4 +8878,68 @@ fn the_git_menu_of_a_set_moves_one_repositorys_checkout_and_tab_goes_to_the_next
     open_git_menu(&mut app, "feat+one", a_git_read(false));
     press(&mut app, KeyCode::Tab);
     assert!(matches!(git_stage(&app), GitStage::Menu { .. }));
+}
+
+/// `test_app` over a multi-repo project of `backend` and `frontend`,
+/// whose main row is the folder's main checkouts, on `backend` and
+/// `frontend` respectively.
+fn multi_repo_app(backend: &str, frontend: &str) -> App {
+    let mut app = test_app(&["feat+x"]);
+    app.paths.project.repos = vec!["backend".into(), "frontend".into()];
+    let checkout = |repo: &str, branch: &str| Worktree {
+        name: repo.to_string(),
+        path: PathBuf::from("/pando-test-does-not-exist/acme-shop").join(repo),
+        branch: Some(branch.to_string()),
+        ..wt(repo)
+    };
+    app.main = Some(Worktree::set(
+        "acme-shop".into(),
+        PathBuf::from("/pando-test-does-not-exist/acme-shop"),
+        vec![checkout("backend", backend), checkout("frontend", frontend)],
+    ));
+    app
+}
+
+#[test]
+fn a_sets_create_dialog_forks_each_repository_from_its_own_base() {
+    let mut app = multi_repo_app("develop", "main");
+    app.config.project.base = Some("main".into());
+    app.config.repos.base = BTreeMap::from([("backend".into(), "develop".into())]);
+    assert_eq!(
+        app.implied_base("feat/y"),
+        None,
+        "no one base for every repository"
+    );
+    app.config.branches.rules = vec![crate::config::BranchRule {
+        match_: "hotfix/*".into(),
+        base: "release".into(),
+    }];
+    assert_eq!(app.implied_base("hotfix/1").as_deref(), Some("release"));
+
+    // A branch either repository's main checkout is on is the main's.
+    assert!(app.is_main_branch("develop") && app.is_main_branch("main"));
+    assert!(!app.is_main_branch("feat/y"));
+
+    // Only a branch every repository has is a base to fork all of them from.
+    let only_backend = BranchEntry {
+        name: "develop".into(),
+        source: BranchSource::Local,
+        in_every_repo: false,
+    };
+    let both = BranchEntry {
+        name: "main".into(),
+        source: BranchSource::Local,
+        in_every_repo: true,
+    };
+    assert_eq!(base_choices(&[], &[only_backend, both]), ["main"]);
+}
+
+#[test]
+fn a_set_on_different_branches_is_said_to_be_so_not_detached() {
+    let app = multi_repo_app("develop", "main");
+    let main = app.main.as_ref().unwrap();
+    assert!(main.is_mixed());
+    assert_eq!(main.branch_shown(), "backend develop · frontend main");
+    let one = multi_repo_app("main", "main");
+    assert_eq!(one.main.as_ref().unwrap().branch_shown(), "main");
 }

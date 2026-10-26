@@ -3074,6 +3074,7 @@ fn the_picker_marks_the_main_checkouts_branch_and_shows_the_base() {
         branches: BranchLoadState::Ready(vec![crate::worktree::BranchEntry {
             name: "main".into(),
             source: crate::worktree::BranchSource::Local,
+            in_every_repo: true,
         }]),
         selected: 0,
         base: Some("develop".into()),
@@ -3454,6 +3455,7 @@ fn wide_names_paint_at_any_terminal_size() {
             branches: BranchLoadState::Ready(vec![crate::worktree::BranchEntry {
                 name: "ブランチ".into(),
                 source: crate::worktree::BranchSource::Local,
+                in_every_repo: true,
             }]),
             selected: 1,
             base: Some("起動".into()),

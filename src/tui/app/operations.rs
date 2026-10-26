@@ -372,6 +372,10 @@ impl App {
         let found = match self.pr_for(wt) {
             Some(pr) if !pr.url.is_empty() => Ok((pr.number, pr.url.clone())),
             _ => Err(match (&wt.branch, &self.gh_account) {
+                (None, _) if wt.is_mixed() => format!(
+                    "{label}'s repositories are on different branches, so it has no one pull \
+                     request"
+                ),
                 (None, _) => format!("{label} is on no branch, so it has no pull request"),
                 (_, Some(GhAccount::Missing)) => {
                     "pull requests come from gh, which is not installed".to_string()
