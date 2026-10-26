@@ -107,6 +107,55 @@ struct NativeOut {
     builds: BTreeMap<&'static str, String>,
 }
 
+/// A process as a set's lines name it: by the repository its `cwd` is in
+/// as well, in a multi-repo project.
+fn process_label(paths: &PandoPaths, config: Option<&crate::config::Config>, name: &str) -> String {
+    let repo = config
+        .and_then(|config| config.processes.get(name))
+        .and_then(|process| process.cwd.as_deref())
+        .and_then(|cwd| cwd.trim_start_matches("./").split('/').next())
+        .filter(|first| paths.project.repos.iter().any(|repo| repo == first));
+    match repo {
+        Some(repo) => format!("{name} ({repo})"),
+        None => name.to_string(),
+    }
+}
+
+/// A set's repositories under its line: each checkout's branch, one whose
+/// directory is gone, and a repository of the project it has no checkout
+/// of, with the command that gives it one. None for anything else.
+fn repo_rows(paths: &PandoPaths, w: &crate::worktree::Worktree) -> Vec<String> {
+    if !w.is_set() {
+        return Vec::new();
+    }
+    let width = paths
+        .project
+        .repos
+        .iter()
+        .map(|repo| text_width(repo))
+        .max()
+        .unwrap_or(0);
+    let again = w.branch.clone().unwrap_or_else(|| display_name(w));
+    paths
+        .project
+        .repos
+        .iter()
+        .map(|repo| {
+            let said = match w.repos.iter().find(|c| c.name == *repo) {
+                Some(c) if c.prunable || !c.path.is_dir() => {
+                    format!("gone — `pando new {again}` checks it out again")
+                }
+                Some(c) => format!(
+                    "on {}",
+                    c.branch.as_deref().unwrap_or("no branch (detached)")
+                ),
+                None => format!("no checkout — `pando new {again}` adds it"),
+            };
+            format!("  {}  {:<PHASE_CELL$}  {said}", pad(repo, width), "repo")
+        })
+        .collect()
+}
+
 /// Each device app's native changes in a worktree, against the base its
 /// branch forks from, where it has apps a device runs. None for the main
 /// checkout, which is what the others are measured against.
@@ -489,6 +538,11 @@ fn status_lines<W: Write>(
             pad(&ellipsize_distinct(shown_name, &all_names, names), names),
             worktree_line(record, width.saturating_sub(names + COL_GAP))
         )?;
+        // A set's repositories, one line each, from the listing: which
+        // branch each checkout is on, and which it has none of.
+        for row in repo_rows(paths, w) {
+            writeln!(out, "{}", ellipsize_end(&row, width))?;
+        }
         // One line per process under it, so a worktree that is `failed`
         // says which of its processes is, and each one's pid is reachable.
         let Some(record) = record else { continue };
@@ -504,17 +558,27 @@ fn status_lines<W: Write>(
             .as_ref()
             .map(|config| native_of(paths, config, w, w.name == main_name, record, &apps))
             .unwrap_or_default();
-        let process_width = record
+        // A process of a set by the repository it runs in, too: `api
+        // (backend)`.
+        let labels: BTreeMap<&str, String> = record
             .processes
             .keys()
-            .map(|name| text_width(name))
+            .map(|name| (name.as_str(), process_label(paths, config.as_ref(), name)))
+            .collect();
+        let process_width = labels
+            .values()
+            .map(|label| text_width(label))
             .max()
             .unwrap_or(0);
         for (name, p) in &record.processes {
             // The same shape as the worktree line above, and the same
             // degradation: a reason or an uptime is truncated rather than
             // allowed to wrap the row under it.
-            let row = format!("  {}  {}", pad(name, process_width), process_line(p));
+            let row = format!(
+                "  {}  {}",
+                pad(&labels[name.as_str()], process_width),
+                process_line(p)
+            );
             writeln!(out, "{}", ellipsize_end(&row, width))?;
             // Under a running bundler whose app a device runs, the command
             // that opens it on the simulator, first, so a narrow terminal

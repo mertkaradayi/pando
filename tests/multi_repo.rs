@@ -166,6 +166,17 @@ fn a_set_is_made_run_across_its_repositories_and_removed() {
         "the frontend's process was told the backend's port: {printed}"
     );
 
+    // `status` says which repository each process runs in, and each
+    // repository's branch; `--source` takes a repository for its logs.
+    let said = ok(&f.pando(&["status", "feat/x"]));
+    assert!(
+        said.contains("api (backend)") && said.contains("web (frontend)"),
+        "{said}"
+    );
+    assert!(said.contains("frontend  repo"), "{said}");
+    let logged = ok(&f.pando(&["logs", "feat/x", "--source", "frontend"]));
+    assert!(logged.contains("API_URL="), "{logged}");
+
     ok(&f.pando(&["stop", "feat/x"]));
     ok(&f.pando(&["rm", "feat/x"]));
     assert!(!set.exists());
