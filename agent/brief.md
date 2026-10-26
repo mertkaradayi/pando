@@ -768,6 +768,39 @@ decision to make on somebody's laptop.
 
 ---
 
+## E. A folder of repositories
+
+The project is a plain folder whose immediate subdirectories are git
+repositories — `product/backend`, `product/frontend` — and `signals` says
+so: `project.repos` lists them. pando runs the folder as one project, and
+each worktree is a set holding a checkout of every repository at
+`<set>/<repo>`, all on one branch. Detection reads each repository as an
+app directory:
+
+```
+processes   decided=False
+              1) 'backend: npm run dev in backend; frontend: npm run dev -- --port {port:frontend} in frontend'
+provision   decided=True   ['backend/.env']
+```
+
+Every path you answer names its repository first: a process's `cwd`
+(`"cwd": "backend"`), `provision` (`backend/.env`), `clone`
+(`frontend/node_modules`). A path at the folder's root is in no
+repository, and `pando new` refuses it. A process that reaches another
+repository's server reads its port as for any two processes:
+`"env": {"API_URL": "http://localhost:{port:backend}"}`.
+
+The base is each repository's own default branch. One repository that
+forks from another branch is `{"repos": {"base": {"backend": "develop"}}}`
+in the answers; a `base` answer applies to every repository and must exist
+in each. `{"repos": {"members": ["backend", "frontend"]}}` leaves a
+repository of the folder out of the project.
+
+Run from inside one repository of such a folder, pando is that repository
+alone, and the job says the folder is there. Which to set up follows from
+what runs: an app that needs another repository's to run belongs to the
+folder's setup.
+
 # Operating, day to day
 
 Setup happens once. This is the part you do every day, and it is a much
