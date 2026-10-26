@@ -767,9 +767,12 @@ pub(super) fn port_proposal(
     });
 
     // The project's own port variables, in file order: port-shaped keys of
-    // the env example that are not a service's.
+    // the env example that are not a service's. The root's own example
+    // alone: below a root that is not an app, an app directory's `PORT`
+    // is that app's, which its own process is given, and no port of the
+    // project's as a whole.
     let mut declared: Vec<&str> = Vec::new();
-    for key in signals.env_keys() {
+    for (key, _) in signals.root_env_example() {
         if port_stem(key).is_some() && !is_service_port(key) && !declared.contains(&key) {
             declared.push(key);
         }

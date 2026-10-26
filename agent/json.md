@@ -135,7 +135,12 @@ repository, which is what makes it safe to read before deciding anything.
       { "language": "node", "spec": "20", "source": "backend/.nvmrc", "pinned": true,
         "dir": "backend" }      // an app directory's: only there is `dir` set
     ],
-    "env_example": [],          // [key, value] pairs from the env example
+    "env_example": [],          // [key, value] pairs from the env example; below a root
+                                //   that is not an app, each app's follow, a key's first
+                                //   spelling winning
+    "env_examples": [           // every env example read, whole, under its path
+      { "file": "backend/.env.example", "entries": [["PORT", "8000"]] }
+    ],
     "markers": [],              // framework and toolchain markers
     "compose_files": [],        // the root's; with none there, those one directory below
     "ignored_present": [],      // gitignored files that exist in the checkout
@@ -198,7 +203,10 @@ it with an object of process tables that covers every app (see "The
 answers file"). An app's version files join `version_files` under its
 path, `backend/.nvmrc`, and once that answer is written a start checks the
 runtime there, in the directory its processes run in. Each app's env
-example joins `env_example`, and its local env files (`backend/.env`,
+example joins `env_example` for the keys it does not hold yet and is in
+`env_examples` whole under its path, so a key two apps declare is
+published for each; an app's own `PORT` is that app's, never a `port_env`
+proposal for the project. Its local env files (`backend/.env`,
 never a cache or a coverage file) join `ignored_present` and
 `provision_seeds` under its path.
 
