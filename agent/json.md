@@ -99,6 +99,11 @@ the per-app option to start it. The option's `why` names it — `backend has
 uv.lock but no dev script: nothing here starts it` — and its
 `needs_a_human` is true. Answer `processes` with an object of process
 tables covering every process. `new` and `start` take the option.
+An app directory with a `start` script and no dev script is in the
+option, running that script, and is the same exit 3: its `why` says
+`frontend has no dev script, so its start script runs it: check it is
+not the production entry`. The option's own text answers it once you
+have.
 
 Two traps worth knowing:
 
@@ -197,8 +202,8 @@ nothing at the root that says how to build either — is read one level
 down. `app_dirs` lists what was found there, and the proposals come from
 it: the install is each app's own, run in its directory, and the
 `processes` answer has one process per app with a dev script, each with
-its `cwd`, even when only one app has one. An app with no dev script gets
-no process and is in no option, and `processes` stays open for it: answer
+its `cwd`, even when only one app has one. An app with neither a dev
+script nor a `start` script gets no process and is in no option, and `processes` stays open for it: answer
 it with an object of process tables that covers every app (see "The
 answers file"). An app's version files join `version_files` under its
 path, `backend/.nvmrc`, and once that answer is written a start checks the

@@ -41,6 +41,10 @@ pub struct WorkspaceApp {
     /// Expo's 90 seconds. `None` for an app whose script runs no rule's
     /// server, or a rule that keeps the default.
     pub ready_timeout_s: Option<u64>,
+    /// Whether `cmd` runs the app's `start` script because it has no dev
+    /// script: an app directory below a root that is not an app, offered
+    /// rather than taken (see [`start_script`]).
+    pub by_start: bool,
 }
 
 /// Fewer than this is not a workspace worth splitting up: one app with a
@@ -278,7 +282,15 @@ pub fn workspace_apps(root: &Path, signals: &Signals) -> Vec<WorkspaceApp> {
             }
             let path = root.join(&dir);
             let app = app_signals(&path);
-            let Some((script_name, script)) = dev_script(&path, &app) else {
+            let found = dev_script(&path, &app).map(|found| (found, false));
+            let found = found.or_else(|| {
+                let below_root = !signals.app_dirs.is_empty();
+                below_root
+                    .then(|| start_script(&app))
+                    .flatten()
+                    .map(|found| (found, true))
+            });
+            let Some(((script_name, script), by_start)) = found else {
                 continue;
             };
             // Not the production check: a script named `dev` is the one the
@@ -330,6 +342,7 @@ pub fn workspace_apps(root: &Path, signals: &Signals) -> Vec<WorkspaceApp> {
                 },
                 fixed_port: fixed,
                 ready_timeout_s: serves.and_then(|rule| rule.ready_timeout_s),
+                by_start,
                 name: name.to_string(),
                 dir,
                 cmd,
@@ -362,6 +375,22 @@ pub fn workspace_apps(root: &Path, signals: &Signals) -> Vec<WorkspaceApp> {
         return Vec::new();
     }
     apps
+}
+
+/// The `start` script of an app with no dev script, as `(name, body)`,
+/// unless it serves a production build or starts several things at once.
+///
+/// Only for an app directory below a root that is not an app, where the
+/// alternative is no process at all and a check that passes with the app
+/// never run: a `start: node server.js` is as often the production entry
+/// as the dev one, so the per-app form that runs it is offered and never
+/// taken without someone saying so. A workspace member keeps the stricter
+/// rule of [`dev_script`]: there, the apps with a dev script are the ones
+/// the workspace develops.
+fn start_script(app: &Signals) -> Option<(&str, &str)> {
+    let (name, body) = app.scripts.get_key_value("start")?;
+    (!super::dev::is_production(body) && !is_multiplexer(body))
+        .then_some((name.as_str(), body.as_str()))
 }
 
 /// The root's local `.env`, for each workspace app that has no env file of
@@ -714,6 +743,10 @@ pub(super) fn root_orchestrates(signals: &Signals) -> bool {
     signals.scripts.contains_key("predev") || runs_a_file
 }
 
+/// How the reason an app runs its `start` script in the per-app form ends:
+/// the words `agent/json.md` quotes.
+pub const START_ONLY: &str = "check it is not the production entry";
+
 /// How the reason an app directory is left out of the per-app form ends:
 /// the words `agent/json.md` quotes.
 pub const UNSTARTED: &str = "nothing here starts it";
@@ -902,6 +935,15 @@ pub(super) fn processes_proposal(root: &Path, signals: &Signals) -> Option<Propo
             ));
         }
     }
+    // Said, because a start script may be the production entry, and the
+    // option is only offered on that account.
+    let by_start: Vec<&WorkspaceApp> = apps.iter().filter(|app| app.by_start).collect();
+    for app in &by_start {
+        why.push_str(&format!(
+            "; {} has no dev script, so its start script runs it: {START_ONLY}",
+            app.dir
+        ));
+    }
     for reason in &unstarted {
         why.push_str(&format!("; {reason}"));
     }
@@ -909,7 +951,7 @@ pub(super) fn processes_proposal(root: &Path, signals: &Signals) -> Option<Propo
         value: summary,
         why,
         processes: Some(processes),
-        needs_a_human: !unstarted.is_empty(),
+        needs_a_human: !unstarted.is_empty() || !by_start.is_empty(),
         ..Candidate::default()
     }];
     // The root script, as one process. Written as `[dev]`, because one

@@ -4655,3 +4655,49 @@ fn a_code_default_port_needs_one_port_in_the_files_the_script_runs() {
         None
     );
 }
+
+// An app directory with only a `start` script runs it in the per-app
+// form, offered and never taken unasked: it may be the production entry.
+#[test]
+fn an_app_directory_with_only_a_start_script_is_offered_running_it() {
+    let (_dir, project) = repo_folder(&[
+        (
+            "api/package.json",
+            r#"{ "scripts": { "start": "node server.js" } }"#,
+        ),
+        ("api/pnpm-lock.yaml", "lockfileVersion: '9.0'\n"),
+        ("web/package.json", r#"{ "scripts": { "dev": "vite" } }"#),
+        ("web/package-lock.json", "{}"),
+    ]);
+    let proposals = proposals_of(&project);
+    let proposal = proposals
+        .iter()
+        .find(|p| p.slot == Slot::Processes)
+        .unwrap();
+    let option = &proposal.candidates[0];
+    let processes = option.processes.as_ref().unwrap();
+    assert_eq!(processes["api"].cmd, "pnpm start");
+    assert_eq!(processes["api"].cwd.as_deref(), Some("api"));
+    assert!(option.needs_a_human);
+    assert!(
+        option.why.contains(&format!(
+            "api has no dev script, so its start script runs it: {START_ONLY}"
+        )),
+        "{}",
+        option.why
+    );
+    assert!(!option.why.contains(UNSTARTED), "{}", option.why);
+
+    // A start script that serves the build is still nothing to run.
+    let (_dir, project) = repo_folder(&[
+        (
+            "api/package.json",
+            r#"{ "scripts": { "start": "node dist/index.js" } }"#,
+        ),
+        ("api/package-lock.json", "{}"),
+        ("web/package.json", r#"{ "scripts": { "dev": "vite" } }"#),
+        ("web/package-lock.json", "{}"),
+    ]);
+    let processes = per_app_processes(&proposals_of(&project));
+    assert!(!processes.contains_key("api"), "{processes:?}");
+}

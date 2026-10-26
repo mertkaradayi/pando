@@ -246,7 +246,7 @@ const MULTIPLEXERS: [&str; 6] = [
     "npm:",
 ];
 
-fn is_production(body: &str) -> bool {
+pub(super) fn is_production(body: &str) -> bool {
     PRODUCTION_SHAPES.iter().any(|shape| body.contains(shape))
 }
 
