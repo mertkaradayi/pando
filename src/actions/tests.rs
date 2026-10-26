@@ -19004,7 +19004,7 @@ fn a_set_of_a_repository_the_project_gained_since_says_so_at_start() {
 
     let err = start(&fx.paths, &fx.config, "feat+x", None, &noop).unwrap_err();
     assert!(
-        format!("{err:#}").contains("has no checkout of frontend, which is in the project now"),
+        format!("{err:#}").contains("has no checkout of frontend — `pando new feat/x` adds it"),
         "{err:#}"
     );
 }
