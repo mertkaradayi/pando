@@ -11,6 +11,7 @@ use crate::native;
 use crate::paths::PandoPaths;
 use crate::ports;
 use crate::process::{self as proc, SpawnOptions};
+use crate::project::ProjectRef;
 use crate::services;
 use crate::state::{self, Phase, WorktreeRecord};
 use crate::template;
@@ -556,8 +557,9 @@ pub(super) fn resolve_service_env(
     ports: &BTreeMap<String, u16>,
 ) -> Result<BTreeMap<String, String>> {
     let mut out = BTreeMap::new();
+    let env = checkout_env(paths, config, worktree);
     for entry in compose_entries(config) {
-        out.extend(services::app_env(worktree, entry.env, ports)?);
+        out.extend(services::app_env(&env, entry.env, ports)?);
     }
     let native = native::Entry::all(config);
     if native.is_empty() {
@@ -570,7 +572,7 @@ pub(super) fn resolve_service_env(
         if mapping.is_empty() {
             continue;
         }
-        match services::app_env(worktree, &mapping, ports) {
+        match services::app_env(&env, &mapping, ports) {
             Ok(resolved) => out.extend(resolved),
             Err(e) if from_config || e.downcast_ref::<services::Unresolved>().is_some() => {
                 return Err(e);
@@ -590,6 +592,7 @@ fn native_urls(
     ports: &BTreeMap<String, u16>,
 ) -> BTreeMap<String, String> {
     let recipes = crate::recipes::Recipes::load(&paths.recipes_dir());
+    let env = checkout_env(paths, config, worktree);
     let mut out = BTreeMap::new();
     for entry in native::Entry::all(config) {
         let recipe = native::resolve(&recipes, &entry).ok().map(|r| r.recipe);
@@ -600,7 +603,7 @@ fn native_urls(
             .into_iter()
             .filter(|(_, service)| service == entry.name)
             .collect();
-        let Ok(resolved) = services::app_env(worktree, &mapping, ports) else {
+        let Ok(resolved) = services::app_env(&env, &mapping, ports) else {
             continue;
         };
         if let Some(value) = identity_url(&resolved) {
@@ -619,6 +622,7 @@ fn native_sibling_identities(
     worktree: &Path,
 ) -> BTreeMap<String, (Option<String>, Option<String>)> {
     let recipes = crate::recipes::Recipes::load(&paths.recipes_dir());
+    let env = checkout_env(paths, config, worktree);
     let mut out = BTreeMap::new();
     for entry in native::Entry::all(config) {
         let recipe = native::resolve(&recipes, &entry).ok().map(|r| r.recipe);
@@ -629,7 +633,7 @@ fn native_sibling_identities(
             .map(|(key, _)| key.as_str());
         out.insert(
             entry.name.to_string(),
-            services::sibling_identity(worktree, keys),
+            services::sibling_identity(&env, keys),
         );
     }
     out
@@ -1775,9 +1779,10 @@ pub fn shared_service_env(paths: &PandoPaths, config: &Config) -> BTreeMap<Strin
             keys.extend(mapping.keys().map(|key| key.to_string()));
         }
     }
+    let env = checkout_env(paths, config, paths.root());
     keys.into_iter()
         .filter_map(|key| {
-            let value = services::value_in_env(paths.root(), &key).ok()??;
+            let value = env.value(&key).ok()??;
             Some((key, value))
         })
         .collect()
@@ -1874,8 +1879,13 @@ pub fn shared_service_status(
 
 /// The directories below the root whose env files say where the shared
 /// services are, besides the root's own: each one a configured process
-/// runs in, once, in name order.
-pub fn env_dirs(config: &Config) -> Vec<String> {
+/// runs in, once, in name order, and then, for a multi-repo project, each
+/// repository's own root.
+///
+/// A set's root is a plain directory: the env files are in its
+/// repositories, `backend/.env`, and a process of one of them may run
+/// deeper down, or none may be configured yet.
+pub fn env_dirs(project: &ProjectRef, config: &Config) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for process in config.processes.values() {
         let Some(cwd) = process.cwd.as_deref().map(str::trim) else {
@@ -1886,7 +1896,30 @@ pub fn env_dirs(config: &Config) -> Vec<String> {
             out.push(cwd.to_string());
         }
     }
+    for repo in &project.repos {
+        if !out.contains(repo) {
+            out.push(repo.clone());
+        }
+    }
     out
+}
+
+/// The env files a checkout of this project — `dir`, the main one or a
+/// worktree — keeps the values its services are pointed at in, read
+/// once: for one repository, its root's, as they always were; for a
+/// multi-repo project, those of every one of [`env_dirs`] too, since the
+/// set's root has none.
+///
+/// One repository keeps reading its root alone: read from the
+/// directories its processes run in as well, a recipe's default key that
+/// the root does not set would start being rewritten, which is a change
+/// of its own rather than part of reading a set.
+pub(super) fn checkout_env(paths: &PandoPaths, config: &Config, dir: &Path) -> services::EnvFiles {
+    let dirs = match paths.project.is_multi_repo() {
+        true => env_dirs(&paths.project, config),
+        false => Vec::new(),
+    };
+    services::EnvFiles::read(dir, &dirs)
 }
 
 /// The environment a command run by hand inside a worktree needs, so that

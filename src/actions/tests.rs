@@ -6852,7 +6852,7 @@ fn a_shared_services_port_is_read_where_the_processes_run() {
             },
         );
     }
-    let dirs = super::env_dirs(&config);
+    let dirs = super::env_dirs(&fx.paths.project, &config);
     assert_eq!(dirs, ["backend", "frontend"]);
 
     std::fs::create_dir_all(fx.root.join("backend")).unwrap();
@@ -19135,4 +19135,52 @@ fn new_checks_a_lost_checkout_out_again_and_keeps_the_others_work() {
         "the branch's own commit is checked out"
     );
     assert!(set.join("backend").join("work.txt").is_file());
+
+// A set's root is a plain directory, so an isolated start that read the
+// value it rewrites from there alone found no DATABASE_URL at all, on
+// every multi-repo project with a service. It is read in the repository
+// that keeps it, in the set as in the main folder, where a shared start
+// reads it.
+#[test]
+fn a_sets_service_env_is_read_from_its_repositories_env_files() {
+    let mut fx = multi_repo_fixture();
+    let backend = fx.root.join("backend");
+    std::fs::write(
+        backend.join(".env.example"),
+        "DATABASE_URL=postgres://app:secret@localhost:5432/shop\n",
+    )
+    .unwrap();
+    git(&backend, &["add", ".env.example"]);
+    git(&backend, &["commit", "--quiet", "-m", "env example"]);
+    std::fs::write(
+        backend.join(".env"),
+        "DATABASE_URL=postgres://app:secret@localhost:5433/shop\n",
+    )
+    .unwrap();
+    let services: Config = toml::from_str(
+        "[[services]]\nkind = \"compose\"\nfile = \"backend/docker-compose.yml\"\n\
+         [services.env]\nDATABASE_URL = \"postgres\"\n",
+    )
+    .unwrap();
+    fx.config.services = services.services;
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let set = fx.worktrees_dir().join("feat+x");
+    let ports = BTreeMap::from([("postgres".to_string(), 17_004)]);
+
+    let env = super::services::resolve_service_env(&fx.paths, &fx.config, &set, &ports).unwrap();
+    assert_eq!(
+        env.get("DATABASE_URL").map(String::as_str),
+        Some("postgres://app:secret@localhost:17004/shop"),
+        "the set's backend/.env.example, as its checkout has it"
+    );
+    let shared = super::services::shared_service_env(&fx.paths, &fx.config);
+    assert_eq!(
+        shared.get("DATABASE_URL").map(String::as_str),
+        Some("postgres://app:secret@localhost:5433/shop"),
+        "the main folder's backend/.env, over its example"
+    );
+    assert_eq!(
+        super::env_dirs(&fx.paths.project, &fx.config),
+        ["backend", "frontend"]
+    );
 }
