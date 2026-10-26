@@ -4372,3 +4372,175 @@ fn a_folder_proposes_services_from_a_compose_file_at_a_repositorys_root() {
     );
     assert_eq!(choice.mechanism, None);
 }
+
+// ---- a folder of repositories ------------------------------------------
+
+/// A folder of git repositories, `files` written at their paths — the
+/// first component of each is its repository — and each repository's
+/// files that git does not ignore committed. With the project pando
+/// discovers for it.
+fn repo_folder(files: &[(&str, &str)]) -> (TempDir, crate::project::ProjectRef) {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("product");
+    let mut repos: Vec<String> = files
+        .iter()
+        .map(|(rel, _)| rel.split('/').next().unwrap().to_string())
+        .collect();
+    repos.sort();
+    repos.dedup();
+    for repo in &repos {
+        let at = root.join(repo);
+        std::fs::create_dir_all(&at).unwrap();
+        crate::testutil::git(&at, &["init", "--quiet", "--initial-branch=main"]);
+        std::fs::write(at.join(".gitignore"), ".env\nnode_modules/\n").unwrap();
+    }
+    for (rel, contents) in files {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+    for repo in &repos {
+        let at = root.join(repo);
+        crate::testutil::git(&at, &["add", "-A"]);
+        crate::testutil::git(&at, &["commit", "--quiet", "-m", "fixture"]);
+    }
+    let project = crate::project::ProjectRef::multi_repo(&root, repos).unwrap();
+    (dir, project)
+}
+
+/// What every slot proposes for a folder of repositories.
+fn proposals_of(project: &crate::project::ProjectRef) -> Vec<Proposal> {
+    propose(&project.root, &signals_of(project))
+}
+
+/// The per-app process tables the first `processes` option writes.
+fn per_app_processes(proposals: &[Proposal]) -> BTreeMap<String, ProcessConfig> {
+    proposals
+        .iter()
+        .find(|p| p.slot == Slot::Processes)
+        .expect("a processes proposal")
+        .candidates[0]
+        .processes
+        .clone()
+        .expect("process tables")
+}
+
+// An API repository beside a web one, the API's default port in its env
+// example and the web app told where the API is.
+const NODE_API: [(&str, &str); 3] = [
+    (
+        "api/package.json",
+        r#"{ "scripts": { "dev": "node --watch server.js" } }"#,
+    ),
+    ("api/package-lock.json", "{}"),
+    (
+        "api/server.js",
+        "const port = process.env.PORT || 3001;\nrequire('http').createServer().listen(port);\n",
+    ),
+];
+const VITE_WEB: [(&str, &str); 3] = [
+    ("web/package.json", r#"{ "scripts": { "dev": "vite" } }"#),
+    ("web/package-lock.json", "{}"),
+    ("web/vite.config.ts", "export default {}\n"),
+];
+
+// One repository's `PORT` is that repository's process's, which the
+// per-app form gives it: never a port variable for the whole project.
+#[test]
+fn a_repositorys_own_port_is_no_port_env_for_the_project() {
+    let mut files = NODE_API.to_vec();
+    files.extend(VITE_WEB);
+    files.push(("api/.env.example", "PORT=3001\n"));
+    let (_dir, project) = repo_folder(&files);
+    let proposals = proposals_of(&project);
+    assert!(
+        proposals.iter().all(|p| p.slot != Slot::PortEnv),
+        "{:?}",
+        proposals.iter().map(|p| p.slot).collect::<Vec<_>>()
+    );
+    // The api still takes its port from `PORT`, under its own role.
+    assert_eq!(
+        per_app_processes(&proposals)["api"].env["PORT"],
+        "{port:api}"
+    );
+
+    // The same below a repository whose root is not an app; a root
+    // example's own `PORT` is still the project's.
+    let dir = tree(&[
+        (
+            "backend/package.json",
+            r#"{ "scripts": { "dev": "node server.js" } }"#,
+        ),
+        ("backend/.env.example", "PORT=8000\n"),
+    ]);
+    let found = signals(dir.path());
+    assert!(port_proposal(&found, None).is_none());
+    std::fs::write(dir.path().join(".env.example"), "PORT=3000\n").unwrap();
+    let found = signals(dir.path());
+    assert_eq!(values(&port_proposal(&found, None).unwrap()), ["PORT"]);
+}
+
+// Every example is kept whole under its path: the merged list keeps a
+// key's first spelling, and the second repository's is not lost.
+#[test]
+fn each_repositorys_env_example_is_kept_under_its_path() {
+    let (_dir, project) = repo_folder(&[
+        (
+            "api/.env.example",
+            "DATABASE_URL=postgres://app@localhost:5432/app\n",
+        ),
+        ("api/package.json", "{}"),
+        (
+            "worker/.env.example",
+            "DATABASE_URL=mysql://app@localhost:3306/jobs\nQUEUE=jobs\n",
+        ),
+        ("worker/package.json", "{}"),
+    ]);
+    let found = signals_of(&project);
+    assert_eq!(
+        found.env_example,
+        [
+            (
+                "DATABASE_URL".to_string(),
+                "postgres://app@localhost:5432/app".to_string()
+            ),
+            ("QUEUE".to_string(), "jobs".to_string()),
+        ]
+    );
+    let files: Vec<(&str, usize)> = found
+        .env_examples
+        .iter()
+        .map(|e| (e.file.as_str(), e.entries.len()))
+        .collect();
+    assert_eq!(files, [("api/.env.example", 1), ("worker/.env.example", 2)]);
+    assert_eq!(found.env_example_file("DATABASE_URL"), "api/.env.example");
+    assert_eq!(found.env_example_file("QUEUE"), "worker/.env.example");
+    // Hand-built signals have no files behind them: the root's name.
+    assert_eq!(Signals::default().env_example_file("X"), ".env.example");
+}
+
+// An app directory's example says where *that* app expects the others,
+// and says it to that app alone.
+#[test]
+fn an_apps_own_reference_is_given_to_that_app_alone() {
+    let mut files = NODE_API.to_vec();
+    files.extend(VITE_WEB);
+    files.push(("api/.env.example", "PORT=3001\n"));
+    files.push(("web/.env.example", "API_URL=http://localhost:3001\n"));
+    files.push((
+        "worker/package.json",
+        r#"{ "scripts": { "dev": "node --watch worker.js" } }"#,
+    ));
+    files.push(("worker/package-lock.json", "{}"));
+    let (_dir, project) = repo_folder(&files);
+    let processes = per_app_processes(&proposals_of(&project));
+    assert_eq!(
+        processes["web"].env["API_URL"],
+        "http://localhost:{port:api}"
+    );
+    assert!(
+        !processes["worker"].env.contains_key("API_URL"),
+        "{:?}",
+        processes["worker"].env
+    );
+}

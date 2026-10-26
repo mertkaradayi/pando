@@ -499,16 +499,16 @@ fn app_port_env(signals: &Signals, app: &WorkspaceApp) -> Vec<String> {
 /// role nobody owns does not render, and an environment that cannot be
 /// rendered is a start that refuses.
 ///
-/// `env_example` is the root's, or one app's own: an Expo app's
+/// `env` is the root's env example, or one app's own: an Expo app's
 /// `EXPO_PUBLIC_API_URL=http://localhost:4000` in `apps/mobile` is read
 /// the same way, and [`processes_proposal`] gives it to that app alone.
-fn cross_references(
-    env_example: &[(String, String)],
+fn cross_references<'a>(
+    env: impl IntoIterator<Item = (&'a str, &'a str)>,
     apps: &[WorkspaceApp],
     owns_role: &[bool],
 ) -> Vec<(String, String, String)> {
     let mut out = Vec::new();
-    for (key, value) in env_example {
+    for (key, value) in env {
         let Some(port) = localhost_url_port(value) else {
             continue;
         };
@@ -528,7 +528,7 @@ fn cross_references(
             &format!(":{{port:{}}}", target.name),
             1,
         );
-        out.push((target.name.clone(), key.clone(), template));
+        out.push((target.name.clone(), key.to_string(), template));
     }
     out
 }
@@ -679,7 +679,9 @@ pub(super) fn processes_proposal(root: &Path, signals: &Signals) -> Option<Propo
         .zip(&port_envs)
         .map(|(app, port_env)| app.port == PortMechanism::InCommand || !port_env.is_empty())
         .collect();
-    let references = cross_references(&signals.env_example, &apps, &owns_role);
+    // The root's own example is said to every process; an app
+    // directory's is said to its own app below, and to no other.
+    let references = cross_references(signals.root_env_example(), &apps, &owns_role);
     let siblings = sibling_port_vars(signals, &apps, &owns_role);
     let mut processes: BTreeMap<String, ProcessConfig> = BTreeMap::new();
     for ((app, port_env), owns) in apps.iter().zip(&port_envs).zip(&owns_role) {
@@ -700,7 +702,10 @@ pub(super) fn processes_proposal(root: &Path, signals: &Signals) -> Option<Propo
         // Metro's own environment into the bundle, so the api's port has to
         // reach Metro as a variable. Over the root's, being nearer the app.
         let own = super::signals::env_example(&root.join(&app.dir));
-        for (target, key, template) in cross_references(&own, &apps, &owns_role) {
+        let own = own
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()));
+        for (target, key, template) in cross_references(own, &apps, &owns_role) {
             if target != app.name {
                 env.insert(key, template);
             }

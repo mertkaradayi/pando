@@ -35,7 +35,23 @@ pub struct Signals {
     /// the keys: a value that is a localhost URL is how one app says where
     /// another one listens. Below a root that is not an app, each app
     /// directory's example follows, for keys the ones before it lack.
+    ///
+    /// One merged list, the first spelling of a key winning: what the
+    /// project's services are read from, where two answers for one key
+    /// would be two services claiming one variable. Which file each pair
+    /// came from, and what a later file said for a key already here, is
+    /// in [`Signals::env_examples`].
     pub env_example: Vec<(String, String)>,
+    /// Every env example read, whole and under its path: the root's
+    /// `.env.example`, then each app directory's, `backend/.env.example`.
+    ///
+    /// The merged [`Signals::env_example`] cannot say whose a key is, and
+    /// in a folder of repositories that matters: `PORT` in one
+    /// repository's example is that repository's port, not the
+    /// project's, and evidence that names a key has to name the file it
+    /// is in. Defaulted so an older dump still deserialises.
+    #[serde(default)]
+    pub env_examples: Vec<EnvExample>,
     /// Framework marker files that exist.
     pub markers: Vec<String>,
     /// The compose files at the root, or, when it has none, those one
@@ -100,6 +116,16 @@ pub struct Signals {
     /// and a set of signals is the same shape for either kind.
     #[serde(skip)]
     pub repos: Vec<String>,
+}
+
+/// One env example file and what it says, in file order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvExample {
+    /// Relative to the root: `.env.example`, `backend/.env.example`.
+    pub file: String,
+    /// Its `[key, value]` pairs, read as [`Signals::env_example`]'s are.
+    #[serde(default)]
+    pub entries: Vec<(String, String)>,
 }
 
 /// One app directory below a root that has no manifest: what detection
@@ -183,6 +209,7 @@ fn signals_in(root: &Path, only: Option<&[String]>) -> Signals {
         version_files: present(root, &VERSION_FILES),
         runtime_requirements: crate::runtime::requirements(root),
         env_example: env_example(root),
+        env_examples: env_example_in(root, "").into_iter().collect(),
         markers: present(root, &frameworks::marker_files()),
         compose_files: compose_files(root, &repos, &ignored),
         ignored_present: ignored_files(&ignored),
@@ -253,10 +280,13 @@ fn read_app_dirs(root: &Path, signals: &mut Signals) {
         signals
             .runtime_requirements
             .extend(crate::runtime::requirements_in(root, &dir));
-        for (key, value) in env_example(&path) {
-            if !signals.env_example.iter().any(|(held, _)| *held == key) {
-                signals.env_example.push((key, value));
+        if let Some(example) = env_example_in(root, &dir) {
+            for (key, value) in &example.entries {
+                if !signals.env_example.iter().any(|(held, _)| held == key) {
+                    signals.env_example.push((key.clone(), value.clone()));
+                }
             }
+            signals.env_examples.push(example);
         }
         read_local_env(root, &dir, signals);
     }
@@ -690,6 +720,42 @@ impl Signals {
     pub fn env_keys(&self) -> impl Iterator<Item = &str> {
         self.env_example.iter().map(|(key, _)| key.as_str())
     }
+
+    /// The file `key`'s pair in [`Signals::env_example`] was read from, as
+    /// evidence names it: `backend/.env.example`. `.env.example` where
+    /// nothing says, which is the root's own file and what signals built
+    /// by hand stand for.
+    pub fn env_example_file(&self, key: &str) -> &str {
+        self.env_examples
+            .iter()
+            .find(|example| example.entries.iter().any(|(held, _)| held == key))
+            .map_or(ENV_EXAMPLES[0], |example| example.file.as_str())
+    }
+
+    /// The root's own env example: what the project as a whole says, as
+    /// against what one of its app directories says for itself.
+    ///
+    /// Below a root that is not an app — a folder of repositories, or a
+    /// repository of sibling apps — an app's example is about that app
+    /// and nothing else: its `PORT` is the port its own process reads,
+    /// and the per-app processes give it that already. Signals built by
+    /// hand, with no files behind them, are all the root's.
+    pub fn root_env_example(&self) -> Vec<(&str, &str)> {
+        fn pairs(entries: &[(String, String)]) -> Vec<(&str, &str)> {
+            entries
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str()))
+                .collect()
+        }
+        if self.env_examples.is_empty() {
+            return pairs(&self.env_example);
+        }
+        self.env_examples
+            .iter()
+            .find(|example| !example.file.contains('/'))
+            .map(|example| pairs(&example.entries))
+            .unwrap_or_default()
+    }
 }
 
 /// Entries of the first env example file that exists, in file order.
@@ -698,16 +764,28 @@ impl Signals {
 /// trailing comment dropped: `API_PORT="4000"` is port 4000, and
 /// `export PORT=3000` declares `PORT`.
 pub(super) fn env_example(root: &Path) -> Vec<(String, String)> {
-    for name in ENV_EXAMPLES {
-        let Ok(text) = std::fs::read_to_string(root.join(name)) else {
-            continue;
-        };
-        return text
-            .lines()
-            .filter_map(crate::services::parse_env_line)
-            .collect();
-    }
-    Vec::new()
+    env_example_in(root, "")
+        .map(|example| example.entries)
+        .unwrap_or_default()
+}
+
+/// [`env_example`] of `dir`, a directory under `root` (`""` for the root
+/// itself), with the file it was read from under its path.
+fn env_example_in(root: &Path, dir: &str) -> Option<EnvExample> {
+    let at = root.join(dir);
+    ENV_EXAMPLES.iter().find_map(|name| {
+        let text = std::fs::read_to_string(at.join(name)).ok()?;
+        Some(EnvExample {
+            file: match dir {
+                "" => name.to_string(),
+                dir => format!("{dir}/{name}"),
+            },
+            entries: text
+                .lines()
+                .filter_map(crate::services::parse_env_line)
+                .collect(),
+        })
+    })
 }
 
 /// The value `key` has in a directory's own env files: its local ones
