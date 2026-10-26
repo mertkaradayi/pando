@@ -8968,3 +8968,20 @@ fn tab_in_a_sets_create_dialog_comes_back_to_each_repositorys_own_base() {
     press(&mut app, KeyCode::BackTab);
     assert_eq!(base(&app).as_deref(), Some("develop"));
 }
+
+// The status line after a create and the stopped row in the detail pane
+// say how to start it in the same words.
+#[test]
+fn a_create_says_how_to_start_it_as_the_detail_pane_does() {
+    let mut app = test_app(&["feat+one"]);
+    pending_that_says(
+        &mut app,
+        "feat+x",
+        PendingKind::Create,
+        &["checking out feat/x"],
+        Ok(PendingOutcome::Created("feat+x".into())),
+    );
+    wait_for_pending(&mut app);
+    let (message, _) = app.active_status().unwrap();
+    assert_eq!(message, "created feat+x — s starts it · ⏎ picks a mode");
+}
