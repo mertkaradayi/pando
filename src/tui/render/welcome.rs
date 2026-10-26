@@ -92,10 +92,11 @@ pub(super) fn render_welcome(f: &mut Frame, area: Rect, app: &App) {
             home_relative(&worktrees_dir)
         )
     };
-    for row in wrap_text(
-        &format!("Your checkout is never touched: {where_they_live}."),
-        width,
-    ) {
+    let yours = match app.paths.project.is_multi_repo() {
+        true => "Your checkouts are",
+        false => "Your checkout is",
+    };
+    for row in wrap_text(&format!("{yours} never touched: {where_they_live}."), width) {
         lines.push(Line::styled(row, Style::new().fg(text_muted())));
     }
 
@@ -115,10 +116,22 @@ pub(super) fn render_welcome(f: &mut Frame, area: Rect, app: &App) {
 /// welcome before a test has passed.
 fn welcome_facts(app: &App, lines: &mut Vec<Line<'static>>, width: usize) {
     let project = &app.paths.project.display_name;
-    let intro = format!(
-        "pando runs one dev environment per branch of {project}: a git worktree, \
-         its dev server on its own port, and its logs."
-    );
+    let repos = &app.paths.project.repos;
+    // A multi-repo project is said to be what it is: a folder of
+    // repositories, each branch of it a set of worktrees.
+    let intro = match app.paths.project.is_multi_repo() {
+        false => format!(
+            "pando runs one dev environment per branch of {project}: a git worktree, \
+             its dev server on its own port, and its logs."
+        ),
+        true => format!(
+            "{project} is a folder of {} repositories: {}. pando runs one dev environment \
+             per branch of it: a set of git worktrees, one of each repository, its dev \
+             servers on their own ports, and its logs.",
+            repos.len(),
+            repos.join(", ")
+        ),
+    };
     for row in wrap_text(&intro, width) {
         lines.push(Line::styled(row, Style::new().fg(text())));
     }
@@ -128,11 +141,12 @@ fn welcome_facts(app: &App, lines: &mut Vec<Line<'static>>, width: usize) {
         .as_ref()
         .map(|m| m.path.clone())
         .unwrap_or_else(|| app.paths.root().to_path_buf());
+    // A folder whose repositories are on different branches says each.
     let branch = app
         .main
         .as_ref()
-        .and_then(|m| m.branch.clone())
-        .map(|b| format!("  on {b}"))
+        .filter(|m| m.branch.is_some() || m.is_mixed())
+        .map(|m| format!("  on {}", m.branch_shown()))
         .unwrap_or_default();
     lines.push(fact(
         "project",

@@ -672,9 +672,14 @@ fn with_art(
             .map(|row| art_line(row, left, alive))
             .collect();
         lines.push(stem_names(&grove.stems, left, art_width));
-        let caption = match alive {
-            true => "one root, every branch alive",
-            false => "Pando: one aspen, 47,000 stems, one root. Your repo, every branch alive.",
+        let caption = match (alive, app.paths.project.is_multi_repo()) {
+            (true, _) => "one root, every branch alive",
+            (false, false) => {
+                "Pando: one aspen, 47,000 stems, one root. Your repo, every branch alive."
+            }
+            (false, true) => {
+                "Pando: one aspen, 47,000 stems, one root. Your repos, every branch alive."
+            }
         };
         lines.push(Line::from(vec![
             Span::raw(" ".repeat(left)),
