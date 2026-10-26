@@ -1549,12 +1549,12 @@ fn narrow_tabs_keep_the_active_label_and_shrink_the_rest_to_digits() {
         "install".to_string(),
         "migrate".to_string(),
     ];
-    let wide = source_tabs(&sources, "api", 80);
+    let wide = source_tabs(&sources, &[], "api", 80);
     let wide_text: String = wide.spans.iter().map(|s| s.content.to_string()).collect();
     assert!(wide_text.contains("1:dev"), "{wide_text}");
     assert!(wide_text.contains("4:migrate"), "{wide_text}");
 
-    let narrow = source_tabs(&sources, "api", 20);
+    let narrow = source_tabs(&sources, &[], "api", 20);
     let narrow_text: String = narrow.spans.iter().map(|s| s.content.to_string()).collect();
     assert!(
         narrow_text.contains("2:api"),
@@ -5391,4 +5391,47 @@ fn a_sets_repository_rows_keep_what_differs_at_eighty_columns() {
     let mut app = set_app(vec![checkout_of("backend"), other]);
     let rendered = text_of(&draw(&mut app, 140, 30));
     assert!(rendered.contains("frontend  main"), "{rendered}");
+}
+
+#[test]
+fn a_sets_log_tabs_name_each_process_repository_while_they_fit() {
+    let sources = vec!["all".to_string(), "api".to_string(), "web".to_string()];
+    let repos = [None, Some("backend"), Some("frontend")];
+    let text =
+        |line: Line| -> String { line.spans.iter().map(|s| s.content.to_string()).collect() };
+    let wide = text(source_tabs(&sources, &repos, "api", 80));
+    assert!(
+        wide.contains("1:all")
+            && wide.contains("2:api (backend)")
+            && wide.contains("3:web (frontend)"),
+        "{wide}"
+    );
+    // Narrower, the repositories go before any label does.
+    let middle = text(source_tabs(&sources, &repos, "api", 26));
+    assert!(
+        middle.contains("3:web") && !middle.contains("(backend)"),
+        "{middle}"
+    );
+    let narrow = text(source_tabs(&sources, &repos, "api", 12));
+    assert!(
+        narrow.contains("2:api") && narrow.chars().count() <= 12,
+        "{narrow}"
+    );
+}
+
+// `q back  2W`, not `q back 2W`: the count is not part of the hint.
+#[test]
+fn the_viewer_footer_sets_the_warning_count_apart_from_the_hints() {
+    let (_dir, mut app) = app_with_logs(&["feat+one"]);
+    write_log(&app, "feat+one", "dev", &["WARN slow", "WARN slower"]);
+    let painted = viewer_frame(&mut app, 120, 14);
+    let footer = painted
+        .lines()
+        .find(|l| l.contains("2W"))
+        .unwrap_or_else(|| panic!("no warning count: {painted}"));
+    assert!(footer.contains("  2W"), "{footer}");
+
+    write_log(&app, "feat+one", "dev", &["ERROR boom", "WARN slow"]);
+    let painted = viewer_frame(&mut app, 120, 14);
+    assert!(painted.contains("  1E 1W"), "{painted}");
 }
