@@ -51,6 +51,12 @@ pub const DISCARD_CHANGES: Remedy = Remedy {
     cli: "pass --force to let git discard them",
 };
 
+/// `rm` of a set whose directory holds more than its checkouts.
+pub const REMOVE_BESIDE: Remedy = Remedy {
+    neutral: "confirm to remove it with the set",
+    cli: "pass --force to remove it with the set",
+};
+
 /// `rm` while Docker is down, which would strand the worktree's volumes.
 pub const REMOVE_WITHOUT_DOCKER: Remedy = Remedy {
     neutral: "start Docker and remove it again, or confirm to remove it without Docker",
@@ -70,6 +76,7 @@ pub const ALL: &[Remedy] = &[
     SHARED_ON_PURPOSE,
     REMOVE_ANYWAY,
     DISCARD_CHANGES,
+    REMOVE_BESIDE,
     REMOVE_WITHOUT_DOCKER,
     NAME_A_BASE,
 ];

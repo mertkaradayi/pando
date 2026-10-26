@@ -17,6 +17,10 @@ const REMEDIES: &[(&str, &str)] = &[
         "press F in the remove dialog to let git discard them",
     ),
     (
+        "confirm to remove it with the set",
+        "press F in the remove dialog to remove it with the set",
+    ),
+    (
         "confirm to remove it without Docker",
         "press F in the remove dialog to remove it without Docker",
     ),
