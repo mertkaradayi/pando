@@ -93,8 +93,11 @@ pub fn new(
             }
             .map(str::to_string)
         });
-        let source = resolve_create_source(&checkout, branch, requested, progress)
-            .with_context(|| in_repo(&repo))?;
+        let source = resolve_create_source(&checkout, branch, requested, progress);
+        let source = match &repo {
+            Some(repo) => source.with_context(|| format!("in the repository {repo}"))?,
+            None => source?,
+        };
         sources.push(RepoSource {
             repo,
             root: checkout,
@@ -136,14 +139,6 @@ pub(super) fn repo_checkouts(paths: &PandoPaths, root: &Path) -> Vec<(Option<Str
             .iter()
             .map(|repo| (Some(repo.clone()), root.join(repo)))
             .collect(),
-    }
-}
-
-/// What an error about one repository of several says first.
-fn in_repo(repo: &Option<String>) -> String {
-    match repo {
-        Some(repo) => format!("in the repository {repo}"),
-        None => "in this repository".to_string(),
     }
 }
 
@@ -957,6 +952,66 @@ fn refuse_what_git_would(shown: &str, target: &Worktree, checkout: &Worktree) ->
     }
 }
 
+/// What a set's directory holds besides the checkouts git lists in it, by
+/// name, sorted. Empty for a worktree of one repository.
+fn beside_checkouts(target: &Worktree) -> Vec<String> {
+    if !target.is_set() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(&target.path) else {
+        return Vec::new();
+    };
+    let mut strangers: Vec<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| !target.repos.iter().any(|checkout| checkout.name == *name))
+        .collect();
+    strangers.sort();
+    strangers
+}
+
+/// Removes a set's directory once its checkouts are gone, saying what kept
+/// it when something did. What is left in one pando made is no
+/// repository's, and goes as `--force` takes a checkout's ignored files —
+/// except a git checkout of its own, a repository cloned there or a
+/// worktree the project no longer counts, which is never pando's to
+/// delete. One pando did not make goes only while empty.
+fn clear_set_dir(target: &Worktree, ours: bool) -> Option<String> {
+    let mut kept = Vec::new();
+    if ours {
+        for name in beside_checkouts(target) {
+            let path = target.path.join(&name);
+            if path.join(".git").exists() {
+                kept.push(name);
+                continue;
+            }
+            let removed = match path.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+                true => std::fs::remove_dir_all(&path),
+                false => std::fs::remove_file(&path),
+            };
+            if removed.is_err() {
+                kept.push(name);
+            }
+        }
+    }
+    match std::fs::remove_dir(&target.path) {
+        Ok(()) => None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => {
+            let left = match kept.is_empty() {
+                true => beside_checkouts(target),
+                false => kept,
+            };
+            Some(format!(
+                "kept {}: {} in it {} not pando's to remove",
+                target.path.display(),
+                left.join(", "),
+                if left.len() == 1 { "is" } else { "are" }
+            ))
+        }
+    }
+}
+
 /// Undoes a `new` that failed after `git worktree add`. The worktree goes;
 /// so does the branch, but only when pando created it in this same call —
 /// a branch that existed before is the user's work, not pando's to delete.
@@ -1151,6 +1206,20 @@ pub fn rm(
         for checkout in target.checkouts() {
             refuse_what_git_would(&shown, target, checkout)?;
         }
+        // A set's directory may hold more than its checkouts: notes, a
+        // repository cloned into it by hand, or the checkout of one the
+        // project no longer counts. None of it is git's to judge, and all
+        // of it would go with the set.
+        let strangers = beside_checkouts(target);
+        if !strangers.is_empty() {
+            bail!(
+                "{shown} holds {} beside its repositories' checkouts, in {} — nothing was \
+                 stopped or removed; move it out, or {}",
+                strangers.join(", "),
+                target.path.display(),
+                remedy::DISCARD_CHANGES
+            );
+        }
     }
 
     // And Docker's, for the same reason. `rm` is what takes a worktree's
@@ -1274,15 +1343,10 @@ pub fn rm(
             }
             removed.push(&checkout.name);
         }
-        // A set's own directory is pando's, not git's: what is left in it
-        // once every checkout is gone is no repository's. Taken whole when
-        // pando made it, as `--force` takes a worktree's ignored files;
-        // only while empty otherwise.
-        if target.is_set() {
-            let _ = match created_by_pando {
-                true => std::fs::remove_dir_all(&target.path),
-                false => std::fs::remove_dir(&target.path),
-            };
+        if target.is_set()
+            && let Some(kept) = clear_set_dir(target, created_by_pando)
+        {
+            progress(&kept);
         }
     }
 

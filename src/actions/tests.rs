@@ -18914,3 +18914,53 @@ fn ls_of_a_set_reads_every_repository_against_its_own_base() {
     assert_eq!(set.repos[1].dirty, Some(true));
     assert_eq!(found.main.dirty, Some(false));
 }
+
+#[test]
+fn rm_of_a_set_never_takes_what_sits_beside_its_checkouts_unasked() {
+    let fx = multi_repo_fixture();
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let set = fx.worktrees_dir().join("feat+x");
+    std::fs::write(set.join("notes.md"), "mine\n").unwrap();
+    // A repository cloned into the set by hand, with work of its own.
+    let infra = set.join("infra");
+    std::fs::create_dir_all(&infra).unwrap();
+    git(&infra, &["init", "--quiet", "--initial-branch=main"]);
+
+    let err = rm(&fx.paths, "feat+x", false, false).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("holds infra, notes.md beside its repositories' checkouts"),
+        "{err:#}"
+    );
+    assert_eq!(listed_in(&fx, "backend").len(), 2, "nothing was removed");
+
+    // Forced, what is no repository's goes; a checkout of its own stays,
+    // and so does the directory holding it.
+    let said = std::cell::RefCell::new(Vec::new());
+    super::rm(&fx.paths, "feat+x", false, true, &|line| {
+        said.borrow_mut().push(line.to_string())
+    })
+    .unwrap();
+    assert!(!set.join("notes.md").exists());
+    assert!(infra.join(".git").is_dir());
+    assert!(!set.join("backend").exists() && !set.join("frontend").exists());
+    assert!(
+        said.borrow()
+            .iter()
+            .any(|line| line.contains("infra in it is not pando's to remove")),
+        "{:?}",
+        said.borrow()
+    );
+    assert!(fx.state().worktrees.is_empty());
+}
+
+#[test]
+fn a_repository_of_the_folder_on_its_own_lists_no_sets_checkout() {
+    let fx = multi_repo_fixture();
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    new(&fx.paths, &fx.config, "feat/y", None, &noop).unwrap();
+
+    let backend = ProjectRef::from_root(fx.root.join("backend")).unwrap();
+    let found = worktree::discover_all(&backend).unwrap();
+    assert_eq!(found.main.name, "backend");
+    assert!(found.worktrees.is_empty(), "{:?}", found.worktrees);
+}

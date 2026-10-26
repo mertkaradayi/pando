@@ -228,7 +228,7 @@ pub fn pr_rows<'a>(prs: &'a [PrInfo], input: &str) -> Vec<&'a PrInfo> {
                 || pr
                     .repo
                     .as_deref()
-                    .is_some_and(|repo| repo.contains(&needle))
+                    .is_some_and(|repo| repo.to_lowercase().contains(&needle))
         })
         .collect()
 }

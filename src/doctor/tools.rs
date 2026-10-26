@@ -496,7 +496,7 @@ fn project_programs(paths: &PandoPaths, config: &Config) -> Vec<ProjectProgram> 
             None => out.push((program, needed_for, Some(missing))),
         }
     }
-    let signals = detect::signals(paths.root());
+    let signals = detect::signals_of(&paths.project);
     // The root's lockfiles, then each app directory's under its path.
     let app_lockfiles = signals.app_dirs.iter().flat_map(|app| {
         app.lockfiles

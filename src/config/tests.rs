@@ -2352,15 +2352,27 @@ fn repos_names_only_the_folders_repositories() {
     validate(&config, &project).unwrap();
     assert_eq!(config.base_for_repo("backend", "feat/x"), Some("develop"));
     assert_eq!(config.base_for_repo("frontend", "feat/x"), None);
+    // A rule is about the branch, and comes first in every repository.
+    config.branches.rules = vec![BranchRule {
+        match_: "hotfix/*".into(),
+        base: "release".into(),
+    }];
+    config.project.base = Some("trunk".into());
+    assert_eq!(config.base_for_repo("backend", "hotfix/1"), Some("release"));
+    assert_eq!(config.base_for_repo("backend", "feat/x"), Some("develop"));
+    assert_eq!(config.base_for_repo("frontend", "feat/x"), Some("trunk"));
 
-    config.repos.members = vec!["frontend".into()];
+    config.repos.members = vec!["frontend".into(), "infra".into()];
     let mut narrowed = project.clone();
-    config.repos.narrow(&mut narrowed).unwrap();
+    let warnings = config.repos.narrow(&mut narrowed);
     assert_eq!(narrowed.repos, ["frontend"]);
-    config.repos.members = vec!["infra".into()];
-    let err = config.repos.narrow(&mut project.clone()).unwrap_err();
     assert!(
-        format!("{err:#}").contains("the repositories there are backend, frontend"),
-        "{err:#}"
+        warnings[0].contains("names \"infra\"") && warnings[0].contains("left out"),
+        "{warnings:?}"
     );
+    config.repos.members = vec!["infra".into()];
+    let mut untouched = project.clone();
+    let warnings = config.repos.narrow(&mut untouched);
+    assert_eq!(untouched.repos, ["backend", "frontend"]);
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
 }

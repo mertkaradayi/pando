@@ -52,6 +52,13 @@ pub struct Adoption {
 }
 
 pub(super) fn adoptable(paths: &PandoPaths) -> Vec<Adoptable> {
+    // A folder of repositories that moved leaves its sets' checkouts
+    // pointing at repositories that are gone, and `git worktree repair`
+    // has to be run in each of them for each checkout: not offered until
+    // it is built.
+    if paths.project.is_multi_repo() {
+        return Vec::new();
+    }
     let Ok(entries) = std::fs::read_dir(paths.projects_dir()) else {
         return Vec::new();
     };
@@ -231,6 +238,13 @@ pub fn adopt(
 ) -> anyhow::Result<Adoption> {
     if old_id == paths.project_id() {
         anyhow::bail!("{old_id} is this repository's own project folder");
+    }
+    if paths.project.is_multi_repo() {
+        anyhow::bail!(
+            "a project of several repositories cannot adopt a folder yet — move {} back where \
+             it was, or `pando rm` its sets there first",
+            paths.project.display_name
+        );
     }
     // Exactly one ordinary directory name. `.` and `..` are each one
     // component too, and either of them would make the destination a

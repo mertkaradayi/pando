@@ -141,7 +141,9 @@ fn run(cli: Cli) -> Result<()> {
     }
     // A multi-repo project's repositories are what is on disk, unless its
     // config names fewer.
-    loaded.config.repos.narrow(&mut paths.project)?;
+    for warning in loaded.config.repos.narrow(&mut paths.project) {
+        to_stderr(&format!("pando: {warning}\n"));
+    }
     // Once, before dispatch: every command shares the same home, so a home
     // in the working tree is worth refusing even on a read-only command.
     actions::guard_write_locations(&paths, &loaded.config)?;

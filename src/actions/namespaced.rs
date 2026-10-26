@@ -598,7 +598,7 @@ fn services_with_recipes(
 /// its image: the root's own, as `signals` lists them.
 fn compose_services(paths: &PandoPaths) -> Vec<(String, Option<String>)> {
     let mut out: Vec<(String, Option<String>)> = Vec::new();
-    for file in crate::detect::signals(paths.root()).compose_files {
+    for file in crate::detect::signals_of(&paths.project).compose_files {
         let Ok(parsed) = crate::compose::read(&paths.root().join(&file)) else {
             continue;
         };

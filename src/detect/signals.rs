@@ -140,7 +140,23 @@ pub(super) const COMPOSE_FILES: [&str; 4] = [
 
 /// Reads every tier 1 signal from the main checkout.
 pub fn signals(root: &Path) -> Signals {
-    let ignored = Ignored::read(root);
+    signals_in(root, None)
+}
+
+/// [`signals`] of a project: of a multi-repo project, what its own
+/// repositories say, leaving out any other the folder holds that `[repos]
+/// members` does not name.
+pub fn signals_of(project: &crate::project::ProjectRef) -> Signals {
+    signals_in(
+        &project.root,
+        project.is_multi_repo().then_some(project.repos.as_slice()),
+    )
+}
+
+/// [`signals`], with a folder of repositories read for `only` those when
+/// it names them.
+fn signals_in(root: &Path, only: Option<&[String]>) -> Signals {
+    let ignored = Ignored::read(root, only);
     let manifest = std::fs::read_to_string(root.join("package.json")).unwrap_or_default();
     let mut signals = Signals {
         scripts: parse_scripts(&manifest),
@@ -163,6 +179,13 @@ pub fn signals(root: &Path) -> Signals {
     signals.workspace_env_links = super::workspaces::workspace_env_links(root, &signals);
     if !has_manifest(root, &signals) {
         signals.app_dirs = app_dirs(root);
+        if let Some(only) = only {
+            let repos = crate::project::repos_in(root);
+            signals.app_dirs.retain(|app| {
+                let first = app.dir.split('/').next().unwrap_or_default().to_string();
+                !repos.contains(&first) || only.contains(&first)
+            });
+        }
         read_app_dirs(root, &mut signals);
     }
     signals
@@ -653,7 +676,7 @@ pub(super) fn env_file_value(dir: &Path, key: &str) -> Option<String> {
 /// git name such a directory once, as `name/`, rather than list every file
 /// under `node_modules` or `target` for the filter below to throw away.
 pub(super) fn ignored_present(root: &Path) -> Vec<String> {
-    ignored_files(&Ignored::read(root))
+    ignored_files(&Ignored::read(root, None))
 }
 
 /// What `git ls-files --others --ignored --directory` lists under a root:
@@ -666,11 +689,13 @@ struct Ignored {
 
 impl Ignored {
     /// A folder of repositories is no repository itself: its listing is
-    /// each repository's, under the repository's name.
-    fn read(root: &Path) -> Ignored {
-        let repos = match root.join(".git").exists() {
-            true => Vec::new(),
-            false => crate::project::repos_in(root),
+    /// each repository's, under the repository's name — of `only` those,
+    /// when it names them.
+    fn read(root: &Path, only: Option<&[String]>) -> Ignored {
+        let repos = match (root.join(".git").exists(), only) {
+            (true, _) => Vec::new(),
+            (false, Some(only)) => only.to_vec(),
+            (false, None) => crate::project::repos_in(root),
         };
         if repos.is_empty() {
             return Self::read_repository(root);
