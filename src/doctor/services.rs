@@ -538,9 +538,11 @@ fn native_instances(paths: &PandoPaths, service: &str) -> Vec<NativeInstance> {
 /// `include` the config does not load at all, and that is the Config
 /// section's headline problem rather than a second copy of it here.
 ///
-/// And only in a compose file pando takes services from: the root's, or
-/// one a `[[services]]` table names. `docker/compose.yml` below the root
-/// is never offered, so a name in it collides with nothing.
+/// And only in a compose file pando takes services from: the root's — in
+/// a folder of repositories, the one detection proposes from a
+/// repository's root — or one a `[[services]]` table names.
+/// `docker/compose.yml` below the root is never offered, so a name in it
+/// collides with nothing.
 ///
 /// The fix is pando's side of the pair, the role: the compose file is the
 /// repository's, and nobody should edit a committed file to suit pando.
@@ -555,7 +557,13 @@ fn name_collisions(paths: &PandoPaths, config: &Config, findings: &mut Vec<Findi
         return;
     }
     let answered = declared_services(config);
-    let mut offered: Vec<String> = crate::compose::find(paths.root()).into_iter().collect();
+    // A folder's is read from its repositories, which costs the git calls
+    // a repository's own root does not need.
+    let proposed = match paths.project.is_multi_repo() {
+        true => detect::compose_file(paths.root(), &detect::signals_of(&paths.project)),
+        false => crate::compose::find(paths.root()),
+    };
+    let mut offered: Vec<String> = proposed.into_iter().collect();
     for service in &config.services {
         if let ServiceConfig::Compose { file, .. } = service
             && !offered.contains(file)

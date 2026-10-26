@@ -48,7 +48,7 @@ pub use proposal::{
 };
 pub use services::{
     MachineEvidence, NO_PREFERENCE_EVIDENCE, SCHEMA_HOOK, ServiceChoice, ServiceSource,
-    addressed_engines, service_choice, service_choice_for,
+    addressed_engines, compose_file, service_choice, service_choice_for,
 };
 pub use signals::{AppDir, Signals, Target, is_gitignored, is_ignored_in, signals, signals_of};
 pub use workspaces::{UNSTARTED, WorkspaceApp, workspace_apps};

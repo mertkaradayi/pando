@@ -347,7 +347,7 @@ pub fn service_choice_for(
         .as_ref()
         .and_then(|p| p.service_file())
         .map(str::to_string)
-        .or_else(|| crate::compose::find(root));
+        .or_else(|| compose_file(root, signals));
     let choice = service_choice(
         file.as_deref(),
         compose.as_ref().map(|p| p.candidates.len()).unwrap_or(0),
@@ -358,14 +358,58 @@ pub fn service_choice_for(
     noted_below_root(choice, file.as_deref(), signals)
 }
 
+/// The compose file services are proposed from, relative to `root`, the
+/// form config holds: the one at the root of a repository, and in a
+/// folder of repositories the first of those at a repository's own root,
+/// `infra/docker-compose.yml`, which is where a set has it too.
+pub fn compose_file(root: &Path, signals: &Signals) -> Option<String> {
+    match signals.repos.is_empty() {
+        true => crate::compose::find(root),
+        false => signals.compose_files.first().cloned(),
+    }
+}
+
 /// A choice that found no compose file at the root, with the ones below
 /// it named: a developer told "no compose file" while `docker/compose.yml`
-/// sits in the repository would rightly stop trusting the rest.
+/// sits in the repository would rightly stop trusting the rest. In a
+/// folder of repositories, the ones in another repository than the file
+/// proposed from are named instead, since only one file is.
 fn noted_below_root(
     mut choice: ServiceChoice,
     compose_file: Option<&str>,
     signals: &Signals,
 ) -> ServiceChoice {
+    if !signals.repos.is_empty() {
+        let repo_of = |file: &str| file.split('/').next().unwrap_or_default().to_string();
+        match compose_file {
+            None => {
+                if let Some(first) = choice.evidence.first_mut() {
+                    *first =
+                        "no repository of this folder has a compose file at its root".to_string();
+                }
+            }
+            Some(file) => {
+                let others: Vec<&str> = signals
+                    .compose_files
+                    .iter()
+                    .filter(|other| repo_of(other) != repo_of(file))
+                    .map(String::as_str)
+                    .collect();
+                if !others.is_empty() {
+                    let at = choice.evidence.len().min(1);
+                    choice.evidence.insert(
+                        at,
+                        format!(
+                            "services are proposed from {file}, not from {} — add a \
+                             `[[services]]` entry for another by hand",
+                            listed(&others)
+                        ),
+                    );
+                }
+            }
+        }
+        return choice;
+    }
     if compose_file.is_none() && !signals.compose_files.is_empty() {
         let at = choice.evidence.len().min(1);
         choice.evidence.insert(
@@ -518,7 +562,7 @@ pub(super) fn compose_services_proposal(
     signals: &Signals,
     resolve: Option<ComposeResolver<'_>>,
 ) -> Option<Proposal> {
-    let file = crate::compose::find(root)?;
+    let file = compose_file(root, signals)?;
     let path = root.join(&file);
     let mut parsed = crate::compose::read(&path).ok()?;
     // Half a file read is not a proposal. Compose resolves `extends:`, a
@@ -673,7 +717,7 @@ pub(super) fn services_proposal(
         .as_ref()
         .and_then(|p| p.service_file())
         .map(str::to_string)
-        .or_else(|| crate::compose::find(root));
+        .or_else(|| compose_file(root, signals));
     let compose_candidates = compose.as_ref().map(|p| p.candidates.len()).unwrap_or(0);
     let choice = service_choice(
         compose_file.as_deref(),
