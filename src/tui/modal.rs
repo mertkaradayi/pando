@@ -619,7 +619,7 @@ fn render_pull_requests(f: &mut Frame, area: Rect, input: &str, selected: usize,
     let start = selected.saturating_sub(visible.saturating_sub(1));
     let number_width = rows
         .iter()
-        .map(|pr| text_width(&format!("#{}", pr.number)))
+        .map(|pr| text_width(&pr.label()))
         .max()
         .unwrap_or(0);
     let lines: Vec<Line> = rows
@@ -629,7 +629,7 @@ fn render_pull_requests(f: &mut Frame, area: Rect, input: &str, selected: usize,
         .take(visible)
         .map(|(i, pr)| {
             let marker = if i == selected { "▸ " } else { "  " };
-            let number = format!("{:<number_width$} ", format!("#{}", pr.number));
+            let number = format!("{:<number_width$} ", pr.label());
             let branch = pr.local_branch();
             let (tag, color) = if app.is_main_branch(&branch) {
                 ("main checkout".to_string(), text_muted())

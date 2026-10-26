@@ -50,5 +50,5 @@ pub use services::{
     MachineEvidence, NO_PREFERENCE_EVIDENCE, SCHEMA_HOOK, ServiceChoice, ServiceSource,
     addressed_engines, service_choice, service_choice_for,
 };
-pub use signals::{AppDir, Signals, Target, is_gitignored, signals};
+pub use signals::{AppDir, Signals, Target, is_gitignored, is_ignored_in, signals};
 pub use workspaces::{UNSTARTED, WorkspaceApp, workspace_apps};

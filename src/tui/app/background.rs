@@ -507,7 +507,7 @@ impl App {
         } else {
             self.enriching += 1;
         }
-        let root = self.paths.root().to_path_buf();
+        let project = self.paths.project.clone();
         let tx = self.event_tx.clone();
         // A few rows are measured against the base the detail pane names,
         // which discovery keeps current; the full pass resolves its own.
@@ -524,7 +524,7 @@ impl App {
             });
             // Narrow pool: every job forks `git status` against a full tree,
             // and startup enrichment must not starve the UI.
-            worktree::enrich_stream(&root, items, known_base, etx, 4);
+            worktree::enrich_stream(&project, items, known_base, etx, 4);
             let _ = pump.join();
             let _ = tx.send(AppEvent::EnrichDone { quiet });
         });
@@ -543,10 +543,10 @@ impl App {
             return;
         }
         self.pr_fetching = true;
-        let root = self.paths.root().to_path_buf();
+        let project = self.paths.project.clone();
         let tx = self.event_tx.clone();
         thread::spawn(move || {
-            let result = worktree::list_prs(&root).map_err(|e| format!("{e:#}"));
+            let result = worktree::list_project_prs(&project).map_err(|e| format!("{e:#}"));
             let _ = tx.send(AppEvent::PrsReady(result));
         });
     }
@@ -574,10 +574,12 @@ impl App {
     }
 
     pub(super) fn spawn_branch_fetch(&self) {
-        let root = self.paths.root().to_path_buf();
+        let project = self.paths.project.clone();
         let tx = self.event_tx.clone();
         thread::spawn(move || {
-            let _ = tx.send(AppEvent::BranchesReady(worktree::list_branches(&root)));
+            let _ = tx.send(AppEvent::BranchesReady(worktree::list_project_branches(
+                &project,
+            )));
         });
     }
 }

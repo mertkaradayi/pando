@@ -44,6 +44,11 @@ pub struct Worktree {
     /// A rebase, a merge or another git operation left half-done in it,
     /// read from its git directory without running git.
     pub in_progress: Option<InProgress>,
+    /// A multi-repo project's checkout is a set: one checkout of each
+    /// repository in it, named for its repository, in the project's order.
+    /// The fields above then say what the set's checkouts say together
+    /// ([`Worktree::set`]). Empty for a checkout of one repository.
+    pub repos: Vec<Worktree>,
 }
 
 /// A git operation stopped halfway in a checkout — by a conflict, most
@@ -166,6 +171,51 @@ impl Worktree {
         }
     }
 
+    /// Whether this is a multi-repo project's set of checkouts.
+    pub fn is_set(&self) -> bool {
+        !self.repos.is_empty()
+    }
+
+    /// The git checkouts this is: itself, or the checkouts of a set.
+    pub fn checkouts(&self) -> Vec<&Worktree> {
+        match self.is_set() {
+            false => vec![self],
+            true => self.repos.iter().collect(),
+        }
+    }
+
+    /// A set at `path` called `name`, of the checkouts in `repos`: on the
+    /// one branch they are all on, or none when they differ; detached,
+    /// prunable when every checkout is, and locked or mid-operation when
+    /// any is, for the commands that refuse over one.
+    pub fn set(name: String, path: PathBuf, repos: Vec<Worktree>) -> Self {
+        let created_at = std::fs::metadata(&path).ok().and_then(|m| m.created().ok());
+        let locked = repos.iter().find(|r| r.locked);
+        let prunable = !repos.is_empty() && repos.iter().all(|r| r.prunable);
+        Self {
+            name,
+            path,
+            head: None,
+            branch: common_branch(&repos),
+            detached: !repos.is_empty() && repos.iter().all(|r| r.detached),
+            prunable,
+            prunable_reason: prunable
+                .then(|| repos.iter().find_map(|r| r.prunable_reason.clone()))
+                .flatten(),
+            locked: locked.is_some(),
+            lock_reason: locked.and_then(|r| r.lock_reason.clone()),
+            bare: false,
+            created_at,
+            head_sha: None,
+            head_subject: None,
+            head_age: None,
+            dirty: None,
+            ahead_behind: None,
+            in_progress: repos.iter().find_map(|r| r.in_progress),
+            repos,
+        }
+    }
+
     fn from_entry(entry: PorcelainEntry) -> Self {
         let name = entry
             .path
@@ -193,6 +243,7 @@ impl Worktree {
             dirty: None,
             ahead_behind: None,
             in_progress,
+            repos: Vec::new(),
         }
     }
 
@@ -225,14 +276,79 @@ pub fn discover(project: &ProjectRef) -> Result<Vec<Worktree>> {
 }
 
 pub fn discover_all(project: &ProjectRef) -> Result<Discovery> {
+    if project.is_multi_repo() {
+        return discover_sets(project);
+    }
     let text = porcelain_text(&project.root)?;
     let mut entries = parse_porcelain(&text);
     if entries.is_empty() {
         anyhow::bail!("git listed no worktrees for {}", project.root.display());
     }
     let main = Worktree::from_entry(entries.remove(0));
-    let mut worktrees: Vec<Worktree> = entries.into_iter().map(Worktree::from_entry).collect();
+    let worktrees: Vec<Worktree> = entries.into_iter().map(Worktree::from_entry).collect();
+    in_list_order(main, worktrees)
+}
 
+/// A multi-repo project's checkouts: the folder itself, of every
+/// repository's main checkout, and every set — a directory holding a
+/// linked worktree of a repository under the repository's own name, with
+/// whichever others sit beside it. A linked worktree anywhere else is not
+/// the project's.
+fn discover_sets(project: &ProjectRef) -> Result<Discovery> {
+    let mut mains = Vec::new();
+    let mut sets: Vec<(PathBuf, Vec<Worktree>)> = Vec::new();
+    for repo in &project.repos {
+        let root = project.root.join(repo);
+        let mut entries = parse_porcelain(&porcelain_text(&root)?);
+        if entries.is_empty() {
+            anyhow::bail!("git listed no worktrees for {}", root.display());
+        }
+        let mut main = Worktree::from_entry(entries.remove(0));
+        main.name = repo.clone();
+        mains.push(main);
+        for entry in entries {
+            if entry.path.file_name() != Some(std::ffi::OsStr::new(repo)) {
+                continue;
+            }
+            let Some(dir) = entry.path.parent().map(listed_key) else {
+                continue;
+            };
+            if dir == project.root {
+                continue;
+            }
+            let checkout = Worktree::from_entry(entry);
+            match sets.iter_mut().find(|(seen, _)| *seen == dir) {
+                Some((_, repos)) => repos.push(checkout),
+                None => sets.push((dir, vec![checkout])),
+            }
+        }
+    }
+    let main = Worktree::set(project.display_name.clone(), project.root.clone(), mains);
+    let worktrees = sets
+        .into_iter()
+        .map(|(dir, repos)| {
+            let name = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| dir.to_string_lossy().to_string());
+            Worktree::set(name, dir, repos)
+        })
+        .collect();
+    in_list_order(main, worktrees)
+}
+
+/// The branch every one of `checkouts` is on, if they are all on one.
+fn common_branch(checkouts: &[Worktree]) -> Option<String> {
+    let first = checkouts.first()?.branch.clone()?;
+    checkouts
+        .iter()
+        .all(|c| c.branch.as_deref() == Some(first.as_str()))
+        .then_some(first)
+}
+
+/// `worktrees` beside `main`, refused when two share a name and sorted the
+/// way every list shows them.
+fn in_list_order(main: Worktree, mut worktrees: Vec<Worktree>) -> Result<Discovery> {
     // Two worktrees sharing a basename would silently overwrite each other in
     // every name-keyed map pando has, so it is a hard error that names both.
     let mut seen: HashMap<String, PathBuf> = HashMap::new();
@@ -282,37 +398,21 @@ pub fn porcelain_paths(root: &Path) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
-/// The git directory a linked checkout's `.git` file names —
-/// `<repository>/.git/worktrees/<name>` — as an absolute path. `None` when
-/// its `.git` is not such a file.
-///
-/// Git writes it absolute, or relative to the checkout when
-/// `worktree.useRelativePaths` is set (git 2.48 and later), and resolves a
-/// relative one from the checkout's own directory, so that is where it is
-/// resolved here. The `..` in it are folded by hand, because what a caller
-/// wants to know is often that the directory is no longer there.
-pub fn linked_gitdir(checkout: &Path) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(checkout.join(".git")).ok()?;
-    let named = text.lines().find_map(|l| l.strip_prefix("gitdir:"))?.trim();
-    if named.is_empty() {
-        return None;
+/// [`porcelain_paths`] for a project: the checkouts a state record may
+/// name, which for a multi-repo project are its folder and its sets, the
+/// directories its records are kept for.
+pub fn listed_paths(project: &ProjectRef) -> Result<Vec<PathBuf>> {
+    if !project.is_multi_repo() {
+        return porcelain_paths(&project.root);
     }
-    let named = Path::new(named);
-    if named.is_absolute() {
-        return Some(named.to_path_buf());
-    }
-    let mut out = std::fs::canonicalize(checkout).unwrap_or_else(|_| checkout.to_path_buf());
-    for part in named.components() {
-        match part {
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            std::path::Component::CurDir => {}
-            part => out.push(part),
-        }
-    }
-    Some(out)
+    let found = discover_all(project)?;
+    Ok(std::iter::once(&found.main)
+        .chain(&found.worktrees)
+        .map(|w| crate::paths::resolve_for_compare(&w.path))
+        .collect())
 }
+
+pub use crate::project::linked_gitdir;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PorcelainEntry {
@@ -455,15 +555,41 @@ pub struct EnrichUpdate {
     pub dirty: Option<bool>,
     pub ahead_behind: Option<(u32, u32)>,
     pub in_progress: Option<InProgress>,
+    /// A set's checkouts, each named for its repository; the fields above
+    /// are what they say together. Empty for one repository's checkout.
+    pub repos: Vec<EnrichUpdate>,
 }
 
 /// Enriches worktrees from the listing they were read from: their own
 /// heads and branches feed the batched reads, so no second
 /// `git worktree list` runs.
-pub fn enrich_from_git(worktrees: &mut [Worktree], root: &Path) -> Result<()> {
+///
+/// A multi-repo project's sets are enriched repository by repository,
+/// against each repository's own base, and each set's answers folded into
+/// its row.
+pub fn enrich_from_git(worktrees: &mut [Worktree], project: &ProjectRef) -> Result<()> {
     if worktrees.is_empty() {
         return Ok(());
     }
+    if project.is_multi_repo() {
+        let items = worktrees
+            .iter()
+            .map(|w| (w.name.clone(), w.path.clone()))
+            .collect();
+        let (tx, rx) = mpsc::channel();
+        enrich_sets(project, items, tx, 16);
+        let mut updates: HashMap<String, EnrichUpdate> = HashMap::new();
+        while let Ok(u) = rx.recv() {
+            updates.insert(u.name.clone(), u);
+        }
+        for wt in worktrees.iter_mut() {
+            if let Some(u) = updates.remove(&wt.name) {
+                apply_update(wt, u);
+            }
+        }
+        return Ok(());
+    }
+    let root = project.root.as_path();
     let items: Vec<(String, PathBuf)> = worktrees
         .iter()
         .map(|w| (w.name.clone(), w.path.clone()))
@@ -495,7 +621,7 @@ pub fn enrich_from_git(worktrees: &mut [Worktree], root: &Path) -> Result<()> {
 /// `known_base` is a base the caller resolved already, which saves the
 /// one to five git calls of resolving it again; `None` resolves it here.
 pub fn enrich_stream(
-    root: &Path,
+    project: &ProjectRef,
     items: Vec<(String, PathBuf)>,
     known_base: Option<String>,
     sender: mpsc::Sender<EnrichUpdate>,
@@ -504,9 +630,93 @@ pub fn enrich_stream(
     if items.is_empty() {
         return;
     }
+    if project.is_multi_repo() {
+        enrich_sets(project, items, sender, pool_cap);
+        return;
+    }
+    let root = project.root.as_path();
     let porcelain = porcelain_by_path(root);
     let base = known_base.or_else(|| resolve_base_branch(root));
     enrich_listed(root, items, porcelain, base, sender, pool_cap);
+}
+
+/// [`enrich_stream`] for a multi-repo project's checkouts, `items` naming
+/// each set's directory: every repository's checkouts in them enriched
+/// against that repository's own base, and one update per set, sent once
+/// all its repositories have answered.
+fn enrich_sets(
+    project: &ProjectRef,
+    items: Vec<(String, PathBuf)>,
+    sender: mpsc::Sender<EnrichUpdate>,
+    pool_cap: usize,
+) {
+    let mut by_set: HashMap<String, Vec<EnrichUpdate>> = HashMap::new();
+    for repo in &project.repos {
+        let root = project.root.join(repo);
+        let porcelain = porcelain_by_path(&root);
+        let listed: Vec<(String, PathBuf)> = items
+            .iter()
+            .map(|(name, dir)| (name.clone(), dir.join(repo)))
+            .filter(|(_, path)| porcelain.contains_key(&listed_key(path)))
+            .collect();
+        if listed.is_empty() {
+            continue;
+        }
+        let (tx, rx) = mpsc::channel();
+        enrich_listed(
+            &root,
+            listed,
+            porcelain,
+            resolve_base_branch(&root),
+            tx,
+            pool_cap,
+        );
+        while let Ok(mut update) = rx.recv() {
+            let set = std::mem::replace(&mut update.name, repo.clone());
+            by_set.entry(set).or_default().push(update);
+        }
+    }
+    for (name, _) in items {
+        let repos = by_set.remove(&name).unwrap_or_default();
+        if sender.send(fold_set(name, repos)).is_err() {
+            return;
+        }
+    }
+}
+
+/// One update for a set from its checkouts' own: the branch they share,
+/// dirty when any is, ahead and behind summed over the repositories, and
+/// the commit of the first repository with work of its own — else the
+/// first's — as the set's head.
+fn fold_set(name: String, repos: Vec<EnrichUpdate>) -> EnrichUpdate {
+    let first = repos.first().and_then(|r| r.branch.clone());
+    let branch = first.filter(|b| repos.iter().all(|r| r.branch.as_deref() == Some(b)));
+    let head = repos
+        .iter()
+        .find(|r| r.ahead_behind.is_some_and(|(ahead, _)| ahead > 0))
+        .or_else(|| repos.iter().find(|r| r.head_sha.is_some()));
+    let dirty = match repos.iter().map(|r| r.dirty).collect::<Option<Vec<bool>>>() {
+        Some(all) => Some(all.into_iter().any(|d| d)),
+        None => repos.iter().any(|r| r.dirty == Some(true)).then_some(true),
+    };
+    let counted: Vec<(u32, u32)> = repos.iter().filter_map(|r| r.ahead_behind).collect();
+    let ahead_behind = (!counted.is_empty()).then(|| {
+        counted
+            .iter()
+            .fold((0, 0), |(a, b), (ahead, behind)| (a + ahead, b + behind))
+    });
+    EnrichUpdate {
+        name,
+        branch,
+        prunable: !repos.is_empty() && repos.iter().all(|r| r.prunable),
+        head_sha: head.and_then(|r| r.head_sha.clone()),
+        head_subject: head.and_then(|r| r.head_subject.clone()),
+        head_age: head.and_then(|r| r.head_age.clone()),
+        dirty,
+        ahead_behind,
+        in_progress: repos.iter().find_map(|r| r.in_progress),
+        repos,
+    }
 }
 
 /// [`enrich_stream`] with the listing and the base already in hand.
@@ -720,6 +930,7 @@ fn enrich_one(
         dirty,
         ahead_behind,
         in_progress: in_progress(path),
+        repos: Vec::new(),
     }
 }
 
@@ -732,6 +943,11 @@ pub fn apply_update(wt: &mut Worktree, u: EnrichUpdate) {
     wt.dirty = u.dirty;
     wt.ahead_behind = u.ahead_behind;
     wt.in_progress = u.in_progress;
+    for update in u.repos {
+        if let Some(checkout) = wt.repos.iter_mut().find(|r| r.name == update.name) {
+            apply_update(checkout, update);
+        }
+    }
 }
 
 fn last_commit(path: &Path) -> Result<(String, String, String)> {
@@ -930,6 +1146,37 @@ pub struct BranchEntry {
     pub source: BranchSource,
 }
 
+/// [`list_branches`] of every repository of a project: a branch any of a
+/// multi-repo project's repositories has, local where one has it locally,
+/// since a set takes it in each that does.
+pub fn list_project_branches(project: &ProjectRef) -> Vec<BranchEntry> {
+    if !project.is_multi_repo() {
+        return list_branches(&project.root);
+    }
+    let mut local: std::collections::BTreeSet<String> = Default::default();
+    let mut remote: std::collections::BTreeSet<String> = Default::default();
+    for repo in &project.repos {
+        for entry in list_branches(&project.root.join(repo)) {
+            match entry.source {
+                BranchSource::Local => local.insert(entry.name),
+                BranchSource::Remote => remote.insert(entry.name),
+            };
+        }
+    }
+    let local_entries = local.iter().map(|name| BranchEntry {
+        name: name.clone(),
+        source: BranchSource::Local,
+    });
+    let remote_entries = remote
+        .iter()
+        .filter(|name| !local.contains(*name))
+        .map(|name| BranchEntry {
+            name: name.clone(),
+            source: BranchSource::Remote,
+        });
+    local_entries.chain(remote_entries).collect()
+}
+
 /// Local branches, then remote-only branches on `origin`, each alphabetical.
 /// Empty on any git failure — the create modal degrades to typing a name.
 pub fn list_branches(root: &Path) -> Vec<BranchEntry> {
@@ -1012,9 +1259,22 @@ pub struct PrInfo {
     /// against. Empty in a cache written before pando asked.
     #[serde(default)]
     pub base: String,
+    /// In a multi-repo project, the repository it was opened in, by its
+    /// directory name. None for a project that is one repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
 }
 
 impl PrInfo {
+    /// How a list names it: `#12`, and `backend#12` in a multi-repo
+    /// project, where two repositories each have a #12.
+    pub fn label(&self) -> String {
+        match &self.repo {
+            Some(repo) => format!("{repo}#{}", self.number),
+            None => format!("#{}", self.number),
+        }
+    }
+
     /// The local branch a worktree for this pull request checks out: its
     /// own branch when that lives on `origin`, and `pr-<number>/<branch>`
     /// for a fork's, whose name — often `main` or `patch-1` — says nothing
@@ -1039,6 +1299,39 @@ pub fn list_prs(root: &Path) -> Result<Vec<PrInfo>> {
     let open = gh_pr_list(root, "open", "1000")?;
     let recent = gh_pr_list(root, "all", "300")?;
     Ok(merge_pr_lists(open, recent))
+}
+
+/// [`list_prs`] for a project: for several repositories, every
+/// repository's, each marked with its repository, newest first. A
+/// repository `gh` cannot list for — no GitHub remote, often, for one of
+/// them — is passed over while another answers; the error is the first
+/// one's when none does.
+pub fn list_project_prs(project: &ProjectRef) -> Result<Vec<PrInfo>> {
+    if !project.is_multi_repo() {
+        return list_prs(&project.root);
+    }
+    let mut all = Vec::new();
+    let mut first_error = None;
+    let mut answered = false;
+    for repo in &project.repos {
+        match list_prs(&project.root.join(repo)) {
+            Ok(prs) => {
+                answered = true;
+                all.extend(prs.into_iter().map(|pr| PrInfo {
+                    repo: Some(repo.clone()),
+                    ..pr
+                }));
+            }
+            Err(e) => {
+                first_error.get_or_insert(e.context(format!("in the repository {repo}")));
+            }
+        }
+    }
+    if !answered && let Some(e) = first_error {
+        return Err(e);
+    }
+    all.sort_by(|a, b| b.number.cmp(&a.number).then_with(|| a.repo.cmp(&b.repo)));
+    Ok(all)
 }
 
 /// A list is pages of API calls, a round trip each, so it is given longer
@@ -1214,6 +1507,7 @@ fn parse_pr_list(json: &str) -> Result<Vec<PrInfo>> {
     Ok(raw
         .into_iter()
         .map(|p| PrInfo {
+            repo: None,
             number: p.number,
             title: p.title,
             branch: p.head_ref_name,
@@ -1456,7 +1750,7 @@ bare
         git(&path, &["commit", "--allow-empty", "-m", "add feature x"]);
 
         let mut wts = discover(&project_at(&repo)).unwrap();
-        enrich_from_git(&mut wts, &repo).unwrap();
+        enrich_from_git(&mut wts, &project_at(&repo)).unwrap();
 
         let w = &wts[0];
         assert_eq!(w.branch.as_deref(), Some("feat/x"));
@@ -1479,7 +1773,7 @@ bare
         std::fs::write(modified.join("a.txt"), "changed").unwrap();
 
         let mut wts = discover(&project_at(&repo)).unwrap();
-        enrich_from_git(&mut wts, &repo).unwrap();
+        enrich_from_git(&mut wts, &project_at(&repo)).unwrap();
         for w in &wts {
             assert_eq!(w.dirty, Some(true), "{} should be dirty", w.name);
         }
@@ -1494,7 +1788,7 @@ bare
         git(&repo, &["commit", "--allow-empty", "-m", "main 1"]);
 
         let mut wts = discover(&project_at(&repo)).unwrap();
-        enrich_from_git(&mut wts, &repo).unwrap();
+        enrich_from_git(&mut wts, &project_at(&repo)).unwrap();
         assert_eq!(wts[0].ahead_behind, Some((2, 1)));
     }
 
@@ -1509,7 +1803,7 @@ bare
 
         let mut wts = discover(&project_at(&repo)).unwrap();
         assert!(wts[0].detached);
-        enrich_from_git(&mut wts, &repo).unwrap();
+        enrich_from_git(&mut wts, &project_at(&repo)).unwrap();
 
         let w = &wts[0];
         assert!(w.branch.is_none());
@@ -1563,7 +1857,7 @@ bare
             .collect();
 
         let (tx, rx) = mpsc::channel();
-        enrich_stream(&repo, items, None, tx, 16);
+        enrich_stream(&project_at(&repo), items, None, tx, 16);
         let mut names: Vec<String> = rx.iter().map(|u| u.name).collect();
         names.sort();
         assert_eq!(names, vec!["alpha", "bravo", "charlie", "delta"]);
@@ -1581,7 +1875,13 @@ bare
             .map(|w| (w.name.clone(), w.path.clone()))
             .collect();
         let (tx, rx) = mpsc::channel();
-        enrich_stream(repo, items, known_base.map(str::to_string), tx, 4);
+        enrich_stream(
+            &project_at(repo),
+            items,
+            known_base.map(str::to_string),
+            tx,
+            4,
+        );
         rx.iter().map(|u| (u.name.clone(), u)).collect()
     }
 
@@ -1705,8 +2005,9 @@ bare
             dirty: None,
             ahead_behind: None,
             in_progress: None,
+            repos: Vec::new(),
         }];
-        enrich_from_git(&mut wts, dir.path()).unwrap();
+        enrich_from_git(&mut wts, &project_at(dir.path())).unwrap();
         assert!(wts[0].dirty.is_none());
         assert!(wts[0].ahead_behind.is_none());
     }
@@ -1853,7 +2154,7 @@ bare
         git(&path, &["commit", "--allow-empty", "-m", "wt c1"]);
 
         let mut wts = discover(&project_at(&repo)).unwrap();
-        enrich_from_git(&mut wts, &repo).unwrap();
+        enrich_from_git(&mut wts, &project_at(&repo)).unwrap();
         assert_eq!(
             wts[0].ahead_behind,
             Some((1, 0)),
@@ -1913,6 +2214,7 @@ bare
 
     fn pr(number: u32, branch: &str, state: PrState, fork: bool) -> PrInfo {
         PrInfo {
+            repo: None,
             number,
             title: String::new(),
             branch: branch.into(),
@@ -1963,6 +2265,7 @@ bare
     #[test]
     fn a_forks_pull_request_gets_a_local_branch_of_its_own() {
         let mut pr = PrInfo {
+            repo: None,
             number: 12,
             title: "fix".into(),
             branch: "main".into(),

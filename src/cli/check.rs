@@ -190,11 +190,7 @@ pub(super) fn check_json<'a>(paths: &PandoPaths, record: &'a CheckRecord) -> Che
     };
     CheckOut {
         version: JSON_VERSION,
-        project: ProjectOut {
-            id: paths.project.id.clone(),
-            root: paths.project.root.display().to_string(),
-            name: paths.project.display_name.clone(),
-        },
+        project: ProjectOut::of(&paths.project),
         result,
         mode: record.mode,
         kind,

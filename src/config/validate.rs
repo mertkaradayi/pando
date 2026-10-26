@@ -30,6 +30,20 @@ pub fn validate(config: &Config, project: &ProjectRef) -> Result<()> {
     }
     validate_processes(config)?;
     validate_services(config)?;
+    if project.is_multi_repo()
+        && let Some(stranger) = config
+            .repos
+            .base
+            .keys()
+            .find(|repo| !project.repos.contains(repo))
+    {
+        bail!(
+            "[repos.base] names {stranger:?}, which is not a git repository directly under {} — \
+             the repositories there are {}",
+            project.root.display(),
+            project.repos.join(", ")
+        );
+    }
     if let Some(prefer) = config.isolation.preferred()
         && !ISOLATION_KINDS.contains(&prefer)
     {

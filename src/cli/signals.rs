@@ -145,11 +145,7 @@ pub fn signals_json<W: Write>(paths: &PandoPaths, config: &Config, out: &mut W) 
     let proposals = crate::detect::propose(root, &signals);
     let output = SignalsOutput {
         version: JSON_VERSION,
-        project: ProjectOut {
-            id: paths.project.id.clone(),
-            root: paths.project.root.display().to_string(),
-            name: paths.project.display_name.clone(),
-        },
+        project: ProjectOut::of(&paths.project),
         compose: signals
             .compose_files
             .iter()

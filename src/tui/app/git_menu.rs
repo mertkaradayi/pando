@@ -85,6 +85,15 @@ impl App {
             return;
         };
         let label = self.label_of(&wt.name);
+        if wt.is_set() {
+            let repos: Vec<&str> = wt.repos.iter().map(|r| r.name.as_str()).collect();
+            self.set_error(format!(
+                "{label} is a checkout of each of {}: the git menu moves one repository's \
+                 checkout, and has no way yet to choose which — `!` opens a shell there",
+                repos.join(", ")
+            ));
+            return;
+        }
         if wt.prunable {
             self.set_error(format!(
                 "{label} has no working tree for git to move — its directory is gone"

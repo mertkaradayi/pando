@@ -593,13 +593,18 @@ when the share is behind an auth command.
 ```jsonc
 {
   "version": 2,
-  "project": { "id": "...", "root": "...", "name": "..." },
+  "project": { "id": "...", "root": "...", "name": "...", "repos": ["backend", "frontend"] },
   "worktrees": [
     { "name": "feat+one", "main": false, "path": "...", "branch": "feat/one", "head": "abc1234",
       "detached": false, "dirty": false, "ahead": 0, "behind": 0,
       "created_by_pando": true, "mode": "shared|namespaced|isolated",
       "prunable": false, "locked": null,
-      "pr": { "number": 12, "state": "open|merged|closed", "url": "..." } }
+      "pr": { "number": 12, "state": "open|merged|closed", "url": "..." },
+      "repos": [
+        { "name": "backend", "path": ".../feat+one/backend", "branch": "feat/one",
+          "head": "abc1234", "detached": false, "dirty": false, "ahead": 0, "behind": 0,
+          "prunable": false }
+      ] }
   ]
 }
 ```
@@ -607,6 +612,16 @@ when the share is behind an auth command.
 The first entry is always the main checkout, with `main` true and
 `created_by_pando` false: pando runs it, and never removes it. Every other
 entry is a worktree, `main` false.
+
+`project.repos` and each entry's `repos` are there only for a multi-repo
+project: a plain folder whose immediate subdirectories are git
+repositories, which pando runs as one project. Its main checkout is the
+folder, and each worktree is a *set*, a directory holding one checkout of
+every repository under the repository's name. `repos` lists those
+checkouts in `project.repos`' order, with what git says of each; the
+entry's own `branch` is the one they are all on (`null` when they differ),
+`dirty` is true when any is, and `ahead` and `behind` are summed over them,
+each repository measured against its own base.
 
 `dirty`, `ahead` and `behind` are `null` when git could not be asked.
 `locked` is `null` when the worktree is not locked, and the lock reason —
@@ -687,7 +702,7 @@ tested, and why.
   "kind": "settings|machine|base", // whose the failure is; null unless "failed"
   "reason": "web exited with status 1 — ...", // null when "passed"
   "slot": "dev_cmd",               // the open question; null unless "not_set_up"
-  "commit": "a1b2c3d4…",           // the full sha tested, or null
+  "commit": "a1b2c3d4…",           // the full sha tested, or null; one per repository, space-separated, for a multi-repo project
   "base_ref": "origin/main",       // the ref it was read from; null for HEAD
   "processes": [
     { "name": "web", "ready": true, // it came up: its port answered, or,

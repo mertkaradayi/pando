@@ -2332,3 +2332,35 @@ fn a_printed_config_that_does_not_parse_hides_every_line_naming_a_password() {
         "[namespaced.db\nuser = \"root\"\npassword = \"(hidden)\"\n"
     );
 }
+
+#[test]
+fn repos_names_only_the_folders_repositories() {
+    let project = crate::project::ProjectRef::multi_repo(
+        "/product",
+        vec!["backend".into(), "frontend".into()],
+    )
+    .unwrap();
+    let mut config = Config::default();
+    config.repos.base = BTreeMap::from([("api".to_string(), "develop".to_string())]);
+    let err = validate(&config, &project).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("[repos.base] names \"api\""),
+        "{err:#}"
+    );
+
+    config.repos.base = BTreeMap::from([("backend".to_string(), "develop".to_string())]);
+    validate(&config, &project).unwrap();
+    assert_eq!(config.base_for_repo("backend", "feat/x"), Some("develop"));
+    assert_eq!(config.base_for_repo("frontend", "feat/x"), None);
+
+    config.repos.members = vec!["frontend".into()];
+    let mut narrowed = project.clone();
+    config.repos.narrow(&mut narrowed).unwrap();
+    assert_eq!(narrowed.repos, ["frontend"]);
+    config.repos.members = vec!["infra".into()];
+    let err = config.repos.narrow(&mut project.clone()).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("the repositories there are backend, frontend"),
+        "{err:#}"
+    );
+}

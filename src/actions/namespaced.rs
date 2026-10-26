@@ -1888,8 +1888,20 @@ fn elsewhere_hint(paths: &PandoPaths, elsewhere: &[Elsewhere]) -> String {
 /// Whether the repository the worktree at `path` was linked from is gone:
 /// git writes `gitdir: <repository>/.git/worktrees/<name>` into its `.git`
 /// file, and that is not there any more.
+///
+/// A multi-repo project's set has no `.git` of its own: it is gone when the
+/// repository of every checkout in it is.
 fn repository_gone(path: &std::path::Path) -> bool {
-    crate::worktree::linked_gitdir(path).is_some_and(|gitdir| !gitdir.exists())
+    if let Some(gitdir) = crate::worktree::linked_gitdir(path) {
+        return !gitdir.exists();
+    }
+    let linked: Vec<std::path::PathBuf> = std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| crate::worktree::linked_gitdir(&entry.path()))
+        .collect();
+    !linked.is_empty() && linked.iter().all(|gitdir| !gitdir.exists())
 }
 
 /// Stops a start that would give out a slot while another project's state

@@ -167,6 +167,7 @@ mod tests {
 
     fn sample_pr(number: u32, branch: &str) -> crate::worktree::PrInfo {
         crate::worktree::PrInfo {
+            repo: None,
             number,
             title: format!("PR {number}"),
             branch: branch.into(),

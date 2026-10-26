@@ -261,6 +261,9 @@ pub(super) fn render_detail(f: &mut Frame, area: Rect, app: &mut App) {
     if let Some(commit) = commit_row(app, &wt, width) {
         rows.push((KEEP_HEAD, commit));
     }
+    for line in repo_rows(&wt, width) {
+        rows.push((KEEP_HEAD, line));
+    }
     if let Some(pr) = app.pr_for(&wt) {
         rows.push((
             KEEP_PR,
@@ -481,6 +484,55 @@ fn branch_rows<'a>(wt: &crate::worktree::Worktree, width: usize) -> Vec<Line<'a>
         ]));
     }
     rows
+}
+
+/// A set's checkouts, one row each: the repository, its branch, and what
+/// git says of it, so a set whose row says "uncommitted changes" says in
+/// which repository. Nothing for one repository's checkout.
+fn repo_rows<'a>(wt: &crate::worktree::Worktree, width: usize) -> Vec<Line<'a>> {
+    let name_width = wt
+        .repos
+        .iter()
+        .map(|r| text_width(&r.name))
+        .max()
+        .unwrap_or(0);
+    wt.repos
+        .iter()
+        .enumerate()
+        .map(|(i, checkout)| {
+            let mut said = vec![
+                checkout
+                    .branch
+                    .clone()
+                    .unwrap_or_else(|| "(detached)".to_string()),
+            ];
+            match checkout.dirty {
+                Some(true) => said.push("✎ changes".to_string()),
+                Some(false) => said.push("clean".to_string()),
+                None if checkout.prunable => said.push("gone".to_string()),
+                None => {}
+            }
+            match checkout.ahead_behind {
+                Some((0, 0)) | None => {}
+                Some((ahead, 0)) => said.push(format!("↑{ahead}")),
+                Some((0, behind)) => said.push(format!("↓{behind}")),
+                Some((ahead, behind)) => said.push(format!("↓{behind} ↑{ahead}")),
+            }
+            let name = format!("{:<name_width$}  ", checkout.name);
+            let room = width.saturating_sub(LABEL_WIDTH + text_width(&name));
+            let style = match checkout.dirty {
+                Some(true) => Style::new().fg(yellow()),
+                _ => Style::new().fg(text_dim()),
+            };
+            detail_row(
+                if i == 0 { "repos" } else { "" },
+                vec![
+                    Span::styled(name, Style::new().fg(text())),
+                    Span::styled(truncate(&said.join(" · "), room), style),
+                ],
+            )
+        })
+        .collect()
 }
 
 /// The checked-out commit: its sha, its subject, and how old it is — now,

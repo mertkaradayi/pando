@@ -61,7 +61,7 @@ fn check_something_to_run(paths: &PandoPaths, config: &Config, findings: &mut Ve
 /// `new` checks it.
 fn check_provision(paths: &PandoPaths, config: &Config, findings: &mut Vec<Finding>) {
     for entry in config.project.provision_paths() {
-        if detect::is_gitignored(paths.root(), entry) {
+        if detect::is_ignored_in(&paths.project, paths.root(), entry) {
             continue;
         }
         findings.push(Finding::problem(

@@ -1364,6 +1364,21 @@ pub fn listener_on_port_env() -> String {
         .to_string()
 }
 
+/// A dev server that answers every request with `status`.
+///
+/// Brace-free: `{` is pando's template syntax. Served by a `TCPServer`
+/// that reuses its address, as `HTTPServer` does, rather than by
+/// `HTTPServer` itself, whose bind looks the address up in reverse DNS
+/// before it listens: on a CI runner, in a session of its own, that lookup
+/// never returned, and the port was bound and never listening.
+pub fn answering(status: u16) -> String {
+    format!(
+        "python3 -u -c \"import http.server as h,os;C=type('C',(h.BaseHTTPRequestHandler,),\
+         dict(do_GET=lambda s:(s.send_response({status}),s.end_headers())));\
+         type('S',(h.socketserver.TCPServer,),dict(allow_reuse_address=1))(('127.0.0.1',int(os.environ['PORT'])),C).serve_forever()\""
+    )
+}
+
 /// The same listener with its port coming from a template rather than the
 /// environment — the positional shape Django and Rails use.
 pub fn listener_on_port_template() -> String {

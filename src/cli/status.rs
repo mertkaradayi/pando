@@ -263,11 +263,7 @@ pub fn status_json<W: Write>(paths: &PandoPaths, only: Option<&str>, out: &mut W
     let simulators = actions::Simulators::new(paths);
     let output = StatusOutput {
         version: JSON_VERSION,
-        project: ProjectOut {
-            id: paths.project.id.clone(),
-            root: paths.project.root.display().to_string(),
-            name: paths.project.display_name.clone(),
-        },
+        project: ProjectOut::of(&paths.project),
         worktrees: worktrees
             .into_iter()
             .map(|w| {
