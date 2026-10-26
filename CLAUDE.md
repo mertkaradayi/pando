@@ -268,6 +268,24 @@ distro's own service). A native Windows port has no plan file yet:
 write one in `plans/` before starting it, beginning at the backends that
 say "not yet".
 
+On 2026-10-26 multi-repo projects were built, from issue #18 and
+`plans/multi-repo.md`, on the branch `feat/multi-repo` (#19): a plain
+folder whose immediate subdirectories are git repositories is one
+project (`ProjectRef.repos`), and its worktree is a set, a directory
+holding a worktree of every repository under its own name
+(`Worktree.repos`). Each repository takes the set's branch where it has
+it and forks it from its own base where it does not; `[repos] members`
+narrows the repositories and `[repos.base]` sets one's base, under a
+`[branches]` rule. `discover` finds such a project from the folder (two
+or more repositories, or one pando knows), from inside a set and from a
+set's checkout, never from a repository's own main checkout; a path in
+config names its repository first and is asked of that repository's
+gitignore (`ProjectRef::repo_path`). `new`, `rm`, `check`, enrichment,
+the pull request picker and the git menu (`tab` between repositories)
+act per repository; `rm` refuses over anything beside a set's
+checkouts. Proved on fixtures and an end-to-end test through the binary
+(`tests/multi_repo.rs`); nobody has run a real multi-repo project yet.
+
 What is left is not a phase. `plans/open-follow-ups.md` carries the known
 edges, each with who found it and where it belongs, and the rest of the
 launch checklist in `docs/08-roadmap.md` is open: no published crate on
