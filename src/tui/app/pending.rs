@@ -519,7 +519,8 @@ impl App {
                 self.keep_what_it_said(&doing, &said);
                 match outcome {
                     PendingOutcome::Created(name) => {
-                        self.set_success(format!("created {label} — s starts it"));
+                        // As the detail pane's status row says it.
+                        self.set_success(format!("created {label} — s starts it · ⏎ picks a mode"));
                         // The cursor goes to it as soon as discovery lists
                         // it: the next key is almost always meant for it.
                         self.select_on_arrival = Some(name);

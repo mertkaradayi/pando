@@ -1136,9 +1136,15 @@ fn a_port_nothing_listens_on_is_said_whole_under_the_ports() {
 #[test]
 fn a_stopped_worktree_is_told_how_to_start() {
     let mut app = test_app(&["feat+one"]);
+    let rendered = text_of(&draw(&mut app, 160, 20));
+    assert!(
+        rendered.contains("○ stopped  s starts it · ⏎ picks a mode"),
+        "as the status line says after a create: {rendered}"
+    );
+    // A narrower pane keeps the key that starts it, whole.
     let rendered = text_of(&draw(&mut app, 120, 20));
-    assert!(rendered.contains("○ stopped"), "{rendered}");
-    assert!(rendered.contains("⏎ picks a mode to start"), "{rendered}");
+    assert!(rendered.contains("○ stopped  s starts it"), "{rendered}");
+    assert!(!rendered.contains("⏎ picks a mo…"), "{rendered}");
 }
 
 #[test]

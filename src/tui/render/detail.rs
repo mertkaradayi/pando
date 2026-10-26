@@ -49,6 +49,10 @@ const KEEP_SPACER: u8 = 5;
 
 pub(super) const KEEP_PATH: u8 = 6;
 
+/// How a stopped worktree is started, after its status: as the status
+/// line says it once a create has made one.
+const START_HINT: &str = "  s starts it · ⏎ picks a mode";
+
 /// `" status "` — a space, then the label padded to seven.
 const LABEL_WIDTH: usize = 8;
 
@@ -669,20 +673,27 @@ fn status_row<'a>(app: &App, name: &str, width: usize) -> Line<'a> {
     }
     let Some(phase) = app.phase_of(name) else {
         // With nothing to run there is no key that starts it; the rows
-        // below say where to add something.
+        // below say where to add something. Otherwise the same words the
+        // status line says after a create, `s` first so a narrow pane
+        // keeps it; the main checkout has one mode, so no choice to pick.
         let hint = if app.nothing_to_run {
             ""
+        } else if app.is_main(name) {
+            "  s starts it"
         } else {
-            "  ⏎ picks a mode to start"
+            START_HINT
+        };
+        let room = width.saturating_sub(LABEL_WIDTH + 9);
+        // The mode chooser is the part a narrow pane gives up, whole.
+        let hint = match text_width(hint) <= room {
+            true => hint,
+            false => hint.split(" · ").next().unwrap_or(hint),
         };
         return detail_row(
             "status",
             vec![
                 Span::styled("○ stopped", Style::new().fg(text_dim())),
-                Span::styled(
-                    truncate(hint, width.saturating_sub(LABEL_WIDTH + 9)),
-                    Style::new().fg(text_muted()),
-                ),
+                Span::styled(truncate(hint, room), Style::new().fg(text_muted())),
             ],
         );
     };
