@@ -5507,3 +5507,42 @@ fn the_welcome_of_a_multi_repo_project_says_it_is_a_folder_of_repositories() {
     let text = text_of(&draw(&mut app, 120, 42));
     assert!(text.contains("Your repos, every branch alive"), "{text}");
 }
+
+// The remove dialog of a set says which repository's checkout has the
+// changes, and offers F for what it is: discarding changes, or only
+// taking what sits beside the checkouts.
+#[test]
+fn removing_a_set_names_its_dirty_repository_and_what_f_takes() {
+    let dir = tempfile::tempdir().unwrap();
+    for repo in ["backend", "frontend"] {
+        std::fs::create_dir(dir.path().join(repo)).unwrap();
+    }
+    std::fs::write(dir.path().join("notes.txt"), "mine").unwrap();
+    let in_dir = |repo: &str| crate::worktree::Worktree {
+        path: dir.path().join(repo),
+        ..checkout_of(repo)
+    };
+    let mut app = set_app(vec![in_dir("backend"), in_dir("frontend")]);
+    app.worktrees[0].path = dir.path().to_path_buf();
+    app.worktrees[0].dirty = Some(false);
+    app.modal = Some(Modal::Remove {
+        name: "feat+x".into(),
+        created_by_pando: true,
+    });
+    let rendered = text_of(&draw(&mut app, 140, 30));
+    assert!(rendered.contains("notes.txt sits beside"), "{rendered}");
+    assert!(rendered.contains("F remove it all"), "{rendered}");
+    assert!(!rendered.contains("discarding changes"), "{rendered}");
+
+    app.worktrees[0].dirty = Some(true);
+    app.worktrees[0].repos[0].dirty = Some(true);
+    let rendered = text_of(&draw(&mut app, 140, 30));
+    assert!(
+        rendered.contains("backend has uncommitted changes or untracked files"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("F remove, discarding changes"),
+        "{rendered}"
+    );
+}

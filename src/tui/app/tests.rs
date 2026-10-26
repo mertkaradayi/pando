@@ -1127,8 +1127,11 @@ fn the_remove_modal_states_why_a_removal_would_be_refused() {
     );
     assert!(locked[0].line().contains("benchmarking"));
 
-    assert_eq!(app.remove_blockers("dirty+one"), vec![RemoveBlocker::Dirty]);
-    assert!(!RemoveBlocker::Dirty.is_fatal());
+    assert_eq!(
+        app.remove_blockers("dirty+one"),
+        vec![RemoveBlocker::Dirty(Vec::new())]
+    );
+    assert!(!RemoveBlocker::Dirty(Vec::new()).is_fatal());
     assert_eq!(
         app.remove_blockers("adopted+one"),
         vec![RemoveBlocker::NotOurs]
@@ -1146,7 +1149,7 @@ fn the_remove_modal_states_dirty_running_and_adopted_together() {
     assert_eq!(
         app.remove_blockers("feat+tui"),
         vec![
-            RemoveBlocker::Dirty,
+            RemoveBlocker::Dirty(Vec::new()),
             RemoveBlocker::Running,
             RemoveBlocker::NotOurs
         ]
