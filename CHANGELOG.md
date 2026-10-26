@@ -7,6 +7,8 @@ may change behaviour.
 
 ## Unreleased
 
+## 0.11.0 — 2026-10-26
+
 ### Added
 
 - Projects split across several git repositories (#18). `pando` in a

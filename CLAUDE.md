@@ -285,6 +285,9 @@ the pull request picker and the git menu (`tab` between repositories)
 act per repository; `rm` refuses over anything beside a set's
 checkouts. Proved on fixtures and an end-to-end test through the binary
 (`tests/multi_repo.rs`); nobody has run a real multi-repo project yet.
+The same day a second review — an agent running the binary on folders
+of repositories, another reading the TUI, `status` and lifecycle code —
+fixed what they found (#20), and 0.11.0 was built and tagged with it.
 
 What is left is not a phase. `plans/open-follow-ups.md` carries the known
 edges, each with who found it and where it belongs, and the rest of the

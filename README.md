@@ -11,7 +11,7 @@
   <a href="https://github.com/mertkaradayi/pando/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/mertkaradayi/pando/ci.yml?branch=main&style=flat-square&label=ci"></a>
   <img alt="Rust 2024 edition" src="https://img.shields.io/badge/rust-2024_edition-e6963c?style=flat-square&logo=rust">
   <img alt="Platform: macOS, Linux and WSL 2" src="https://img.shields.io/badge/platform-macOS_|_Linux_|_WSL_2-6e9beb?style=flat-square">
-  <img alt="Version 0.10.3, pre-release" src="https://img.shields.io/badge/version-0.10.3_pre--release-b482e6?style=flat-square">
+  <img alt="Version 0.11.0, pre-release" src="https://img.shields.io/badge/version-0.11.0_pre--release-b482e6?style=flat-square">
   <a href="CONTRIBUTING.md"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-50c878?style=flat-square"></a>
   <a href="https://github.com/mertkaradayi/pando/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/mertkaradayi/pando?style=flat-square&logo=github&color=ebc34b"></a>
 </p>
@@ -784,7 +784,7 @@ taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Status
 
-Version 0.10.3, released as binaries for macOS and Linux. Every command above is
+Version 0.11.0, released as binaries for macOS and Linux. Every command above is
 implemented and covered by tests, in this order: worktrees and their
 lifecycle; detached dev servers with their own ports, logs and readiness;
 several processes per worktree; the log viewer; private per-worktree
@@ -845,8 +845,11 @@ another server. In 0.10.2, `space p` in the TUI opens the selected
 worktree's pull request in the browser. 0.10.3 lets the TUI start,
 stop and restart several worktrees at once, shows a pull request merged
 on GitHub without reopening it, and stops a worktree's processes
-together rather than one after another. What changed in each version
-is in the [changelog](CHANGELOG.md).
+together rather than one after another. 0.11.0 runs a product split
+across sibling repositories as one project: from the folder that holds
+them, a worktree is a set of one checkout of each, on one branch, in
+one port window and one row. What changed in each version is in the
+[changelog](CHANGELOG.md).
 
 macOS is what it is developed on. CI runs the whole test suite on macOS
 and on Linux for every change, and both pass — but the suite runs on
