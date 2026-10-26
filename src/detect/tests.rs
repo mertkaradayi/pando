@@ -4820,3 +4820,32 @@ fn a_process_tables_page_is_written() {
         .collect();
     assert_eq!(page, ["processes.metro = true"]);
 }
+
+#[test]
+fn a_folders_service_evidence_names_the_repositorys_env_example() {
+    let dir = folder_of_repos(
+        &[
+            (
+                "backend",
+                &[(
+                    ".env.example",
+                    "DATABASE_URL=postgres://app:secret@localhost:5432/shop\n",
+                )],
+            ),
+            ("frontend", &[("README.md", "# web\n")]),
+        ],
+        &[],
+    );
+    let native = native_candidates(&signals(dir.path()), &MachineEvidence::unknown());
+    let postgres = native
+        .iter()
+        .find(|c| c.value == "postgres")
+        .expect("postgres");
+    assert!(
+        postgres
+            .why
+            .starts_with("backend/.env.example DATABASE_URL="),
+        "{}",
+        postgres.why
+    );
+}

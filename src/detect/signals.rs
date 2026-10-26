@@ -245,10 +245,13 @@ fn signals_in(root: &Path, only: Option<&[String]>) -> Signals {
     for repo in &repos {
         if !signals.app_dirs.iter().any(|app| app.dir == *repo) {
             read_local_env(root, repo, &mut signals);
-            for (key, value) in env_example(&root.join(repo)) {
-                if !signals.env_example.iter().any(|(held, _)| *held == key) {
-                    signals.env_example.push((key, value));
+            if let Some(example) = env_example_in(root, repo) {
+                for (key, value) in &example.entries {
+                    if !signals.env_example.iter().any(|(held, _)| held == key) {
+                        signals.env_example.push((key.clone(), value.clone()));
+                    }
                 }
+                signals.env_examples.push(example);
             }
         }
     }

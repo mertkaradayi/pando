@@ -259,13 +259,16 @@ pub(super) fn native_candidates(signals: &Signals, evidence: &MachineEvidence) -
         .into_iter()
         .map(|(recipe, (key, said))| {
             let runnable = evidence.can_run(recipe);
+            // The file it came from by its path: in a folder of
+            // repositories, `backend/.env.example`.
+            let file = signals.env_example_file(&key);
             let why = match runnable {
-                Some(true) => format!(".env.example {said}; {recipe} is on this machine"),
+                Some(true) => format!("{file} {said}; {recipe} is on this machine"),
                 Some(false) => format!(
-                    ".env.example {said}; {recipe} is not installed here, so starting \
-                     it will say what to install"
+                    "{file} {said}; {recipe} is not installed here, so starting it will say \
+                     what to install"
                 ),
-                None => format!(".env.example {said}"),
+                None => format!("{file} {said}"),
             };
             Candidate {
                 value: recipe.to_string(),
