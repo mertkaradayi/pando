@@ -70,6 +70,13 @@ pub fn new(
     validate_branch_name(&root, branch)?;
 
     let dir_name = sanitize_branch_to_dir(branch);
+    // A set of this branch short of a repository's checkout — lost, or of
+    // a repository that joined the project since — is given what it lacks
+    // rather than refused: removing it to make it again would take the
+    // other repositories' work with it.
+    if let Some(set) = incomplete_set(paths, &dir_name)? {
+        return complete_set(paths, config, &set, branch, base, progress);
+    }
     let target = refuse_taken_target(paths, config, &dir_name)?;
     // `new` only: `pando check` never clones, so a `clone` path is no
     // reason to refuse one.
@@ -84,8 +91,28 @@ pub fn new(
     {
         ensure_ignored(&paths.project, &root, &as_ignore_query(&root, rel), "clone")?;
     }
+    let sources = sources_for(paths, config, branch, base, &|_| true, progress)?;
+    create(
+        paths, config, &dir_name, &target, branch, &sources, progress,
+    )
+}
+
+/// Each repository's part of a new worktree of `branch`, for the
+/// repositories `wanted` takes: what it checks out, and from where.
+fn sources_for(
+    paths: &PandoPaths,
+    config: &Config,
+    branch: &str,
+    base: Option<&str>,
+    wanted: &dyn Fn(Option<&str>) -> bool,
+    progress: &dyn Fn(&str),
+) -> Result<Vec<RepoSource>> {
+    let root = paths.root();
     let mut sources = Vec::new();
-    for (repo, checkout) in paths.project.repo_checkouts_in(&root) {
+    for (repo, checkout) in paths.project.repo_checkouts_in(root) {
+        if !wanted(repo) {
+            continue;
+        }
         // No base, no `--base` and no commit to name: the one way past it
         // for one repository of several is to leave it out.
         if let Some(repo) = repo
@@ -117,9 +144,169 @@ pub fn new(
             source,
         });
     }
-    create(
-        paths, config, &dir_name, &target, branch, &sources, progress,
-    )
+    Ok(sources)
+}
+
+/// The set called `name` when it lacks a checkout of one of the project's
+/// repositories, or has one whose directory is gone. `None` for a project
+/// that is one repository, and when there is no such set.
+fn incomplete_set(paths: &PandoPaths, name: &str) -> Result<Option<Worktree>> {
+    if !paths.project.is_multi_repo() {
+        return Ok(None);
+    }
+    let found = worktree::discover_all(&paths.project)?;
+    Ok(found
+        .worktrees
+        .into_iter()
+        .find(|w| w.name == name && w.is_set() && !missing_checkouts(paths, w).is_empty()))
+}
+
+/// The project's repositories `set` has no checkout of that it can use:
+/// none at all, or one git still lists whose directory is gone.
+fn missing_checkouts<'a>(paths: &'a PandoPaths, set: &Worktree) -> Vec<&'a str> {
+    paths
+        .project
+        .repos
+        .iter()
+        .filter(|repo| {
+            !set.repos
+                .iter()
+                .any(|c| c.name == **repo && !c.prunable && c.path.is_dir())
+        })
+        .map(String::as_str)
+        .collect()
+}
+
+/// `new` of a set pando made that lacks some repositories' checkouts:
+/// those are checked out into it on its branch as `new` would, each
+/// forking from its repository's base where the branch is new there, and
+/// provisioned, cloned and installed like the rest. The checkouts it has
+/// are left as they are.
+fn complete_set(
+    paths: &PandoPaths,
+    config: &Config,
+    set: &Worktree,
+    branch: &str,
+    base: Option<&str>,
+    progress: &dyn Fn(&str),
+) -> Result<String> {
+    let shown = set.display_name();
+    let store = state::load(&paths.state_file())?;
+    let ours = store
+        .worktrees
+        .get(&set.name)
+        .is_some_and(|record| record.created_by_pando && record_is_for(record, set));
+    if !ours {
+        bail!(
+            "{shown} is a set pando did not make, so it adds no checkout to it — `pando rm {shown} \
+             --yes` removes it, and then `pando new {branch}` makes it whole"
+        );
+    }
+    let on = set
+        .repos
+        .iter()
+        .filter(|c| !c.prunable)
+        .filter_map(|c| c.branch.as_deref())
+        .find(|b| *b != branch);
+    if let Some(other) = on {
+        bail!(
+            "{shown} is a set on {other}, not {branch}: `pando new` adds to a set on its own branch"
+        );
+    }
+    let missing = missing_checkouts(paths, set);
+    // A checkout git still lists with its directory gone is cleared first,
+    // as `rm` clears one: nothing is there to lose.
+    for checkout in set
+        .repos
+        .iter()
+        .filter(|c| missing.contains(&c.name.as_str()))
+    {
+        let root = paths.root().join(&checkout.name);
+        let path = checkout
+            .path
+            .to_str()
+            .context("worktree path is not utf-8")?;
+        if !git_succeeds(&root, &["worktree", "remove", "--force", path]) {
+            bail!(
+                "git still lists {}'s checkout at {path}, and would not let it go — `git -C {} \
+                 worktree prune` clears it",
+                checkout.name,
+                crate::process::shell_word(&root.display().to_string())
+            );
+        }
+    }
+    let sources = sources_for(
+        paths,
+        config,
+        branch,
+        base,
+        &|repo| repo.is_some_and(|repo| missing.contains(&repo)),
+        progress,
+    )?;
+    let worktrees_dir = config.worktrees_dir(paths);
+    let mut added: Vec<(&RepoSource, PathBuf)> = Vec::new();
+    for source in &sources {
+        let at = source.target(&set.path);
+        let made = add_checkout(source, &at, branch, config, &worktrees_dir, progress).and_then(
+            |(plan, failed)| match (failed, &plan) {
+                (Some(failed), _) => Err(failed),
+                (None, CheckoutPlan::CopyOnWrite(from)) => {
+                    super::checkout::fill(&at, from, progress).map(|_| ())
+                }
+                (None, CheckoutPlan::Git) => Ok(()),
+            },
+        );
+        match made {
+            Ok(()) => added.push((source, at)),
+            Err(e) => {
+                // A failed add that git kept is undone with the rest.
+                if is_registered(&source.root, &at) {
+                    added.push((source, at));
+                }
+                return Err(unwind_checkouts(&added, &set.path, branch, e));
+            }
+        }
+    }
+    provision_worktree_files(paths, config, &set.path, progress)
+        .map_err(|e| unwind_checkouts(&added, &set.path, branch, e))?;
+    {
+        let _lock = state::lock(&paths.lock_file())?;
+        let mut store = state::load(&paths.state_file())?;
+        if let Some(record) = store.worktrees.get_mut(&set.name) {
+            for source in &sources {
+                if let CreateSource::Fork { base } = &source.source {
+                    record.set_base(source.repo.as_deref(), base);
+                }
+            }
+            state::save(&paths.state_file(), &store)?;
+        }
+    }
+    clone_ignored_paths(
+        &paths.project,
+        config.project.clones(),
+        config.project.install.as_deref(),
+        &set.path,
+        progress,
+    );
+    let names: Vec<&str> = sources.iter().filter_map(|s| s.repo.as_deref()).collect();
+    progress(&format!("added {} to {shown}", names.join(", ")));
+    if has_install_step(config) {
+        progress("installing");
+    }
+    let no_ports: BTreeMap<String, u16> = BTreeMap::new();
+    let no_services: BTreeMap<String, String> = BTreeMap::new();
+    let ctx = HookContext {
+        name: &set.name,
+        branch: Some(branch),
+        worktree: &set.path,
+        ports: &no_ports,
+        service_env: &no_services,
+        own_data: false,
+        not_own: None,
+    };
+    run_hooks(paths, config, config::HookPoint::Create, &ctx, progress)
+        .with_context(|| format!("{branch} {CREATED_BUT_INSTALL_FAILED}"))?;
+    Ok(set.name.clone())
 }
 
 /// One repository's part of a new worktree: which repository (none for a
@@ -1516,9 +1703,8 @@ fn refuse_a_missing_repo(paths: &PandoPaths, worktree: &Worktree) -> Result<()> 
     };
     let shown = worktree.display_name();
     bail!(
-        "{shown} has no checkout of {missing}, which is in the project now and was not when the \
-         set was made — `pando rm {shown}` and `pando new {}` make it again with every \
-         repository",
+        "{shown} has no checkout of {missing} — `pando new {}` adds it to the set, and leaves \
+         the others as they are",
         worktree.branch.as_deref().unwrap_or(&shown)
     )
 }
@@ -1543,11 +1729,15 @@ pub(super) fn refuse_a_gone_directory(worktree: &Worktree) -> Result<()> {
             None => Ok(()),
             Some(gone) => bail!(
                 "the checkout of {} in {} is gone: git still lists it at {}, but nothing can \
-                 run there — `pando rm {}` removes the set, and `pando new` makes it again",
+                 run there — `pando new {}` checks it out again, and leaves the others as they \
+                 are",
                 gone.name,
                 worktree.display_name(),
                 gone.path.display(),
-                worktree.display_name()
+                worktree
+                    .branch
+                    .as_deref()
+                    .unwrap_or(&worktree.display_name())
             ),
         };
     }

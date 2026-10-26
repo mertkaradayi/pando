@@ -19076,3 +19076,63 @@ fn a_hooks_status_line_puts_both_paths_of_a_rename_under_its_repository() {
         "?? web/notes.md"
     );
 }
+
+#[test]
+fn new_gives_a_set_the_checkout_of_a_repository_that_joined_since() {
+    let mut fx = multi_repo_fixture();
+    fx.paths.project.repos = vec!["backend".into()];
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let set = fx.worktrees_dir().join("feat+x");
+    std::fs::write(set.join("backend").join("work.txt"), "mine\n").unwrap();
+    fx.paths.project.repos = vec!["backend".into(), "frontend".into()];
+
+    assert_eq!(
+        new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap(),
+        "feat+x"
+    );
+    assert_eq!(
+        worktree::checked_out_branch(&set.join("frontend")).as_deref(),
+        Some("feat/x")
+    );
+    assert!(
+        set.join("backend").join("work.txt").is_file(),
+        "the rest untouched"
+    );
+    assert_eq!(
+        fx.state().worktrees["feat+x"]
+            .bases
+            .get("frontend")
+            .map(String::as_str),
+        Some("main")
+    );
+    // Whole, it is a set like any other: a second `new` refuses.
+    assert!(new(&fx.paths, &fx.config, "feat/x", None, &noop).is_err());
+}
+
+#[test]
+fn new_checks_a_lost_checkout_out_again_and_keeps_the_others_work() {
+    let fx = multi_repo_fixture();
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let set = fx.worktrees_dir().join("feat+x");
+    std::fs::write(set.join("backend").join("work.txt"), "mine\n").unwrap();
+    git(
+        &set.join("frontend"),
+        &["commit", "--quiet", "--allow-empty", "-m", "kept"],
+    );
+    let away = fx._dir.path().join("away");
+    std::fs::rename(set.join("frontend"), &away).unwrap();
+
+    let err = start(&fx.paths, &fx.config, "feat+x", None, &noop).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("`pando new feat/x` checks it out again"),
+        "{err:#}"
+    );
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let subject = crate::project::git(&set.join("frontend"), ["log", "-1", "--format=%s"]).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&subject.stdout).trim(),
+        "kept",
+        "the branch's own commit is checked out"
+    );
+    assert!(set.join("backend").join("work.txt").is_file());
+}
