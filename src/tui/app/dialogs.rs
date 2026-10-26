@@ -113,6 +113,12 @@ pub enum RemoveBlocker {
     /// it: `drops database northwind_traders__feat_x`, `empties redis slot
     /// 3`.
     Drops(Vec<String>),
+    /// What a set's directory holds beside its checkouts, which only a
+    /// forced removal takes with it.
+    Beside(Vec<String>),
+    /// A git checkout in a set's directory that is not one of the set's,
+    /// which no removal takes.
+    Foreign(Vec<String>),
 }
 
 impl RemoveBlocker {
@@ -137,12 +143,28 @@ impl RemoveBlocker {
                 "pando did not create this worktree — confirming removes it anyway".to_string()
             }
             RemoveBlocker::Drops(what) => format!("{} with it", what.join(", ")),
+            RemoveBlocker::Beside(what) => format!(
+                "{} sits beside its repositories' checkouts — F removes it with the set",
+                what.join(", ")
+            ),
+            RemoveBlocker::Foreign(what) => format!(
+                "{} is a git checkout that is not one of the set's — pando never removes one; \
+                 move it out of the set first",
+                what.join(", ")
+            ),
         }
     }
 
-    /// A locked worktree can never be removed; the others are confirmable.
+    /// A locked worktree can never be removed, nor a set holding a git
+    /// checkout of its own; the others are confirmable.
     pub fn is_fatal(&self) -> bool {
-        matches!(self, RemoveBlocker::Locked(_))
+        matches!(self, RemoveBlocker::Locked(_) | RemoveBlocker::Foreign(_))
+    }
+
+    /// Whether only a forced removal gets past it: git's refusal over
+    /// changes, and what sits beside a set's checkouts.
+    pub fn needs_force(&self) -> bool {
+        matches!(self, RemoveBlocker::Dirty | RemoveBlocker::Beside(_))
     }
 }
 
@@ -167,16 +189,19 @@ impl BranchLoadState {
 
 /// What `n` may fork a new branch from: `leading` first — the base it
 /// forks from when none is chosen, and the repository's default — then
-/// every branch the picker read, each once.
+/// every branch the picker read, each once: for a multi-repo project,
+/// every branch all its repositories have.
 pub fn base_choices(leading: &[&str], branches: &[BranchEntry]) -> Vec<String> {
     let mut choices: Vec<String> = Vec::new();
-    let names = leading
-        .iter()
-        .map(|name| name.to_string())
-        .chain(branches.iter().map(|entry| match entry.source {
-            crate::worktree::BranchSource::Local => entry.name.clone(),
-            crate::worktree::BranchSource::Remote => format!("origin/{}", entry.name),
-        }));
+    let names = leading.iter().map(|name| name.to_string()).chain(
+        branches
+            .iter()
+            .filter(|entry| entry.in_every_repo)
+            .map(|entry| match entry.source {
+                crate::worktree::BranchSource::Local => entry.name.clone(),
+                crate::worktree::BranchSource::Remote => format!("origin/{}", entry.name),
+            }),
+    );
     for name in names {
         if !choices.contains(&name) {
             choices.push(name);
@@ -452,20 +477,30 @@ impl App {
 
     /// The base a new branch called `branch` forks from when none is
     /// chosen: the config's, read as `new` reads it, else the
-    /// repository's default.
+    /// repository's default. A multi-repo project's repositories each
+    /// fork from their own, so it has one only when a `[branches]` rule
+    /// names one for every repository.
     pub fn implied_base(&self, branch: &str) -> Option<String> {
-        self.config
-            .base_for_branch(branch.trim())
-            .map(str::to_string)
-            .or_else(|| self.default_base.clone())
+        let branch = branch.trim();
+        match self.paths.project.is_multi_repo() {
+            true => self.config.rule_base(branch).map(str::to_string),
+            false => self
+                .config
+                .base_for_branch(branch)
+                .map(str::to_string)
+                .or_else(|| self.default_base.clone()),
+        }
     }
 
-    /// Whether `branch` is the one the main checkout has.
+    /// Whether `branch` is the one the main checkout has — for a
+    /// multi-repo project, the one any repository's main checkout has: git
+    /// checks no branch out twice in one repository.
     pub fn is_main_branch(&self, branch: &str) -> bool {
-        self.main
-            .as_ref()
-            .and_then(|m| m.branch.as_deref())
-            .is_some_and(|main| main == branch)
+        self.main.as_ref().is_some_and(|main| {
+            main.checkouts()
+                .iter()
+                .any(|checkout| checkout.branch.as_deref() == Some(branch))
+        })
     }
 
     /// Whether the worktree a dialog names was removed from under it — by
@@ -503,13 +538,18 @@ impl App {
             self.set_error(format!("{label}: {}", fatal.line()));
             return;
         }
-        // Known to be dirty: git would refuse, so the dialog stays and says
-        // which key does it.
-        if !force && blockers.contains(&RemoveBlocker::Dirty) {
+        // Known to be dirty, or holding files beside a set's checkouts:
+        // the removal would refuse, so the dialog stays and says which key
+        // does it.
+        if !force && let Some(blocker) = blockers.iter().find(|b| b.needs_force()) {
             let label = self.label_of(&name);
+            let what = match blocker {
+                RemoveBlocker::Beside(what) => format!("holds {}", what.join(", ")),
+                _ => "has uncommitted changes".to_string(),
+            };
             self.set_error_about(
                 &name,
-                format!("{label} has uncommitted changes — F removes it anyway, esc keeps it"),
+                format!("{label} {what} — F removes it anyway, esc keeps it"),
             );
             self.modal = Some(Modal::Remove {
                 name,
@@ -530,6 +570,17 @@ impl App {
         };
         if wt.locked {
             out.push(RemoveBlocker::Locked(wt.lock_reason.clone()));
+        }
+        let foreign = actions::foreign_checkouts(wt);
+        let beside: Vec<String> = actions::beside_checkouts(wt)
+            .into_iter()
+            .filter(|name| !foreign.contains(name))
+            .collect();
+        if !foreign.is_empty() {
+            out.push(RemoveBlocker::Foreign(foreign));
+        }
+        if !beside.is_empty() {
+            out.push(RemoveBlocker::Beside(beside));
         }
         match wt.dirty {
             Some(true) => out.push(RemoveBlocker::Dirty),

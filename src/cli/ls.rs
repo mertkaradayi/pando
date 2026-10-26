@@ -338,6 +338,7 @@ pub fn ls_text_with<W: Write>(paths: &PandoPaths, out: &mut W, view: &LsView) ->
             let branch = match (named_for_branch(w) || is_main, &w.branch) {
                 (true, _) => Cell::new("", None),
                 (false, Some(branch)) => Cell::new(branch, None),
+                (false, None) if w.is_mixed() => Cell::new(w.branch_shown(), None),
                 (false, None) => Cell::new("(detached)", Some(Paint::Warn)),
             };
             row.insert(Col::Branch, branch);

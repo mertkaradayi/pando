@@ -18929,9 +18929,20 @@ fn rm_of_a_set_never_takes_what_sits_beside_its_checkouts_unasked() {
     );
     assert_eq!(listed_in(&fx, "backend").len(), 2, "nothing was removed");
 
-    // Forced, what is no repository's goes with the set.
-    rm(&fx.paths, "feat+x", false, true).unwrap();
+    // Forced, what is no repository's goes with the set, and is named.
+    let said = std::cell::RefCell::new(Vec::new());
+    super::rm(&fx.paths, "feat+x", false, true, &|line| {
+        said.borrow_mut().push(line.to_string())
+    })
+    .unwrap();
     assert!(!set.exists());
+    assert!(
+        said.borrow()
+            .iter()
+            .any(|line| line == "removed notes.md with the set"),
+        "{:?}",
+        said.borrow()
+    );
     assert!(fx.state().worktrees.is_empty());
 }
 
@@ -19052,4 +19063,16 @@ fn a_repository_of_the_folder_on_its_own_lists_no_sets_checkout() {
     let found = worktree::discover_all(&backend).unwrap();
     assert_eq!(found.main.name, "backend");
     assert!(found.worktrees.is_empty(), "{:?}", found.worktrees);
+}
+
+#[test]
+fn a_hooks_status_line_puts_both_paths_of_a_rename_under_its_repository() {
+    assert_eq!(
+        super::hooks::under_repo("backend", "R  old.rs -> new.rs"),
+        "R  backend/old.rs -> backend/new.rs"
+    );
+    assert_eq!(
+        super::hooks::under_repo("web", "?? notes.md"),
+        "?? web/notes.md"
+    );
 }

@@ -747,14 +747,18 @@ impl Config {
     /// branch, then [`Config::repo_base`].
     pub fn base_for(&self, repo: Option<&str>, branch: Option<&str>) -> Option<&str> {
         branch
-            .and_then(|branch| {
-                self.branches
-                    .rules
-                    .iter()
-                    .find(|rule| glob_match(&rule.match_, branch))
-            })
-            .map(|rule| rule.base.as_str())
+            .and_then(|branch| self.rule_base(branch))
             .or_else(|| self.repo_base(repo))
+    }
+
+    /// The base the first `[branches].rules` entry matching `branch`
+    /// names, if one does.
+    pub fn rule_base(&self, branch: &str) -> Option<&str> {
+        self.branches
+            .rules
+            .iter()
+            .find(|rule| glob_match(&rule.match_, branch))
+            .map(|rule| rule.base.as_str())
     }
 
     /// [`ReposSection::narrow`], then each repository's base, as

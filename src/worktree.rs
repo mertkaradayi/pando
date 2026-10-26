@@ -198,6 +198,30 @@ impl Worktree {
         true
     }
 
+    /// Whether this is a set whose checkouts are on different branches,
+    /// which is not one with no branch at all: it has no branch of its
+    /// own, and each of its checkouts may well have one.
+    pub fn is_mixed(&self) -> bool {
+        self.is_set() && self.branch.is_none() && self.repos.iter().any(|r| r.branch.is_some())
+    }
+
+    /// Its branch as a person reads it: the branch, `(detached)` when it is
+    /// on none, and for a set on different branches each repository's —
+    /// `backend develop · frontend main`.
+    pub fn branch_shown(&self) -> String {
+        if let Some(branch) = &self.branch {
+            return branch.clone();
+        }
+        if !self.is_mixed() {
+            return "(detached)".to_string();
+        }
+        self.repos
+            .iter()
+            .map(|r| format!("{} {}", r.name, r.branch.as_deref().unwrap_or("(detached)")))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
     /// Whether this is a multi-repo project's set of checkouts.
     pub fn is_set(&self) -> bool {
         !self.repos.is_empty()
@@ -1193,6 +1217,10 @@ pub enum BranchSource {
 pub struct BranchEntry {
     pub name: String,
     pub source: BranchSource,
+    /// In a multi-repo project, whether every repository has it, which a
+    /// base must: one only some have is a branch to check out, never one
+    /// to fork every repository from. Always true for one repository.
+    pub in_every_repo: bool,
 }
 
 /// [`list_branches`] of every repository of a project: a branch any of a
@@ -1204,17 +1232,21 @@ pub fn list_project_branches(project: &ProjectRef) -> Vec<BranchEntry> {
     }
     let mut local: std::collections::BTreeSet<String> = Default::default();
     let mut remote: std::collections::BTreeSet<String> = Default::default();
+    let mut held: HashMap<String, usize> = HashMap::new();
     for repo in &project.repos {
         for entry in list_branches(&project.root.join(repo)) {
+            *held.entry(entry.name.clone()).or_default() += 1;
             match entry.source {
                 BranchSource::Local => local.insert(entry.name),
                 BranchSource::Remote => remote.insert(entry.name),
             };
         }
     }
+    let everywhere = |name: &str| held.get(name) == Some(&project.repos.len());
     let local_entries = local.iter().map(|name| BranchEntry {
         name: name.clone(),
         source: BranchSource::Local,
+        in_every_repo: everywhere(name),
     });
     let remote_entries = remote
         .iter()
@@ -1222,6 +1254,7 @@ pub fn list_project_branches(project: &ProjectRef) -> Vec<BranchEntry> {
         .map(|name| BranchEntry {
             name: name.clone(),
             source: BranchSource::Remote,
+            in_every_repo: everywhere(name),
         });
     local_entries.chain(remote_entries).collect()
 }
@@ -1268,6 +1301,7 @@ pub fn list_branches(root: &Path) -> Vec<BranchEntry> {
         entries.push(BranchEntry {
             name: name.clone(),
             source: BranchSource::Local,
+            in_every_repo: true,
         });
     }
     for name in &remote {
@@ -1277,6 +1311,7 @@ pub fn list_branches(root: &Path) -> Vec<BranchEntry> {
         entries.push(BranchEntry {
             name: name.clone(),
             source: BranchSource::Remote,
+            in_every_repo: true,
         });
     }
     entries

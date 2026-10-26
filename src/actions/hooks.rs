@@ -435,17 +435,30 @@ fn checkouts_status(project: &crate::project::ProjectRef, worktree: &Path) -> Ve
         return porcelain_status(worktree);
     }
     project
-        .repos
-        .iter()
-        .flat_map(|repo| {
-            porcelain_status(&worktree.join(repo))
+        .repo_checkouts_in(worktree)
+        .into_iter()
+        .flat_map(|(repo, checkout)| {
+            let repo = repo.unwrap_or_default().to_string();
+            porcelain_status(&checkout)
                 .into_iter()
-                .map(move |line| match line.split_at_checked(3) {
-                    Some((code, path)) => format!("{code}{repo}/{path}"),
-                    None => line,
-                })
+                .map(move |line| under_repo(&repo, &line))
         })
         .collect()
+}
+
+/// One `git status --porcelain` line with its paths under `repo`: both of
+/// a rename's, `R  old -> new`, so a renamed file is the same entry before
+/// and after a hook.
+pub(super) fn under_repo(repo: &str, line: &str) -> String {
+    let Some((code, paths)) = line.split_at_checked(3) else {
+        return line.to_string();
+    };
+    let paths = paths
+        .split(" -> ")
+        .map(|path| format!("{repo}/{path}"))
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    format!("{code}{paths}")
 }
 
 /// `git status --porcelain --untracked-files=all` inside a worktree, one

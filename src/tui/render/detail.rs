@@ -455,7 +455,8 @@ fn git_row(app: &App, wt: &crate::worktree::Worktree, width: usize) -> Line<'sta
 /// Whole, wrapped if it has to be: a long branch name differs from its
 /// siblings somewhere in the middle, and a cut there loses exactly that.
 fn branch_rows<'a>(wt: &crate::worktree::Worktree, width: usize) -> Vec<Line<'a>> {
-    let branch = wt.branch.as_deref().unwrap_or("(detached)");
+    let branch = wt.branch_shown();
+    let branch = branch.as_str();
     let mut drift = Vec::new();
     if wt.prunable || wt.locked {
         drift.push(signal_text(wt));

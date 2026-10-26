@@ -178,7 +178,7 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
     let branch = app
         .main
         .as_ref()
-        .and_then(|m| m.branch.clone())
+        .map(|m| m.branch_shown())
         .unwrap_or_else(|| "(detached)".to_string());
     // Worktrees, which the main checkout is not; what runs counts it.
     let count = app.linked_count();

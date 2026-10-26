@@ -42,6 +42,16 @@ pub(super) fn project_report(
     {
         findings.push(base_drift_finding(&drift));
     }
+    // A folder of repositories is no repository to ask: each of its own is,
+    // and its base is one `[repos.base]` names.
+    for (repo, root) in paths.project.repo_checkouts_in(paths.root()) {
+        if let Some(repo) = repo
+            && config.repo_base(Some(repo)).is_none()
+            && let Some(drift) = crate::worktree::base_drift(&root)
+        {
+            findings.push(repo_drift_finding(paths, repo, &drift));
+        }
+    }
     // Read straight, with no lock and no save: `actions::refresh` would
     // take the lock, advance phases and write the file back, and doctor
     // writes nothing.
@@ -148,6 +158,36 @@ fn base_drift_finding(drift: &crate::worktree::BaseDrift) -> Finding {
         "if work starts from {current}, make it this project's base: answer `base` with it \
          through `pando init --answers -` — or point origin/HEAD at it in your repository: \
          `git remote set-head origin {current}`"
+    ))
+}
+
+/// [`base_drift_finding`] for one repository of a multi-repo project.
+fn repo_drift_finding(
+    paths: &PandoPaths,
+    repo: &str,
+    drift: &crate::worktree::BaseDrift,
+) -> Finding {
+    let crate::worktree::BaseDrift {
+        default,
+        current,
+        ahead,
+        days_older,
+        ..
+    } = drift;
+    Finding::note(
+        Section::Project,
+        format!(
+            "in {repo}, origin/HEAD is {default}, last committed {days_older} days before \
+             {current}, its main checkout's branch, which has {ahead} commits it lacks — `pando \
+             new` and `pando check` fork {repo} from {default}"
+        ),
+    )
+    .with_fix(format!(
+        "if work in {repo} starts from {current}, add `{repo} = \"{current}\"` under \
+         `[repos.base]` in {} — or point origin/HEAD at it there: `git -C {} remote set-head \
+         origin {current}`",
+        paths.config_file().display(),
+        crate::process::shell_word(&paths.root().join(repo).display().to_string())
     ))
 }
 

@@ -441,7 +441,11 @@ fn render_create(
     // every branch the picker read.
     let chosen = base.is_some();
     let implied = app.implied_base(input);
-    let base = base.or(implied.as_deref()).unwrap_or("the default base");
+    let unchosen = match app.paths.project.is_multi_repo() {
+        true => "each repository's own base",
+        false => "the default base",
+    };
+    let base = base.or(implied.as_deref()).unwrap_or(unchosen);
     let base_line = Line::from(vec![
         Span::styled("new branches fork from ", Style::new().fg(text_muted())),
         Span::styled(
@@ -1163,6 +1167,8 @@ fn render_remove(f: &mut Frame, area: Rect, label: &str, blockers: &[RemoveBlock
             RemoveBlocker::NotOurs => ("⚠", yellow(), 3),
             // Data that goes for good: the destructive colour.
             RemoveBlocker::Drops(_) => ("✕", red(), 1),
+            RemoveBlocker::Beside(_) => ("*", yellow(), 2),
+            RemoveBlocker::Foreign(_) => ("⚠", yellow(), 1),
         };
         let rows = wrap_text(&blocker.line(), cap.saturating_sub(2))
             .into_iter()
@@ -1174,7 +1180,7 @@ fn render_remove(f: &mut Frame, area: Rect, label: &str, blockers: &[RemoveBlock
             .collect();
         blocks.push((sheds, rows));
     }
-    let dirty = blockers.contains(&RemoveBlocker::Dirty);
+    let dirty = blockers.iter().any(RemoveBlocker::needs_force);
     let keys = if blockers.iter().any(RemoveBlocker::is_fatal) {
         vec![(
             key_span("esc"),

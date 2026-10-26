@@ -121,13 +121,17 @@ fn native_of(
     if main || apps.is_empty() {
         return BTreeMap::new();
     }
-    w.branch
-        .as_deref()
-        .and_then(|branch| config.base_for_branch(branch))
-        .map(str::to_string)
-        .or_else(|| crate::worktree::resolve_base_branch(paths.root()))
-        .map(|base| actions::native_changes(config, record, &base))
-        .unwrap_or_default()
+    // Each checkout's base as the git menu reads it: the one recorded for
+    // it, then config's, then its repository's own.
+    let base_of = |repo: Option<&str>| {
+        let root = crate::project::ProjectRef::checkout_of(paths.root(), repo);
+        let branch = match repo {
+            Some(repo) => w.repos.iter().find(|r| r.name == repo)?.branch.clone(),
+            None => w.branch.clone(),
+        };
+        actions::git::base_for(&root, config, repo, branch.as_deref(), record.base_of(repo))
+    };
+    actions::native_changes(config, &paths.project, record, &base_of)
 }
 
 #[derive(Serialize)]
