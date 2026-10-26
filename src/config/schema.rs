@@ -738,25 +738,30 @@ impl Config {
     /// `[branches].rules` first, then `[project].base`. `None` leaves the
     /// choice to the repository's own default.
     pub fn base_for_branch(&self, branch: &str) -> Option<&str> {
-        for rule in &self.branches.rules {
-            if glob_match(&rule.match_, branch) {
-                return Some(&rule.base);
-            }
-        }
-        self.project.base.as_deref()
+        self.base_for(None, Some(branch))
     }
 
-    /// [`Config::base_for_branch`] for one repository of a multi-repo
-    /// project: a `[branches].rules` match first, as it is about this
-    /// branch, then the repository's own `[repos.base]`, then
-    /// `[project].base`.
-    pub fn base_for_repo(&self, repo: &str, branch: &str) -> Option<&str> {
-        self.branches
-            .rules
-            .iter()
-            .find(|rule| glob_match(&rule.match_, branch))
+    /// The base config gives a checkout of `repo` — a multi-repo project's
+    /// repository, or none for a project that is one — on `branch`, or on
+    /// no branch: a `[branches].rules` match first, as it is about the
+    /// branch, then [`Config::repo_base`].
+    pub fn base_for(&self, repo: Option<&str>, branch: Option<&str>) -> Option<&str> {
+        branch
+            .and_then(|branch| {
+                self.branches
+                    .rules
+                    .iter()
+                    .find(|rule| glob_match(&rule.match_, branch))
+            })
             .map(|rule| rule.base.as_str())
-            .or_else(|| self.repos.base.get(repo).map(String::as_str))
+            .or_else(|| self.repo_base(repo))
+    }
+
+    /// The base config gives `repo` whatever the branch: its own
+    /// `[repos.base]`, then `[project].base`.
+    pub fn repo_base(&self, repo: Option<&str>) -> Option<&str> {
+        repo.and_then(|repo| self.repos.base.get(repo))
+            .map(String::as_str)
             .or(self.project.base.as_deref())
     }
 }

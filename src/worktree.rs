@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::SystemTime;
 
-use crate::project::ProjectRef;
+use crate::project::{ProjectRef, linked_gitdir};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Worktree {
@@ -218,12 +218,12 @@ impl Worktree {
     pub fn set(name: String, path: PathBuf, repos: Vec<Worktree>) -> Self {
         let created_at = std::fs::metadata(&path).ok().and_then(|m| m.created().ok());
         let locked = repos.iter().find(|r| r.locked);
-        let prunable = !repos.is_empty() && repos.iter().all(|r| r.prunable);
+        let prunable = all_prunable(repos.iter().map(|r| r.prunable));
         Self {
             name,
             path,
             head: None,
-            branch: common_branch(&repos),
+            branch: common_branch(repos.iter().map(|r| r.branch.as_deref())),
             detached: !repos.is_empty() && repos.iter().all(|r| r.detached),
             prunable,
             prunable_reason: prunable
@@ -386,12 +386,19 @@ fn discover_sets(project: &ProjectRef) -> Result<Discovery> {
 }
 
 /// The branch every one of `checkouts` is on, if they are all on one.
-fn common_branch(checkouts: &[Worktree]) -> Option<String> {
-    let first = checkouts.first()?.branch.clone()?;
-    checkouts
-        .iter()
-        .all(|c| c.branch.as_deref() == Some(first.as_str()))
-        .then_some(first)
+fn common_branch<'a>(branches: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
+    let mut branches = branches.into_iter();
+    let first = branches.next()??;
+    branches
+        .all(|branch| branch == Some(first))
+        .then(|| first.to_string())
+}
+
+/// Whether a set of `prunable` flags, one per checkout, is a set that is
+/// gone: it has checkouts, and every one is.
+fn all_prunable(prunable: impl IntoIterator<Item = bool>) -> bool {
+    let mut prunable = prunable.into_iter().peekable();
+    prunable.peek().is_some() && prunable.all(|gone| gone)
 }
 
 /// `worktrees` beside `main`, refused when two share a name and sorted the
@@ -459,8 +466,6 @@ pub fn listed_paths(project: &ProjectRef) -> Result<Vec<PathBuf>> {
         .map(|w| crate::paths::resolve_for_compare(&w.path))
         .collect())
 }
-
-pub use crate::project::linked_gitdir;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct PorcelainEntry {
@@ -626,15 +631,7 @@ pub fn enrich_from_git(worktrees: &mut [Worktree], project: &ProjectRef) -> Resu
             .collect();
         let (tx, rx) = mpsc::channel();
         enrich_sets(project, items, tx, 16);
-        let mut updates: HashMap<String, EnrichUpdate> = HashMap::new();
-        while let Ok(u) = rx.recv() {
-            updates.insert(u.name.clone(), u);
-        }
-        for wt in worktrees.iter_mut() {
-            if let Some(u) = updates.remove(&wt.name) {
-                apply_update(wt, u);
-            }
-        }
+        apply_all(worktrees, rx);
         return Ok(());
     }
     let root = project.root.as_path();
@@ -648,7 +645,13 @@ pub fn enrich_from_git(worktrees: &mut [Worktree], project: &ProjectRef) -> Resu
         .collect();
     let (tx, rx) = mpsc::channel();
     enrich_listed(root, items, listed, resolve_base_branch(root), tx, 16);
+    apply_all(worktrees, rx);
+    Ok(())
+}
 
+/// Every update `rx` brings, once the senders are done, onto the worktree
+/// it names.
+fn apply_all(worktrees: &mut [Worktree], rx: mpsc::Receiver<EnrichUpdate>) {
     let mut updates: HashMap<String, EnrichUpdate> = HashMap::new();
     while let Ok(u) = rx.recv() {
         updates.insert(u.name.clone(), u);
@@ -658,7 +661,6 @@ pub fn enrich_from_git(worktrees: &mut [Worktree], project: &ProjectRef) -> Resu
             apply_update(wt, u);
         }
     }
-    Ok(())
 }
 
 /// `pool_cap` bounds worker parallelism: every job forks `git status` against
@@ -737,8 +739,7 @@ fn enrich_sets(
 /// the commit of the first repository with work of its own — else the
 /// first's — as the set's head.
 fn fold_set(name: String, repos: Vec<EnrichUpdate>) -> EnrichUpdate {
-    let first = repos.first().and_then(|r| r.branch.clone());
-    let branch = first.filter(|b| repos.iter().all(|r| r.branch.as_deref() == Some(b)));
+    let branch = common_branch(repos.iter().map(|r| r.branch.as_deref()));
     let head = repos
         .iter()
         .find(|r| r.ahead_behind.is_some_and(|(ahead, _)| ahead > 0))
@@ -756,7 +757,7 @@ fn fold_set(name: String, repos: Vec<EnrichUpdate>) -> EnrichUpdate {
     EnrichUpdate {
         name,
         branch,
-        prunable: !repos.is_empty() && repos.iter().all(|r| r.prunable),
+        prunable: all_prunable(repos.iter().map(|r| r.prunable)),
         head_sha: head.and_then(|r| r.head_sha.clone()),
         head_subject: head.and_then(|r| r.head_subject.clone()),
         head_age: head.and_then(|r| r.head_age.clone()),
@@ -845,7 +846,7 @@ fn porcelain_by_path(root: &Path) -> HashMap<PathBuf, PorcelainEntry> {
 /// How enrichment keys a listed path: canonical where the directory is
 /// there, as git printed it where it is gone.
 fn listed_key(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    crate::project::canonicalize(path)
 }
 
 /// Short sha, subject, and relative age for every given commit from one

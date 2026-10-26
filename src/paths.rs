@@ -37,7 +37,7 @@ impl PandoPaths {
     }
 
     pub fn projects_dir(&self) -> PathBuf {
-        self.home.join("projects")
+        self.home.join(crate::project::PROJECTS_DIR)
     }
 
     pub fn project_dir(&self) -> PathBuf {

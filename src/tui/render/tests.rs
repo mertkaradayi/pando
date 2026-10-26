@@ -228,7 +228,6 @@ fn the_pull_request_picker_lists_the_open_ones() {
         a_pr(12, "feat/new", true, false),
         a_pr(11, "feat/one", false, false),
         crate::worktree::PrInfo {
-            repo: None,
             state: crate::worktree::PrState::Merged,
             title: "long gone".into(),
             ..a_pr(10, "feat/old", false, false)
@@ -1472,7 +1471,6 @@ fn the_footer_offers_space_p_on_a_row_with_a_pull_request() {
     app.prs.insert(
         "feat/one".into(),
         crate::worktree::PrInfo {
-            repo: None,
             url: "https://example.test/pull/482".into(),
             ..a_pr(482, "feat/one", false, false)
         },
@@ -2652,7 +2650,6 @@ fn a_rows_pull_request_says_its_number_and_state_first() {
         app.prs.insert(
             branch.into(),
             crate::worktree::PrInfo {
-                repo: None,
                 state,
                 ..a_pr(number, branch, draft, false)
             },
@@ -3505,7 +3502,6 @@ fn wide_names_paint_at_any_terminal_size() {
         let mut app = test_app(&names);
         app.main = Some(wt("日本語"));
         app.pr_list = vec![crate::worktree::PrInfo {
-            repo: None,
             title: "日本語のプルリクエストの題名がとても長い🎉".repeat(3),
             ..a_pr(1, "ブランチ", true, true)
         }];

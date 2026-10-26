@@ -32,7 +32,7 @@ use super::super::readiness::{ReadyVerdict, ready_limit, ready_line, ready_verdi
 use super::super::refresh::{failure_tail, refresh};
 use super::super::services::{observed_port_for_role, url_role};
 use super::super::worktree::{
-    CREATED_BUT_INSTALL_FAILED, new_detached, ref_exists, repo_checkouts, resolve_create_base,
+    CREATED_BUT_INSTALL_FAILED, new_detached, ref_exists, resolve_create_base, short_commits,
 };
 use super::super::{INSTALL_HOOK, Mode};
 use super::base::{Standing, on_the_base};
@@ -126,19 +126,13 @@ pub fn check_at(
     say: &Narration<'_>,
 ) -> Result<Checked> {
     if let Some(base) = base {
-        for (repo, root) in repo_checkouts(paths, paths.root()) {
+        for (repo, root) in paths.project.repo_checkouts_in(paths.root()) {
             if !ref_exists(&root, &resolve_create_base(&root, base)) {
-                match repo {
-                    Some(repo) => bail!(
-                        "base {base:?} does not exist in the repository {repo} — nothing was \
-                         tested"
-                    ),
-                    None => {
-                        bail!(
-                            "base {base:?} does not exist in this repository — nothing was tested"
-                        )
-                    }
-                }
+                let which = match repo {
+                    Some(repo) => format!("the repository {repo}"),
+                    None => "this repository".to_string(),
+                };
+                bail!("base {base:?} does not exist in {which} — nothing was tested");
             }
         }
     }
@@ -222,11 +216,7 @@ pub fn check_at(
     };
     // One commit per repository, in the project's order, for several.
     let commit = commits.join(" ");
-    let short = commits
-        .iter()
-        .map(|commit| commit.chars().take(7).collect::<String>())
-        .collect::<Vec<_>>()
-        .join(" ");
+    let short = short_commits(&commits);
     run.record.commit = Some(commit.clone());
     run.record.base_ref = base_ref.clone();
     // Where the data runs. The hooks after the services — the schema
@@ -426,13 +416,8 @@ pub(super) struct Tested {
 pub(super) fn tested(paths: &PandoPaths, config: &Config, given: Option<&str>) -> Option<Tested> {
     let mut commits = Vec::new();
     let mut refs = Vec::new();
-    for (repo, root) in repo_checkouts(paths, paths.root()) {
-        let configured = match &repo {
-            Some(repo) => config.repos.base.get(repo).map(String::as_str),
-            None => None,
-        }
-        .or(config.project.base.as_deref());
-        let (commit, base_ref) = commit_to_test(&root, configured, given)?;
+    for (repo, root) in paths.project.repo_checkouts_in(paths.root()) {
+        let (commit, base_ref) = commit_to_test(&root, config.repo_base(repo), given)?;
         commits.push(commit);
         refs.push((repo, base_ref));
     }
@@ -444,7 +429,7 @@ pub(super) fn tested(paths: &PandoPaths, config: &Config, given: Option<&str>) -
                 .map(|(repo, base_ref)| {
                     format!(
                         "{} {}",
-                        repo.as_deref().unwrap_or_default(),
+                        repo.unwrap_or_default(),
                         base_ref.as_deref().unwrap_or("HEAD")
                     )
                 })

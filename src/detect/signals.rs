@@ -156,7 +156,14 @@ pub fn signals_of(project: &crate::project::ProjectRef) -> Signals {
 /// [`signals`], with a folder of repositories read for `only` those when
 /// it names them.
 fn signals_in(root: &Path, only: Option<&[String]>) -> Signals {
-    let ignored = Ignored::read(root, only);
+    // Which repositories a folder of them is read for, decided once: the
+    // ones named, else every one it holds. Empty for a repository.
+    let repos: Vec<String> = match (root.join(".git").exists(), only) {
+        (true, _) => Vec::new(),
+        (false, Some(only)) => only.to_vec(),
+        (false, None) => crate::project::repos_in(root),
+    };
+    let ignored = Ignored::read(root, &repos);
     let manifest = std::fs::read_to_string(root.join("package.json")).unwrap_or_default();
     let mut signals = Signals {
         scripts: parse_scripts(&manifest),
@@ -179,11 +186,15 @@ fn signals_in(root: &Path, only: Option<&[String]>) -> Signals {
     signals.workspace_env_links = super::workspaces::workspace_env_links(root, &signals);
     if !has_manifest(root, &signals) {
         signals.app_dirs = app_dirs(root);
-        if let Some(only) = only {
-            let repos = crate::project::repos_in(root);
+        // Another repository of the folder is not one of the project's.
+        if only.is_some() {
+            let others: Vec<String> = crate::project::repos_in(root)
+                .into_iter()
+                .filter(|repo| !repos.contains(repo))
+                .collect();
             signals.app_dirs.retain(|app| {
-                let first = app.dir.split('/').next().unwrap_or_default().to_string();
-                !repos.contains(&first) || only.contains(&first)
+                let first = app.dir.split('/').next().unwrap_or_default();
+                !others.iter().any(|other| other == first)
             });
         }
         read_app_dirs(root, &mut signals);
@@ -676,7 +687,7 @@ pub(super) fn env_file_value(dir: &Path, key: &str) -> Option<String> {
 /// git name such a directory once, as `name/`, rather than list every file
 /// under `node_modules` or `target` for the filter below to throw away.
 pub(super) fn ignored_present(root: &Path) -> Vec<String> {
-    ignored_files(&Ignored::read(root, None))
+    ignored_files(&Ignored::read(root, &[]))
 }
 
 /// What `git ls-files --others --ignored --directory` lists under a root:
@@ -689,14 +700,9 @@ struct Ignored {
 
 impl Ignored {
     /// A folder of repositories is no repository itself: its listing is
-    /// each repository's, under the repository's name — of `only` those,
-    /// when it names them.
-    fn read(root: &Path, only: Option<&[String]>) -> Ignored {
-        let repos = match (root.join(".git").exists(), only) {
-            (true, _) => Vec::new(),
-            (false, Some(only)) => only.to_vec(),
-            (false, None) => crate::project::repos_in(root),
-        };
+    /// that of each of `repos`, under the repository's name. With none, the
+    /// listing is `root`'s own.
+    fn read(root: &Path, repos: &[String]) -> Ignored {
         if repos.is_empty() {
             return Self::read_repository(root);
         }

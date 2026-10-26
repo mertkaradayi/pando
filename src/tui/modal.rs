@@ -1346,14 +1346,11 @@ fn ago(elapsed: std::time::Duration) -> String {
     }
 }
 
-/// The git menu's first lines: where the checkout stands against its base
-/// and its upstream, and whether anything in it would stop a move.
 /// Which repository's checkout of the set `name` the menu is on, and
 /// where it is among them: `backend 1/2`. `None` for a worktree of one
 /// repository.
 fn set_repo(app: &App, name: &str, read: &GitRead) -> Option<String> {
-    let set = app.worktrees.iter().find(|w| w.name == name)?;
-    let at = set.repos.iter().position(|c| c.path == read.checkout)?;
+    let (set, at) = app.set_position(name, read)?;
     Some(format!(
         "{} {}/{}",
         set.repos[at].name,
@@ -1362,6 +1359,8 @@ fn set_repo(app: &App, name: &str, read: &GitRead) -> Option<String> {
     ))
 }
 
+/// The git menu's first lines: where the checkout stands against its base
+/// and its upstream, and whether anything in it would stop a move.
 fn git_header(read: &GitRead) -> Vec<Line<'static>> {
     let dim = Style::new().fg(text_dim());
     let drift = |counts: Option<(u32, u32)>| -> Vec<Span<'static>> {

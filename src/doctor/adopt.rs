@@ -176,7 +176,7 @@ fn checkout_root(checkout: &Path) -> Option<PathBuf> {
     if marker.is_dir() {
         return checkout.is_absolute().then(|| checkout.to_path_buf());
     }
-    let gitdir = crate::worktree::linked_gitdir(checkout)?;
+    let gitdir = crate::project::linked_gitdir(checkout)?;
     // `<root>/.git/worktrees/<name>` — three components back to the
     // checkout it was linked from. A root whose own `.git` is a file is a
     // linked checkout and not a repository: a relative

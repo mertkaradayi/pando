@@ -97,6 +97,12 @@ impl ProjectRef {
         })
     }
 
+    /// A repository a message can name as an example: the first. Empty
+    /// for a project that is one repository, which has none to name.
+    pub fn example_repo(&self) -> &str {
+        self.repos.first().map_or("", String::as_str)
+    }
+
     /// Whether this project is several repositories.
     pub fn is_multi_repo(&self) -> bool {
         !self.repos.is_empty()
@@ -107,9 +113,31 @@ impl ProjectRef {
     /// repository's directory under it for several, whether or not it is
     /// there.
     pub fn checkouts_in(&self, dir: &Path) -> Vec<PathBuf> {
+        self.repo_checkouts_in(dir)
+            .into_iter()
+            .map(|(_, checkout)| checkout)
+            .collect()
+    }
+
+    /// [`ProjectRef::checkouts_in`], each beside the repository it is of:
+    /// none for a project that is one repository.
+    pub fn repo_checkouts_in(&self, dir: &Path) -> Vec<(Option<&str>, PathBuf)> {
         match self.is_multi_repo() {
-            false => vec![dir.to_path_buf()],
-            true => self.repos.iter().map(|repo| dir.join(repo)).collect(),
+            false => vec![(None, dir.to_path_buf())],
+            true => self
+                .repos
+                .iter()
+                .map(|repo| (Some(repo.as_str()), dir.join(repo)))
+                .collect(),
+        }
+    }
+
+    /// The checkout of `repo` in `dir`, a checkout of this project: `dir`
+    /// itself when `repo` is none.
+    pub fn checkout_of(dir: &Path, repo: Option<&str>) -> PathBuf {
+        match repo {
+            Some(repo) => dir.join(repo),
+            None => dir.to_path_buf(),
         }
     }
 
@@ -148,6 +176,10 @@ pub fn repos_in(dir: &Path) -> Vec<String> {
     repos.sort();
     repos
 }
+
+/// The directory under pando's home that holds a directory per project,
+/// named by its id.
+pub const PROJECTS_DIR: &str = "projects";
 
 /// How many repositories a folder pando has never seen needs before
 /// `pando` there makes it a project: one repository in a folder is that
@@ -250,7 +282,7 @@ fn known_multi_repo(dir: &Path, home: &Path) -> Option<ProjectRef> {
         return None;
     }
     let project = ProjectRef::multi_repo(dir, repos).ok()?;
-    home.join("projects")
+    home.join(PROJECTS_DIR)
         .join(&project.id)
         .is_dir()
         .then_some(project)
@@ -358,7 +390,7 @@ fn first_entry(porcelain: &str) -> Option<(PathBuf, bool)> {
 /// macOS prints `/var/...` from the shell and `/private/var/...` from git, so
 /// every path is canonicalised before it is hashed or compared. Falls back to
 /// the input when the path does not exist, so error messages still name it.
-fn canonicalize(path: &Path) -> PathBuf {
+pub(crate) fn canonicalize(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 

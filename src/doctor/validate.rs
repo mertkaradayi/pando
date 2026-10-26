@@ -75,12 +75,7 @@ fn check_provision(paths: &PandoPaths, config: &Config, findings: &mut Vec<Findi
                 format!(
                     "start it with the repository it is in, as `{}/{entry}`, or drop it from \
                      provision",
-                    paths
-                        .project
-                        .repos
-                        .first()
-                        .map(String::as_str)
-                        .unwrap_or("backend")
+                    paths.project.example_repo()
                 ),
             ));
             continue;
