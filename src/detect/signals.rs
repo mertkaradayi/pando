@@ -808,6 +808,26 @@ pub(super) fn env_file_value(dir: &Path, key: &str) -> Option<String> {
         })
 }
 
+/// The pairs of a directory's own local env files, `.env.local` before
+/// `.env` as an app reads them, a key's first spelling winning.
+///
+/// Values a developer keeps out of git, so nothing here is published or
+/// printed: the caller takes what it needs and says nothing of the rest.
+pub(super) fn local_env(dir: &Path) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for name in LOCAL_ENV_FILES {
+        let Ok(text) = std::fs::read_to_string(dir.join(name)) else {
+            continue;
+        };
+        for (key, value) in text.lines().filter_map(crate::services::parse_env_line) {
+            if !out.iter().any(|(held, _)| *held == key) {
+                out.push((key, value));
+            }
+        }
+    }
+    out
+}
+
 /// Root-level files that git ignores and that exist — the local files a
 /// fresh worktree would be missing.
 ///

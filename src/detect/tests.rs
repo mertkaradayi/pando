@@ -4544,3 +4544,114 @@ fn an_apps_own_reference_is_given_to_that_app_alone() {
         processes["worker"].env
     );
 }
+
+// The api's port is only in its code; the web app is told where it is.
+#[test]
+fn a_port_only_in_the_apis_code_still_wires_the_web_app_to_it() {
+    let mut files = NODE_API.to_vec();
+    files.extend(VITE_WEB);
+    files.push(("web/.env.example", "API_URL=http://localhost:3001\n"));
+    let (_dir, project) = repo_folder(&files);
+    let processes = per_app_processes(&proposals_of(&project));
+    assert_eq!(
+        processes["web"].env["API_URL"],
+        "http://localhost:{port:api}"
+    );
+    assert!(!processes["api"].env.contains_key("API_URL"));
+}
+
+// A reference written only in the app's gitignored `.env` is read; one
+// carrying anything beyond the address is not taken into config.
+#[test]
+fn a_reference_only_in_a_local_env_file_is_read() {
+    let mut files = NODE_API.to_vec();
+    files.extend(VITE_WEB);
+    files.push((
+        "web/.env",
+        "API_URL=http://localhost:3001\nAUTH_URL=http://localhost:3001/?token=s3cret\n\
+         ADMIN_URL=http://me:pw@localhost:3001\n",
+    ));
+    let (_dir, project) = repo_folder(&files);
+    let processes = per_app_processes(&proposals_of(&project));
+    let web = &processes["web"].env;
+    assert_eq!(web["API_URL"], "http://localhost:{port:api}");
+    assert!(!web.contains_key("AUTH_URL"), "{web:?}");
+    assert!(!web.contains_key("ADMIN_URL"), "{web:?}");
+}
+
+// The same in one repository's workspace: an app's own files say where
+// it expects a sibling whose port is only in that sibling's code.
+#[test]
+fn a_workspace_app_is_wired_to_a_sibling_whose_port_is_in_its_code() {
+    let dir = tree(&[
+        ("pnpm-workspace.yaml", "packages:\n  - 'apps/*'\n"),
+        ("package.json", "{}"),
+        ("pnpm-lock.yaml", "lockfileVersion: '9.0'\n"),
+        (
+            "apps/api/package.json",
+            r#"{ "scripts": { "dev": "tsx watch src/index.ts" } }"#,
+        ),
+        (
+            "apps/api/src/index.ts",
+            "app.listen(Number(process.env.PORT ?? \"4000\"));\n",
+        ),
+        (
+            "apps/web/package.json",
+            r#"{ "scripts": { "dev": "next dev" } }"#,
+        ),
+        ("apps/web/.gitignore", ".env.local\n"),
+        (
+            "apps/web/.env.local",
+            "NEXT_PUBLIC_API_URL=http://localhost:4000\n",
+        ),
+    ]);
+    let found = signals(dir.path());
+    let proposal = processes_proposal(dir.path(), &found).unwrap();
+    let processes = proposal.candidates[0].processes.clone().unwrap();
+    assert_eq!(
+        processes["web"].env["NEXT_PUBLIC_API_URL"],
+        "http://localhost:{port:api}"
+    );
+}
+
+// What counts as a fallback in code, and what does not.
+#[test]
+fn a_fallback_port_is_read_only_right_after_its_variable() {
+    let ports = |text: &str| fallback_ports(text, "PORT");
+    assert_eq!(ports("const port = process.env.PORT || 3001;"), [3001]);
+    assert_eq!(ports("listen(Number(process.env.PORT) || 8080)"), [8080]);
+    assert_eq!(ports("parseInt(process.env.PORT ?? \"4000\", 10)"), [4000]);
+    assert_eq!(ports("Deno.env.get('PORT') ?? '8000'"), [8000]);
+    assert_eq!(ports("env[\"PORT\"]||5000"), [5000]);
+    // Another variable, a computed fallback, a version, no fallback.
+    assert!(ports("process.env.API_PORT || 3001").is_empty());
+    assert!(ports("process.env.PORT || config.port").is_empty());
+    assert!(ports("process.env.PORT || 1.5").is_empty());
+    assert!(ports("process.env.PORT || 123456").is_empty());
+    assert!(ports("const PORT = 3000").is_empty());
+}
+
+// Two fallbacks that disagree are no answer, and a file the script does
+// not name is never read.
+#[test]
+fn a_code_default_port_needs_one_port_in_the_files_the_script_runs() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("a.js"), "process.env.PORT || 3001\n").unwrap();
+    std::fs::write(dir.path().join("b.js"), "process.env.PORT || 3002\n").unwrap();
+    assert_eq!(
+        code_default_port(dir.path(), "node a.js", &["PORT"]),
+        Some(3001)
+    );
+    assert_eq!(
+        code_default_port(dir.path(), "node ./a.js b.js", &["PORT"]),
+        None
+    );
+    assert_eq!(
+        code_default_port(dir.path(), "node index.js", &["PORT"]),
+        None
+    );
+    assert_eq!(
+        code_default_port(dir.path(), "node ../a.js", &["PORT"]),
+        None
+    );
+}
