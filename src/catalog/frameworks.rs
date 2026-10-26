@@ -53,6 +53,11 @@ pub struct FrameworkRule {
     /// start is known to outlast pando's default wait. `None` keeps the
     /// default.
     pub ready_timeout_s: Option<u64>,
+    /// Whether what this framework serves is pages a browser opens, not
+    /// an API: a web framework's app, never a language's own server.
+    /// Detection gives the worktree's URL to an app that serves pages
+    /// over one that is an API beside it.
+    pub pages: bool,
     /// How this framework's app is reached when it runs on a phone, a
     /// tablet or a simulator rather than in a browser on this machine.
     /// `None` for every framework a browser here opens.
@@ -322,6 +327,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: false,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: true,
         device: None,
     },
     FrameworkRule {
@@ -336,6 +342,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: false,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: true,
         device: None,
     },
     // Astro sits on Vite but has its own CLI, its own default port and its
@@ -352,6 +359,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: false,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: true,
         device: None,
     },
     FrameworkRule {
@@ -367,6 +375,7 @@ pub const RULES: [FrameworkRule; 13] = [
         // A library's `ng build --watch`.
         build_markers: &["ng build"],
         ready_timeout_s: None,
+        pages: true,
         device: None,
     },
     // Expo, React Native's dev server. Metro serves a bundle to a device
@@ -392,6 +401,7 @@ pub const RULES: [FrameworkRule; 13] = [
         // A static export, or the native projects generated for a build.
         build_markers: &["expo export", "expo prebuild"],
         ready_timeout_s: Some(90),
+        pages: false,
         device: Some(Device {
             note: "a phone or tablet reaches Metro, and the app reaches its backend, at this \
                    machine's LAN address, not 127.0.0.1: REACT_NATIVE_PACKAGER_HOSTNAME and the \
@@ -467,6 +477,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: true,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: true,
         device: None,
     },
     FrameworkRule {
@@ -483,6 +494,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: true,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: true,
         device: None,
     },
     FrameworkRule {
@@ -499,6 +511,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: true,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: true,
         device: None,
     },
     FrameworkRule {
@@ -513,6 +526,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: true,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: true,
         device: None,
     },
     FrameworkRule {
@@ -544,6 +558,7 @@ pub const RULES: [FrameworkRule; 13] = [
         // serves the build and takes `--port`.
         build_markers: &["vite build"],
         ready_timeout_s: None,
+        pages: true,
         device: None,
     },
     FrameworkRule {
@@ -561,6 +576,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: false,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: false,
         device: None,
     },
     FrameworkRule {
@@ -577,6 +593,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: false,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: false,
         device: None,
     },
     FrameworkRule {
@@ -591,6 +608,7 @@ pub const RULES: [FrameworkRule; 13] = [
         scripts_build_assets: false,
         build_markers: &[],
         ready_timeout_s: None,
+        pages: false,
         device: None,
     },
 ];

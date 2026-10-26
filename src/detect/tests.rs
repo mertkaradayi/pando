@@ -4702,6 +4702,101 @@ fn an_app_directory_with_only_a_start_script_is_offered_running_it() {
     assert!(!processes.contains_key("api"), "{processes:?}");
 }
 
+// The worktree's URL goes to the app a browser opens, not to an API that
+// happens to sort first.
+#[test]
+fn an_api_that_sorts_first_is_marked_pageless_beside_a_page_app() {
+    let (_dir, project) = repo_folder(&[
+        (
+            "svc/package.json",
+            r#"{ "scripts": { "dev": "node --watch server.js" } }"#,
+        ),
+        ("svc/package-lock.json", "{}"),
+        ("ui/package.json", r#"{ "scripts": { "dev": "vite" } }"#),
+        ("ui/package-lock.json", "{}"),
+        ("ui/vite.config.ts", "export default {}\n"),
+    ]);
+    let proposals = proposals_of(&project);
+    let processes = per_app_processes(&proposals);
+    assert_eq!(processes["svc"].page, Some(false));
+    assert_eq!(processes["ui"].page, None);
+    // And it is written, so the config says it.
+    let option = &proposals
+        .iter()
+        .find(|p| p.slot == Slot::Processes)
+        .unwrap()
+        .candidates[0];
+    let written: Vec<(String, String)> = edits(Slot::Processes, option)
+        .into_iter()
+        .filter(|edit| edit.key == "page")
+        .map(|edit| (edit.table.join("."), edit.value.to_string()))
+        .collect();
+    assert_eq!(
+        written,
+        [("processes.svc".to_string(), "false".to_string())]
+    );
+}
+
+// Nothing is marked where the URL already lands on a page: an app called
+// `web`, or a page app that sorts first. A Node server's name says what
+// its framework cannot.
+#[test]
+fn nothing_is_marked_pageless_where_the_url_is_already_a_page() {
+    let api = (
+        "api/package.json",
+        r#"{ "scripts": { "dev": "node --watch server.js" } }"#,
+    );
+    let lock = |repo: &'static str| -> (&'static str, &'static str) {
+        match repo {
+            "api" => ("api/package-lock.json", "{}"),
+            "admin" => ("admin/package-lock.json", "{}"),
+            "web" => ("web/package-lock.json", "{}"),
+            _ => ("frontend/package-lock.json", "{}"),
+        }
+    };
+    let pages = |files: &[(&str, &str)]| -> BTreeMap<String, Option<bool>> {
+        let (_dir, project) = repo_folder(files);
+        per_app_processes(&proposals_of(&project))
+            .into_iter()
+            .map(|(name, process)| (name, process.page))
+            .collect()
+    };
+    let none = |names: &[&str]| -> BTreeMap<String, Option<bool>> {
+        names.iter().map(|n| (n.to_string(), None)).collect()
+    };
+    // `web` owns the URL whatever sorts first.
+    let found = pages(&[
+        api,
+        lock("api"),
+        ("web/package.json", r#"{ "scripts": { "dev": "vite" } }"#),
+        lock("web"),
+    ]);
+    assert_eq!(found, none(&["api", "web"]));
+    // A page app first in order is already the URL's.
+    let found = pages(&[
+        api,
+        lock("api"),
+        (
+            "admin/package.json",
+            r#"{ "scripts": { "dev": "next dev" } }"#,
+        ),
+        lock("admin"),
+    ]);
+    assert_eq!(found, none(&["admin", "api"]));
+    // Two Node servers, one called `frontend`: the name decides.
+    let found = pages(&[
+        api,
+        lock("api"),
+        (
+            "frontend/package.json",
+            r#"{ "scripts": { "dev": "node --watch ssr.js" } }"#,
+        ),
+        lock("frontend"),
+    ]);
+    assert_eq!(found["api"], Some(false));
+    assert_eq!(found["frontend"], None);
+}
+
 // A process table's `page` is part of the answer and is written with it:
 // `agent/json.md` lists it among the keys a table of one's own takes.
 #[test]
