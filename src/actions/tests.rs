@@ -19135,6 +19135,7 @@ fn new_checks_a_lost_checkout_out_again_and_keeps_the_others_work() {
         "the branch's own commit is checked out"
     );
     assert!(set.join("backend").join("work.txt").is_file());
+}
 
 // A set's root is a plain directory, so an isolated start that read the
 // value it rewrites from there alone found no DATABASE_URL at all, on

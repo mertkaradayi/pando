@@ -284,3 +284,83 @@ fn from_inside_one_repository_the_agents_job_names_the_folder_beside_it() {
     assert!(job.contains("inside each repository's .git"), "{job}");
     assert!(!job.contains("This repository sits in"), "{job}");
 }
+
+// The services of a set: the compose file at a repository's root, named
+// under it, and the value rewritten read from that repository's env
+// files. Before, detection never proposed the file, and an isolated start
+// looked for DATABASE_URL at the set's root, which is a plain directory.
+#[test]
+fn a_set_runs_private_services_from_a_repositorys_compose_file() {
+    if !common::python3_available() {
+        eprintln!("skipping: python3 is not on PATH");
+        return;
+    }
+    let f = Folder::new();
+    let backend = f.root.join("backend");
+    std::fs::write(
+        backend.join("docker-compose.yml"),
+        "services:\n  postgres:\n    image: postgres:16\n    ports:\n      - \"5432:5432\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        backend.join(".env.example"),
+        "DATABASE_URL=postgres://app:app@localhost:5432/shop\n",
+    )
+    .unwrap();
+    git(&backend, &["add", "."]);
+    git(&backend, &["commit", "--quiet", "-m", "services"]);
+    common::docker::install(&f.home);
+
+    let signals = json(&f.pando(&["signals"]));
+    assert_eq!(
+        signals["signals"]["compose_files"],
+        serde_json::json!(["backend/docker-compose.yml"]),
+        "{}",
+        signals["signals"]
+    );
+
+    let mut config = String::from("[project]\nprovision = [\"backend/.env\"]\n\n");
+    config.push_str("[processes.web]\ncwd = \"frontend\"\ncmd = '''");
+    config.push_str(&common::listener_printing("DATABASE_URL"));
+    config.push_str("'''\nports = [\"web\"]\nready = { role = \"web\" }\n\n");
+    config.push_str(
+        "[[services]]\nkind = \"compose\"\nfile = \"backend/docker-compose.yml\"\n\
+         include = [\"postgres\"]\nenv = { DATABASE_URL = \"postgres\" }\n",
+    );
+    f.write_config(&config);
+
+    ok(&f.pando(&["new", "feat/x"]));
+    let project =
+        pando::project::ProjectRef::multi_repo(&f.root, vec!["backend".into(), "frontend".into()])
+            .unwrap();
+    let compose = pando::compose::project_name(&project.id, "feat+x");
+    let _down = common::docker::down_on_drop(&f.home, &compose);
+    ok(&f.pando(&["start", "feat/x", "--isolated", "--wait"]));
+
+    let status = json(&f.pando(&["status", "feat/x", "--json"]));
+    let postgres = status["worktrees"][0]["ports"]["postgres"]
+        .as_u64()
+        .expect("a postgres port");
+    assert_eq!(
+        common::docker::services_up(&f.home, &compose),
+        [("postgres".to_string(), postgres as u16)]
+    );
+    let up = common::docker::invocations_for(&f.home, &compose);
+    assert!(
+        up.iter()
+            .any(|line| line.contains("-f docker-compose.yml") && line.contains(" up ")),
+        "{up:?}"
+    );
+    let log = f.project_dir().join("logs").join("feat+x").join("web.log");
+    let printed = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        printed.contains(&format!(
+            "DATABASE_URL=postgres://app:app@localhost:{postgres}/shop"
+        )),
+        "the frontend was pointed at the set's own postgres: {printed}"
+    );
+
+    ok(&f.pando(&["stop", "feat/x"]));
+    ok(&f.pando(&["rm", "feat/x"]));
+    assert!(common::docker::was_downed(&f.home, &compose));
+}

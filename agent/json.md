@@ -206,7 +206,10 @@ A compose file one directory down, `docker/compose.yml`, is listed in
 `compose_files` and read under `compose` when the root has none of its
 own, but the services question is only proposed from one at the root: a
 file kept beside a deployment is as often the production stack as the
-development one.
+development one. In a folder of repositories each repository's root is a
+root: `compose_files` lists the compose files there under the
+repository's name, `infra/docker-compose.yml`, and the services question
+is proposed from the first, a path that names the same file in every set.
 
 `extends`, `include` and `error` are why a services proposal can be missing
 or under-ticked: they are the parts of a compose file this build did not

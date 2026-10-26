@@ -39,7 +39,9 @@ pub struct Signals {
     /// Framework marker files that exist.
     pub markers: Vec<String>,
     /// The compose files at the root, or, when it has none, those one
-    /// directory below it, under their path: `docker/compose.yml`.
+    /// directory below it, under their path: `docker/compose.yml`. In a
+    /// folder of repositories, those at each repository's own root, under
+    /// its name: `infra/docker-compose.yml`.
     pub compose_files: Vec<String>,
     /// Root-level files that are gitignored and present — what a new
     /// worktree would be missing — then each app directory's local env
@@ -90,6 +92,14 @@ pub struct Signals {
     /// still deserialises.
     #[serde(default)]
     pub dependency_dirs: Vec<String>,
+    /// The repositories a folder of them was read for, by name, sorted:
+    /// each one's root is a root of its own to detection, where a compose
+    /// file is proposed from as at a repository's. Empty for a repository.
+    ///
+    /// Not published: `project` already says what a project is made of,
+    /// and a set of signals is the same shape for either kind.
+    #[serde(skip)]
+    pub repos: Vec<String>,
 }
 
 /// One app directory below a root that has no manifest: what detection
@@ -174,12 +184,13 @@ fn signals_in(root: &Path, only: Option<&[String]>) -> Signals {
         runtime_requirements: crate::runtime::requirements(root),
         env_example: env_example(root),
         markers: present(root, &frameworks::marker_files()),
-        compose_files: compose_files(root),
+        compose_files: compose_files(root, &repos, &ignored),
         ignored_present: ignored_files(&ignored),
         provision_seeds: provision_seeds(root),
         workspace_env_links: Vec::new(),
         app_dirs: Vec::new(),
         dependency_dirs: dependency_dirs(&ignored),
+        repos: repos.clone(),
     };
     // Last, because which directories are apps is itself read from the
     // signals above.
@@ -202,9 +213,16 @@ fn signals_in(root: &Path, only: Option<&[String]>) -> Signals {
     // A repository of a folder of them that is no app of its own — an API
     // in a language detection does not read, a repository of services —
     // still keeps its local env file where its processes read it.
+    // Its env example, too: the keys a repository of services documents
+    // are the ones its compose file's services are found by.
     for repo in &repos {
         if !signals.app_dirs.iter().any(|app| app.dir == *repo) {
             read_local_env(root, repo, &mut signals);
+            for (key, value) in env_example(&root.join(repo)) {
+                if !signals.env_example.iter().any(|(held, _)| *held == key) {
+                    signals.env_example.push((key, value));
+                }
+            }
         }
     }
     signals
@@ -343,7 +361,24 @@ fn subdirs(root: &Path, parent: &str) -> Vec<String> {
 /// only. One a directory keeps beside the deployment it describes is as
 /// often the production stack as the development one, and pando has no
 /// way to tell which.
-fn compose_files(root: &Path) -> Vec<String> {
+///
+/// A folder of repositories has no root of its own that a set holds: its
+/// roots are the repositories', and the compose files at each of those,
+/// not gitignored there, are the ones listed — and proposed from — under
+/// the repository's name. A directory of the folder that is none of its
+/// repositories is in no set, and neither is a file beside them.
+fn compose_files(root: &Path, repos: &[String], ignored: &Ignored) -> Vec<String> {
+    if !repos.is_empty() {
+        return repos
+            .iter()
+            .flat_map(|repo| {
+                present(&root.join(repo), &COMPOSE_FILES)
+                    .into_iter()
+                    .map(move |file| format!("{repo}/{file}"))
+            })
+            .filter(|file| !ignored.entries.contains(file))
+            .collect();
+    }
     let at_root = present(root, &COMPOSE_FILES);
     if !at_root.is_empty() {
         return at_root;

@@ -4253,3 +4253,122 @@ fn a_workspace_apps_plain_start_script_is_still_no_dev_script() {
         vec!["api", "mobile"]
     );
 }
+
+/// A folder of repositories: each `(repo, files)` a repository of its
+/// own with those files committed, and `beside` written into the folder
+/// itself, which no repository holds.
+fn folder_of_repos(repos: &[(&str, &[(&str, &str)])], beside: &[(&str, &str)]) -> TempDir {
+    let dir = tempdir().unwrap();
+    for (repo, files) in repos {
+        let at = dir.path().join(repo);
+        std::fs::create_dir_all(&at).unwrap();
+        crate::testutil::git(&at, &["init", "--quiet", "--initial-branch=main"]);
+        for (rel, contents) in *files {
+            let path = at.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
+        }
+        crate::testutil::git(&at, &["add", "-A"]);
+        crate::testutil::git(&at, &["commit", "--quiet", "-m", "fixture"]);
+    }
+    for (rel, contents) in beside {
+        std::fs::write(dir.path().join(rel), contents).unwrap();
+    }
+    dir
+}
+
+// A set holds a checkout of each repository and nothing else, so the
+// compose file its services come from is one at a repository's root,
+// named under that repository — and was never proposed at all, because
+// detection looked at the folder's own root alone.
+#[test]
+fn a_folder_proposes_services_from_a_compose_file_at_a_repositorys_root() {
+    let compose =
+        "services:\n  postgres:\n    image: postgres:16\n    ports:\n      - \"5432:5432\"\n";
+    let dir = folder_of_repos(
+        &[
+            (
+                "backend",
+                &[
+                    ("package.json", r#"{"scripts":{"dev":"node server.js"}}"#),
+                    (
+                        ".env.example",
+                        "DATABASE_URL=postgres://app:app@localhost:5432/shop\n",
+                    ),
+                ],
+            ),
+            ("infra", &[("docker-compose.yml", compose)]),
+            ("web", &[("compose.yml", compose)]),
+        ],
+        &[("docker-compose.yml", compose)],
+    );
+    let project = crate::project::ProjectRef::multi_repo(
+        dir.path(),
+        vec!["backend".into(), "infra".into(), "web".into()],
+    )
+    .unwrap();
+    let found = signals_of(&project);
+    assert_eq!(
+        found.compose_files,
+        ["infra/docker-compose.yml", "web/compose.yml"],
+        "each repository's, and not the folder's own, which no set holds"
+    );
+    let root = &project.root;
+    assert_eq!(
+        compose_file(root, &found).as_deref(),
+        Some("infra/docker-compose.yml")
+    );
+
+    let proposal = services_proposal(root, &found, None, &MachineEvidence::unknown(), None)
+        .expect("a services proposal");
+    let [postgres] = &proposal.candidates[..] else {
+        panic!("{:?}", proposal.candidates);
+    };
+    assert_eq!(postgres.value, "postgres");
+    let hint = postgres.service.as_ref().unwrap();
+    assert_eq!(hint.file(), Some("infra/docker-compose.yml"));
+    assert_eq!(hint.env_key.as_deref(), Some("DATABASE_URL"));
+    assert_eq!(proposal.mechanism, Some("compose"));
+    assert!(
+        proposal.evidence.iter().any(|line| line
+            == "services are proposed from infra/docker-compose.yml, not from web/compose.yml \
+                — add a `[[services]]` entry for another by hand"),
+        "{:?}",
+        proposal.evidence
+    );
+    let (array, entries) = array_edits(Slot::Services, &[postgres]).unwrap();
+    assert_eq!(array, "services");
+    assert!(
+        entries
+            .iter()
+            .any(|(key, value)| key == "file"
+                && value.as_str() == Some("infra/docker-compose.yml")),
+        "{entries:?}"
+    );
+
+    // With none at any repository's root there is nothing to propose
+    // from, and the evidence says so of the folder.
+    let dir = folder_of_repos(
+        &[
+            ("backend", &[("package.json", "{}")]),
+            ("web", &[("package.json", "{}")]),
+        ],
+        &[("docker-compose.yml", compose)],
+    );
+    let project =
+        crate::project::ProjectRef::multi_repo(dir.path(), vec!["backend".into(), "web".into()])
+            .unwrap();
+    let found = signals_of(&project);
+    assert!(found.compose_files.is_empty(), "{:?}", found.compose_files);
+    let choice = service_choice_for(
+        &project.root,
+        &found,
+        &MachineEvidence::unknown(),
+        &Config::default(),
+    );
+    assert_eq!(
+        choice.evidence[0],
+        "no repository of this folder has a compose file at its root"
+    );
+    assert_eq!(choice.mechanism, None);
+}

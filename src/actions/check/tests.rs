@@ -334,3 +334,55 @@ fn an_install_failure_says_the_step_failed_once_with_its_exit_status() {
         "the install step failed: in the command for hook install"
     );
 }
+
+// In a folder of repositories the shared service's address is in a
+// repository's env file and its compose file at a repository's root: the
+// check reads the one, and names the other in the command that starts it,
+// run from the folder, where the repo-prefixed path names it.
+#[test]
+fn a_folders_shared_service_down_is_started_from_its_repositorys_compose_file() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("product");
+    for repo in ["backend", "infra"] {
+        crate::testutil::init_repo(&root.join(repo));
+    }
+    // A port nothing listens on: bound once, and let go.
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    std::fs::write(
+        root.join("backend/.env"),
+        format!("DATABASE_URL=postgres://app:app@localhost:{port}/shop\n"),
+    )
+    .unwrap();
+    let project =
+        crate::project::ProjectRef::multi_repo(&root, vec!["backend".into(), "infra".into()])
+            .unwrap();
+    let paths = crate::paths::PandoPaths::new(dir.path().join("pando-home"), project);
+    let config: Config = toml::from_str(
+        "[[services]]\nkind = \"compose\"\nfile = \"infra/docker-compose.yml\"\n\
+         include = [\"postgres\"]\n[services.env]\nDATABASE_URL = \"postgres\"\n",
+    )
+    .unwrap();
+
+    let down = super::machine::first_down(&paths, &config, &|_| {}).expect("postgres is down");
+    assert_eq!(down.service, "postgres");
+    assert!(
+        down.reason.contains(&format!(
+            "nothing answers on localhost:{port}, where DATABASE_URL in the main checkout's \
+             backend/.env puts postgres"
+        )),
+        "{}",
+        down.reason
+    );
+    assert!(
+        down.reason.contains(&format!(
+            "`docker compose -f infra/docker-compose.yml up -d postgres` in {}",
+            paths.root().display()
+        )),
+        "{}",
+        down.reason
+    );
+}
