@@ -134,7 +134,6 @@ fn repo_rows(paths: &PandoPaths, w: &crate::worktree::Worktree) -> Vec<String> {
         .map(|repo| text_width(repo))
         .max()
         .unwrap_or(0);
-    let again = w.new_arg();
     paths
         .project
         .repos
@@ -142,13 +141,19 @@ fn repo_rows(paths: &PandoPaths, w: &crate::worktree::Worktree) -> Vec<String> {
         .map(|repo| {
             let said = match w.checkout(repo) {
                 Some(c) if c.prunable || !c.path.is_dir() => {
-                    format!("gone — `pando new {again}` checks it out again")
+                    format!(
+                        "gone — {} checks it out again",
+                        w.checkout_hint(paths.root(), repo)
+                    )
                 }
                 Some(c) => format!(
                     "on {}",
                     c.branch.as_deref().unwrap_or("no branch (detached)")
                 ),
-                None => format!("no checkout — `pando new {again}` adds it"),
+                None => format!(
+                    "no checkout — {} adds it",
+                    w.checkout_hint(paths.root(), repo)
+                ),
             };
             format!("  {}  {:<PHASE_CELL$}  {said}", pad(repo, width), "repo")
         })

@@ -597,7 +597,7 @@ pub fn resolve_for_start(
     // `start`'s to refuse.
     let checkout = find_checkout(paths, name).ok();
     if let Some(checkout) = &checkout {
-        refuse_a_gone_directory(&checkout.worktree)?;
+        refuse_a_gone_directory(paths.root(), &checkout.worktree)?;
         // Nor for the main checkout in a mode it never runs in.
         if checkout.main {
             refuse_main_mode(name, mode)?;
@@ -1436,10 +1436,7 @@ fn refuse_missing_base(
             let lacking = format!(
                 "{} {} no such branch, here or on origin",
                 crate::detect::listed(&without),
-                match without.len() {
-                    1 => "has",
-                    _ => "have",
-                }
+                crate::detect::has_or_have(without.len())
             );
             match with.as_slice() {
                 [] => format!(

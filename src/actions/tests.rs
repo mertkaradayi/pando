@@ -19285,3 +19285,25 @@ fn a_repos_answer_is_checked_against_the_folder_then_written() {
         "{err:#}"
     );
 }
+
+#[test]
+fn a_second_new_of_an_incomplete_set_never_undoes_the_firsts_checkout() {
+    let mut fx = multi_repo_fixture();
+    fx.paths.project.repos = vec!["backend".into()];
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    fx.paths.project.repos = vec!["backend".into(), "frontend".into()];
+    // The path another `new` claimed while it checks frontend out.
+    let claimed = fx.worktrees_dir().join("feat+x").join("frontend");
+    std::fs::create_dir(&claimed).unwrap();
+
+    let err = new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("another `pando new` may be giving feat/x its checkout"),
+        "{err:#}"
+    );
+    assert!(claimed.is_dir(), "the other's claim is left where it is");
+    assert!(
+        !ref_exists(&fx.root.join("frontend"), "refs/heads/feat/x"),
+        "and nothing was made"
+    );
+}

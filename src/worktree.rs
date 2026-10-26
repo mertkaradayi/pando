@@ -247,6 +247,22 @@ impl Worktree {
         self.branch.clone().unwrap_or_else(|| self.display_name())
     }
 
+    /// How a set gets a checkout of `repo` it lacks, as a command: `pando
+    /// new` on its branch, or for a set whose checkouts are on different
+    /// branches — of which `new` cannot tell which `repo` should be on —
+    /// git's own, with the branch left to the developer. `root` is the
+    /// project's folder.
+    pub fn checkout_hint(&self, root: &Path, repo: &str) -> String {
+        match self.is_mixed() {
+            false => format!("`pando new {}`", self.new_arg()),
+            true => format!(
+                "`git -C {} worktree add {} <branch>`",
+                crate::process::shell_word(&root.join(repo).display().to_string()),
+                crate::process::shell_word(&self.path.join(repo).display().to_string())
+            ),
+        }
+    }
+
     /// Whether this is a multi-repo project's set of checkouts.
     pub fn is_set(&self) -> bool {
         !self.repos.is_empty()

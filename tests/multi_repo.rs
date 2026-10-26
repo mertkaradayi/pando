@@ -243,6 +243,8 @@ fn detection_and_the_agents_job_read_every_repository_of_the_folder() {
         job.contains("a folder of 2 git repositories: backend (on main), frontend (on main)"),
         "{job}"
     );
+    // Neither has a manifest: the job names them, for the agent to look.
+    assert!(job.contains("- read as no app: backend, frontend"), "{job}");
 }
 
 #[test]
@@ -267,10 +269,16 @@ fn doctor_names_what_in_the_config_no_repository_of_the_folder_holds() {
 #[test]
 fn from_inside_one_repository_the_agents_job_names_the_folder_beside_it() {
     let f = Folder::new();
+    // A folder pando has never run is not named: it may hold every
+    // repository the developer has.
+    let job = ok(&f.pando_in(&f.root.join("backend"), &["init", "--agent"]));
+    assert!(!job.contains("This repository is one of"), "{job}");
+    f.write_config("");
     let job = ok(&f.pando_in(&f.root.join("backend"), &["init", "--agent"]));
     assert!(
         job.contains(&format!(
-            "This repository sits in {} beside frontend.",
+            "This repository is one of the folder {} that pando runs as one project, beside \
+             frontend.",
             f.root.display()
         )),
         "{job}"
@@ -282,7 +290,7 @@ fn from_inside_one_repository_the_agents_job_names_the_folder_beside_it() {
         "{job}"
     );
     assert!(job.contains("inside each repository's .git"), "{job}");
-    assert!(!job.contains("This repository sits in"), "{job}");
+    assert!(!job.contains("This repository is one of"), "{job}");
 }
 
 // The services of a set: the compose file at a repository's root, named

@@ -92,7 +92,8 @@ const HOST_SUFFIXES: &[&str] = &["_HOST", "_SERVER"];
 /// The main checkout's env files, as namespaced mode reads a server's
 /// address, its database and its login from them: the root's, then those
 /// of the directories the processes run in — `backend/.env` in a project
-/// whose root has no manifest.
+/// whose root has no manifest — and, for a multi-repo project, each
+/// repository's, every real file before any example.
 pub(super) fn main_env(paths: &PandoPaths, config: &Config) -> EnvFiles {
     EnvFiles::read(
         paths.root(),

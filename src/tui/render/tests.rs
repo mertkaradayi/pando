@@ -5346,13 +5346,16 @@ fn a_set_keeps_a_row_for_a_repository_it_has_no_checkout_of() {
     let mut app = set_app(vec![checkout_of("backend")]);
     let rendered = text_of(&draw(&mut app, 200, 30));
     assert!(
-        rendered.contains("frontend  no checkout — pando new feat/x adds it"),
+        rendered.contains("frontend  no checkout — `pando new feat/x` adds it"),
         "{rendered}"
     );
     // A narrower pane carries the command on to the next row, whole.
     let rendered = text_of(&draw(&mut app, 120, 30));
     assert!(rendered.contains("frontend  no checkout"), "{rendered}");
-    assert!(rendered.contains("pando new feat/x adds it"), "{rendered}");
+    assert!(
+        rendered.contains("`pando new feat/x` adds it"),
+        "{rendered}"
+    );
     assert!(
         list_row(&rendered, "feat/x").contains("1 missing"),
         "the list marks it too: {rendered}"

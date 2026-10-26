@@ -789,14 +789,15 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
             }
             // `[repos]` before any question: which repositories the project
             // is and the base each has are what the answers after it, `base`
-            // among them, are checked against. Written before them, and only
-            // once every part of it has been checked.
-            let repos_answered = match answers.as_ref().and_then(|a| a.repos()) {
-                Some(repos) => Some(actions::answer_repos(
-                    paths, config, repos, replace, !dry_run,
-                )?),
-                None => None,
-            };
+            // among them, are checked against. Checked now and taken in
+            // memory; written once the answers after it are, so a refusal
+            // of one of them leaves the files as they were.
+            let (given_paths, given_config) = (paths, config);
+            let repos_answered = answers
+                .as_ref()
+                .and_then(|a| a.repos())
+                .map(|repos| actions::answer_repos(paths, config, repos, replace, false))
+                .transpose()?;
             let (paths, config) = match &repos_answered {
                 Some((paths, config)) => (paths, config),
                 None => (paths, config),
@@ -826,7 +827,17 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
                 true => actions::init_dry_run(paths, config, &answering, &notice)?,
                 false => {
                     let before = InitFiles::read(paths);
-                    match actions::init(paths, config, &answering, &notice) {
+                    let ran = actions::init(paths, config, &answering, &notice);
+                    // Written where the answers after it were: on a pass
+                    // that finished, or stopped at a question.
+                    let wrote = match &ran {
+                        Ok(_) => true,
+                        Err(e) => e.is::<actions::NeedsAnswer>(),
+                    };
+                    if wrote && let Some(repos) = answers.as_ref().and_then(|a| a.repos()) {
+                        actions::answer_repos(given_paths, given_config, repos, replace, true)?;
+                    }
+                    match ran {
                         Ok(report) => (report, Vec::new()),
                         // A question stops the pass after the answers
                         // before it were written: said as a finished run
@@ -1054,8 +1065,12 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
             let name = names::target(paths, name.as_deref(), "logs")?;
             let source = match source {
                 // A repository of a multi-repo project, for the logs of the
-                // processes that run in it.
-                Some(source) if !paths.log_file(&name, &source).exists() => {
+                // processes that run in it — never over a process of that
+                // name, which has a log of its own once it runs.
+                Some(source)
+                    if !paths.log_file(&name, &source).exists()
+                        && !config.processes.contains_key(&source) =>
+                {
                     match logs::sources_in_repo(paths, config, &source).as_slice() {
                         [] => source,
                         [one] => one.clone(),
