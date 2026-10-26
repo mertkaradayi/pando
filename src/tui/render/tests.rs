@@ -5546,3 +5546,22 @@ fn removing_a_set_names_its_dirty_repository_and_what_f_takes() {
         "{rendered}"
     );
 }
+
+// A folder on different branches names each in the header while it fits,
+// and says they differ once it does not, rather than cutting the list.
+#[test]
+fn a_narrow_header_says_a_folders_branches_differ_rather_than_cutting_them() {
+    let mut app = crate::tui::app::tests::multi_repo_app("develop", "main");
+    let header = |app: &mut App, width: u16| {
+        text_of(&draw(app, width, 20))
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let wide = header(&mut app, 160);
+    assert!(wide.contains("backend develop · frontend main"), "{wide}");
+    let narrow = header(&mut app, 60);
+    assert!(narrow.contains("acme-shop · mixed branches"), "{narrow}");
+    assert!(narrow.contains("1 worktree"), "{narrow}");
+}

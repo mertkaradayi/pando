@@ -175,13 +175,30 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
     }
 
     let project = &app.paths.project.display_name;
-    let branch = app
+    let mut branch = app
         .main
         .as_ref()
         .map(|m| m.branch_shown())
         .unwrap_or_else(|| "(detached)".to_string());
     // Worktrees, which the main checkout is not; what runs counts it.
     let count = app.linked_count();
+    let count_word = format!("{count} worktree{}", if count == 1 { "" } else { "s" });
+    // A folder whose repositories are on different branches says each
+    // where the bar has room for them beside the count, and that they
+    // differ where it does not: a cut list names some and not others.
+    let essentials = text_width(" pando ")
+        + build_label_spans(crate::version::label())
+            .iter()
+            .map(|span| text_width(&span.content))
+            .sum::<usize>()
+        + text_width(project)
+        + text_width(" · ")
+        + text_width(&branch)
+        + text_width(" · ")
+        + text_width(&count_word);
+    if app.main.as_ref().is_some_and(|m| m.is_mixed()) && essentials > area.width as usize {
+        branch = "mixed branches".to_string();
+    }
     let (mut running, mut failed) = (0, 0);
     for wt in &app.worktrees {
         match app.phase_of(&wt.name) {
@@ -205,10 +222,7 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
     spans.extend(gh_account_spans(app.gh_account.as_ref()));
     spans.extend([
         Span::styled(" · ", Style::new().fg(text_muted())),
-        Span::styled(
-            format!("{count} worktree{}", if count == 1 { "" } else { "s" }),
-            Style::new().fg(text_dim()),
-        ),
+        Span::styled(count_word, Style::new().fg(text_dim())),
     ]);
     // The list's own glyphs, so the header and the rows speak one
     // language: the glyph for the colour, the word for whoever cannot tell
