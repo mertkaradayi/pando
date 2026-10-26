@@ -45,6 +45,10 @@ pub struct WorkspaceApp {
     /// script: an app directory below a root that is not an app, offered
     /// rather than taken (see [`start_script`]).
     pub by_start: bool,
+    /// Whether what it serves is pages a browser opens: its framework's
+    /// rule says so, or, where no rule does, its name does (see
+    /// [`PAGE_NAMES`]).
+    pub pages: bool,
 }
 
 /// Fewer than this is not a workspace worth splitting up: one app with a
@@ -343,6 +347,11 @@ pub fn workspace_apps(root: &Path, signals: &Signals) -> Vec<WorkspaceApp> {
                 fixed_port: fixed,
                 ready_timeout_s: serves.and_then(|rule| rule.ready_timeout_s),
                 by_start,
+                pages: match serves {
+                    Some(rule) if rule.pages => true,
+                    Some(rule) if rule.device.is_some() => false,
+                    _ => PAGE_NAMES.contains(&name),
+                },
                 name: name.to_string(),
                 dir,
                 cmd,
@@ -375,6 +384,42 @@ pub fn workspace_apps(root: &Path, signals: &Signals) -> Vec<WorkspaceApp> {
         return Vec::new();
     }
     apps
+}
+
+/// The directory names that say an app is the one a browser opens, for
+/// an app whose framework rule does not say: a Node server called `web`
+/// renders pages, one called `api` does not.
+const PAGE_NAMES: [&str; 7] = ["web", "www", "site", "frontend", "ui", "client", "app"];
+
+/// The role a worktree's URL takes when a process owns it, over the
+/// alphabetical rule: `actions`' own default.
+const URL_ROLE: &str = "web";
+
+/// Which apps say `page = false`, so the worktree's URL is a page.
+///
+/// The URL is the `web` role's, else the first role of the alphabetically
+/// first process a browser opens — which, with an API called `svc` beside
+/// a `ui`, is the API. Where some app that owns a role serves pages, none
+/// is called `web`, and the first in that order does not serve them,
+/// every app that owns a role and serves no pages is marked: the URL is
+/// then the first page app's. Otherwise nothing is, and a config says no
+/// more than it has to.
+fn pageless(apps: &[WorkspaceApp], owns_role: &[bool]) -> Vec<bool> {
+    let owners: Vec<&WorkspaceApp> = apps
+        .iter()
+        .zip(owns_role)
+        .filter(|(_, owns)| **owns)
+        .map(|(app, _)| app)
+        .collect();
+    let mut by_name = owners.clone();
+    by_name.sort_by(|a, b| a.name.cmp(&b.name));
+    let mark = !owners.iter().any(|app| app.name == URL_ROLE)
+        && owners.iter().any(|app| app.pages)
+        && by_name.first().is_some_and(|first| !first.pages);
+    apps.iter()
+        .zip(owns_role)
+        .map(|(app, owns)| mark && *owns && !app.pages)
+        .collect()
 }
 
 /// The `start` script of an app with no dev script, as `(name, body)`,
@@ -845,8 +890,11 @@ pub(super) fn processes_proposal(root: &Path, signals: &Signals) -> Option<Propo
     // directory's is said to its own app below, and to no other.
     let references = cross_references(signals.root_env_example(), &apps, &owns_role);
     let siblings = sibling_port_vars(signals, &apps, &owns_role);
+    let pageless = pageless(&apps, &owns_role);
     let mut processes: BTreeMap<String, ProcessConfig> = BTreeMap::new();
-    for ((app, port_env), owns) in apps.iter().zip(&port_envs).zip(&owns_role) {
+    for (((app, port_env), owns), pageless) in
+        apps.iter().zip(&port_envs).zip(&owns_role).zip(&pageless)
+    {
         let mut env: BTreeMap<String, String> = BTreeMap::new();
         for var in port_env {
             env.insert(var.clone(), format!("{{port:{}}}", app.name));
@@ -897,8 +945,9 @@ pub(super) fn processes_proposal(root: &Path, signals: &Signals) -> Option<Propo
                     role: Some(app.name.clone()),
                     timeout_s: app.ready_timeout_s,
                 }),
-                // Left to the catalog, as a written config leaves it.
-                page: None,
+                // Left to the catalog, as a written config leaves it,
+                // unless the URL would otherwise be an API's.
+                page: pageless.then_some(false),
             },
         );
     }
