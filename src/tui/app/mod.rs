@@ -1176,6 +1176,44 @@ impl App {
         self.main.as_ref().is_some_and(|main| main.name == name)
     }
 
+    /// The repository of a multi-repo project that `process` runs in: the
+    /// first directory of its `cwd`, when that is one of the project's
+    /// repositories. `None` for a project that is one repository, where
+    /// there is only one to run in, and for a process that runs at the
+    /// set's own root.
+    pub fn process_repo(&self, process: &str) -> Option<&str> {
+        let project = &self.paths.project;
+        if !project.is_multi_repo() {
+            return None;
+        }
+        let cwd = self.config.processes.get(process)?.cwd.as_deref()?;
+        let first = cwd
+            .split('/')
+            .find(|part| !part.is_empty() && *part != ".")?;
+        project
+            .repos
+            .iter()
+            .find(|repo| repo.as_str() == first)
+            .map(String::as_str)
+    }
+
+    /// The repositories of a multi-repo project that a set has no checkout
+    /// of: one its directory never got, or one removed from under it.
+    /// What it lacks is what `pando new <branch>` adds back. Empty for a
+    /// worktree of one repository.
+    pub fn missing_checkouts<'a>(&'a self, wt: &Worktree) -> Vec<&'a str> {
+        if !wt.is_set() {
+            return Vec::new();
+        }
+        self.paths
+            .project
+            .repos
+            .iter()
+            .filter(|repo| !wt.repos.iter().any(|checkout| checkout.name == **repo))
+            .map(String::as_str)
+            .collect()
+    }
+
     /// How many worktrees the list has, the main checkout not among them:
     /// it is not a worktree, and the header and the list's title count
     /// worktrees.

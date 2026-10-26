@@ -177,6 +177,10 @@ enum GitParts {
         behind: Option<String>,
         ahead: Option<String>,
         dirty: bool,
+        /// `1 missing`: how many of a set's repositories it has no
+        /// checkout of, or one whose directory is gone — a set whose row
+        /// would otherwise read as whole.
+        missing: Option<String>,
     },
 }
 
@@ -305,7 +309,7 @@ fn row_cells(app: &App, wt: &Worktree) -> RowCells {
             false => app.record_for(&wt.name).and_then(|r| mode_mark(r.mode())),
         },
         status,
-        git: git_parts(wt),
+        git: git_parts(app, wt),
         live: phase.is_some() || pending.is_some(),
         cells,
     }
@@ -632,15 +636,17 @@ fn status_width(row: &RowCells) -> usize {
 /// What goes in a row's git slots: what is wrong with its entry, or `↓n`
 /// behind — something to rebase onto — `↑n` ahead — work of its own, ready
 /// to push — and whether it has uncommitted changes.
-fn git_parts(wt: &Worktree) -> GitParts {
+fn git_parts(app: &App, wt: &Worktree) -> GitParts {
     if wt.prunable || wt.locked {
         return GitParts::Entry(signal_text(wt), signal_color(wt));
     }
     let (ahead, behind) = wt.ahead_behind.unwrap_or((0, 0));
+    let missing = app.missing_checkouts(wt).len() + wt.repos.iter().filter(|r| r.prunable).count();
     GitParts::Drift {
         behind: (behind > 0).then(|| format!("↓{}", cap(behind))),
         ahead: (ahead > 0).then(|| format!("↑{}", cap(ahead))),
         dirty: wt.dirty == Some(true),
+        missing: (missing > 0).then(|| format!("{missing} missing")),
     }
 }
 
@@ -668,6 +674,10 @@ fn add_git_cells(rows: &mut [RowCells]) {
             GitParts::Drift { dirty: true, .. } => Some("✎"),
             _ => None,
         }),
+        widest(|git| match git {
+            GitParts::Drift { missing, .. } => missing.as_deref(),
+            GitParts::Entry(..) => None,
+        }),
     ];
     for row in rows.iter_mut() {
         let cell = match &row.git {
@@ -676,14 +686,16 @@ fn add_git_cells(rows: &mut [RowCells]) {
                 behind,
                 ahead,
                 dirty,
+                missing,
             } => {
-                if behind.is_none() && ahead.is_none() && !dirty {
+                if behind.is_none() && ahead.is_none() && !dirty && missing.is_none() {
                     continue;
                 }
                 let slots = [
                     (behind.as_deref(), yellow()),
                     (ahead.as_deref(), green()),
                     (dirty.then_some("✎"), yellow()),
+                    (missing.as_deref(), red()),
                 ];
                 let mut cell = Vec::new();
                 for ((text, color), width) in slots.into_iter().zip(widths) {

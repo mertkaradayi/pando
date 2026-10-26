@@ -5255,3 +5255,140 @@ fn after_space_the_footer_lists_what_may_follow_it() {
         "{rendered}"
     );
 }
+
+// ---- multi-repo projects ---------------------------------------------
+
+/// A checkout of `repo` in the set `feat+x`, on `feat/x`.
+fn checkout_of(repo: &str) -> crate::worktree::Worktree {
+    crate::worktree::Worktree {
+        name: repo.to_string(),
+        path: std::path::PathBuf::from("/trees/feat+x").join(repo),
+        ..wt("feat+x")
+    }
+}
+
+/// `test_app` over a multi-repo project of `backend` and `frontend`
+/// whose one worktree is the set `feat+x` of `checkouts`.
+fn set_app(checkouts: Vec<crate::worktree::Worktree>) -> App {
+    let mut app = test_app(&["feat+x"]);
+    app.paths.project.repos = vec!["backend".into(), "frontend".into()];
+    app.worktrees[0] = crate::worktree::Worktree::set(
+        "feat+x".into(),
+        std::path::PathBuf::from("/trees/feat+x"),
+        checkouts,
+    );
+    app
+}
+
+#[test]
+fn a_sets_processes_say_which_repository_each_runs_in() {
+    let mut app = set_app(vec![checkout_of("backend"), checkout_of("frontend")]);
+    for (process, cwd) in [("dev", "frontend"), ("api", "./backend/server")] {
+        app.config.processes.insert(
+            process.into(),
+            crate::config::ProcessConfig {
+                cmd: "pnpm dev".into(),
+                cwd: Some(cwd.into()),
+                ..Default::default()
+            },
+        );
+    }
+    with_process(&mut app, "feat+x", running_phase());
+    with_second_process(&mut app, "feat+x", "api", running_phase());
+    let rendered = text_of(&draw(&mut app, 140, 30));
+    assert!(rendered.contains("api (backend)"), "{rendered}");
+    assert!(rendered.contains("dev (frontend)"), "{rendered}");
+
+    // A pane with no room for both keeps the phase, not the repository.
+    let rendered = text_of(&draw(&mut app, 34, 40));
+    assert!(!rendered.contains("(backend)"), "{rendered}");
+    assert!(rendered.contains("running   pid"), "{rendered}");
+
+    // One repository's processes are never named for one.
+    let mut app = test_app(&["feat+one"]);
+    app.config.processes.insert(
+        "api".into(),
+        crate::config::ProcessConfig {
+            cmd: "pnpm dev".into(),
+            cwd: Some("backend".into()),
+            ..Default::default()
+        },
+    );
+    with_process(&mut app, "feat+one", running_phase());
+    with_second_process(&mut app, "feat+one", "api", running_phase());
+    let rendered = text_of(&draw(&mut app, 140, 30));
+    assert!(!rendered.contains("api (backend)"), "{rendered}");
+}
+
+#[test]
+fn a_sets_commit_names_the_repository_it_is_of() {
+    let mut frontend = checkout_of("frontend");
+    frontend.head_sha = Some("ee349e1".into());
+    frontend.head_subject = Some("fix the cart".into());
+    let mut app = set_app(vec![checkout_of("backend"), frontend]);
+    app.worktrees[0].head_sha = Some("ee349e1".into());
+    app.worktrees[0].head_subject = Some("fix the cart".into());
+    let rendered = text_of(&draw(&mut app, 140, 30));
+    assert!(
+        rendered.contains("ee349e1 (frontend) fix the cart"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_set_keeps_a_row_for_a_repository_it_has_no_checkout_of() {
+    let mut app = set_app(vec![checkout_of("backend")]);
+    let rendered = text_of(&draw(&mut app, 200, 30));
+    assert!(
+        rendered.contains("frontend  no checkout — pando new feat/x adds it"),
+        "{rendered}"
+    );
+    // A narrower pane carries the command on to the next row, whole.
+    let rendered = text_of(&draw(&mut app, 120, 30));
+    assert!(rendered.contains("frontend  no checkout"), "{rendered}");
+    assert!(rendered.contains("pando new feat/x adds it"), "{rendered}");
+    assert!(
+        list_row(&rendered, "feat/x").contains("1 missing"),
+        "the list marks it too: {rendered}"
+    );
+
+    // And one whose checkout's directory is gone.
+    let mut gone = checkout_of("frontend");
+    gone.prunable = true;
+    let mut app = set_app(vec![checkout_of("backend"), gone]);
+    let rendered = text_of(&draw(&mut app, 140, 30));
+    assert!(
+        list_row(&rendered, "feat/x").contains("1 missing"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("frontend  gone"), "{rendered}");
+
+    // A whole set is not marked.
+    let mut app = set_app(vec![checkout_of("backend"), checkout_of("frontend")]);
+    let rendered = text_of(&draw(&mut app, 140, 30));
+    assert!(!rendered.contains("missing"), "{rendered}");
+}
+
+#[test]
+fn a_sets_repository_rows_keep_what_differs_at_eighty_columns() {
+    let mut backend = checkout_of("backend");
+    backend.dirty = Some(true);
+    let mut frontend = checkout_of("frontend");
+    frontend.dirty = Some(false);
+    frontend.ahead_behind = Some((1, 0));
+    let mut app = set_app(vec![backend, frontend]);
+    let rendered = text_of(&draw(&mut app, 80, 30));
+    assert!(rendered.contains("backend   ✎ changes"), "{rendered}");
+    assert!(rendered.contains("frontend  clean · ↑1"), "{rendered}");
+    assert!(
+        !rendered.contains("backend   feat/x"),
+        "the set's own branch is said once, on its branch row: {rendered}"
+    );
+
+    // A checkout on another branch than its set's still names it.
+    let mut other = checkout_of("frontend");
+    other.branch = Some("main".into());
+    let mut app = set_app(vec![checkout_of("backend"), other]);
+    let rendered = text_of(&draw(&mut app, 140, 30));
+    assert!(rendered.contains("frontend  main"), "{rendered}");
+}
