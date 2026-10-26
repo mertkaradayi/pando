@@ -41,7 +41,7 @@ pub use apply::{
     edits, fills_one_dev_process, is_env_name, join_list, may_fill_dev, native_entry, roles_in,
     service_entry, snippet, still_needed, typed_ports,
 };
-pub use dev::{clone_proposal, unlocked_command};
+pub use dev::{clone_proposal, listed, unlocked_command};
 pub use frameworks::{Served, framework, served_by};
 pub use proposal::{
     Candidate, ComposeResolver, Proposal, ServiceHint, Slot, propose, propose_with,

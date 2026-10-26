@@ -19185,3 +19185,103 @@ fn a_sets_service_env_is_read_from_its_repositories_env_files() {
         ["backend", "frontend"]
     );
 }
+
+// A `repos` answer is checked whole against the folder before a key is
+// written, and once written is what the rest of the run reads.
+#[test]
+fn a_repos_answer_is_checked_against_the_folder_then_written() {
+    let fx = multi_repo_fixture();
+    git(&fx.root.join("frontend"), &["branch", "develop"]);
+    let answer = |json: &str| -> ReposAnswer { serde_json::from_str(json).unwrap() };
+    let refused = |json: &str| {
+        let err = answer_repos(&fx.paths, &fx.config, &answer(json), false, true).unwrap_err();
+        assert!(err.downcast_ref::<RefusedAnswer>().is_some(), "{err:#}");
+        assert!(!fx.paths.config_file().exists(), "nothing written: {err:#}");
+        format!("{err:#}")
+    };
+    let text = refused(r#"{"base": {"backend": "develop"}}"#);
+    assert!(
+        text.contains("backend has no such branch, here or on origin"),
+        "{text}"
+    );
+    let text = refused(r#"{"base": {"mobile": "main"}}"#);
+    assert!(
+        text.contains("not one of this project's repositories"),
+        "{text}"
+    );
+    let text = refused(r#"{"members": ["backend", "nope"]}"#);
+    assert!(
+        text.contains("\"nope\", which is not a git repository"),
+        "{text}"
+    );
+    // A base for a repository the same answer leaves out is no base.
+    let text = refused(r#"{"members": ["backend"], "base": {"frontend": "develop"}}"#);
+    assert!(
+        text.contains("not one of this project's repositories"),
+        "{text}"
+    );
+
+    let (paths, config) = answer_repos(
+        &fx.paths,
+        &fx.config,
+        &answer(r#"{"base": {"frontend": "develop"}}"#),
+        false,
+        true,
+    )
+    .unwrap();
+    assert_eq!(config.repos.base["frontend"], "develop");
+    assert_eq!(
+        paths.project.repo_bases.get("frontend").map(String::as_str),
+        Some("develop")
+    );
+    let loaded = crate::config::load(&fx.paths).unwrap().config;
+    assert_eq!(loaded.repos.base["frontend"], "develop");
+    let written = std::fs::read_to_string(fx.paths.config_file()).unwrap();
+    assert!(written.contains("[repos.base]"), "{written}");
+    assert!(written.contains("# answered: a program"), "{written}");
+
+    // Said again differently, it is refused without --replace.
+    let err = answer_repos(
+        &fx.paths,
+        &loaded,
+        &answer(r#"{"base": {"frontend": "main"}}"#),
+        false,
+        true,
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("--replace"), "{err:#}");
+    answer_repos(
+        &fx.paths,
+        &loaded,
+        &answer(r#"{"base": {"frontend": "main"}}"#),
+        true,
+        true,
+    )
+    .unwrap();
+
+    // Members narrow the project the rest of the run sees.
+    let (paths, _) = answer_repos(
+        &fx.paths,
+        &loaded,
+        &answer(r#"{"members": ["frontend"]}"#),
+        false,
+        false,
+    )
+    .unwrap();
+    assert_eq!(paths.project.repos, ["frontend"]);
+
+    // And a project of one repository has no `[repos]`.
+    let one = fixture();
+    let err = answer_repos(
+        &one.paths,
+        &one.config,
+        &answer(r#"{"members": ["x"]}"#),
+        false,
+        true,
+    )
+    .unwrap_err();
+    assert!(
+        format!("{err:#}").contains("this project is one repository"),
+        "{err:#}"
+    );
+}

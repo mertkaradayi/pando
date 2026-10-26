@@ -1321,7 +1321,7 @@ fn write_answer(
         bail!("an empty answer is not a {}", slot_label(slot));
     }
     if slot == Slot::Base {
-        refuse_missing_base(paths, &candidate.value, pending.is_some())?;
+        refuse_missing_base(paths, config, &candidate.value, pending.is_some())?;
     }
     let replaces = pending.as_ref().is_some_and(|pending| pending.replaces);
     // A config read back from disk still has the answer being replaced.
@@ -1401,16 +1401,84 @@ fn write_answer(
 /// stop. Looked up as `new` looks a base up, so a branch only on origin
 /// counts. From a program it is a refused answer, exit 2 like any other
 /// bad value it sent.
-fn refuse_missing_base(paths: &PandoPaths, base: &str, by_program: bool) -> Result<()> {
-    let root = paths.root();
-    if ref_exists(root, &resolve_create_base(root, base)) {
-        return Ok(());
-    }
-    let message = format!(
-        "{base:?} cannot be this project's {}: this repository has no such branch, here or on \
-         origin — nothing was written",
-        slot_label(Slot::Base)
-    );
+///
+/// In a multi-repo project `[project] base` is the base of every
+/// repository `[repos.base]` does not name, so each of those has to have
+/// the branch, and the refusal names the ones that do not — and, where
+/// some do, how to give the base to those alone.
+fn refuse_missing_base(
+    paths: &PandoPaths,
+    config: &Config,
+    base: &str,
+    by_program: bool,
+) -> Result<()> {
+    let label = slot_label(Slot::Base);
+    let has = |checkout: &Path| ref_exists(checkout, &resolve_create_base(checkout, base));
+    let message = match paths.project.is_multi_repo() {
+        false if has(paths.root()) => return Ok(()),
+        false => format!(
+            "{base:?} cannot be this project's {label}: this repository has no such branch, \
+             here or on origin — nothing was written"
+        ),
+        true => {
+            let taking: Vec<&String> = paths
+                .project
+                .repos
+                .iter()
+                .filter(|repo| !config.repos.base.contains_key(*repo))
+                .collect();
+            let (with, without): (Vec<&String>, Vec<&String>) = taking
+                .into_iter()
+                .partition(|repo| has(&paths.root().join(repo)));
+            if without.is_empty() {
+                return Ok(());
+            }
+            let lacking = format!(
+                "{} {} no such branch, here or on origin",
+                crate::detect::listed(&without),
+                match without.len() {
+                    1 => "has",
+                    _ => "have",
+                }
+            );
+            match with.as_slice() {
+                [] => format!(
+                    "{base:?} cannot be this project's {label}: {lacking} — nothing was written"
+                ),
+                with => {
+                    // A program says it in its answers; a person in the file.
+                    let how = match by_program {
+                        true => {
+                            let only: Vec<String> = with
+                                .iter()
+                                .map(|repo| format!("{repo:?}: {base:?}"))
+                                .collect();
+                            format!(
+                                "answer {{\"repos\": {{\"base\": {{{}}}}}}} instead",
+                                only.join(", ")
+                            )
+                        }
+                        false => {
+                            let only: Vec<String> = with
+                                .iter()
+                                .map(|repo| format!("{repo} = {base:?}"))
+                                .collect();
+                            format!(
+                                "set [repos.base] {} in {}",
+                                only.join(", "),
+                                paths.config_file().display()
+                            )
+                        }
+                    };
+                    format!(
+                        "{base:?} cannot be the {label} of every repository: {lacking} — to \
+                         give it to {} alone, {how}; nothing was written",
+                        crate::detect::listed(with),
+                    )
+                }
+            }
+        }
+    };
     match by_program {
         true => Err(anyhow::Error::new(RefusedAnswer(message))),
         false => bail!(message),

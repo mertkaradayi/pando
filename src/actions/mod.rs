@@ -50,8 +50,8 @@ pub use hooks::{
     runs_again,
 };
 pub use init::{
-    ALL_SLOTS, InitReport, SlotSummary, init, init_dry_run, machine_evidence,
-    machine_evidence_from, machine_evidence_script, runs_nothing, slot_value,
+    ALL_SLOTS, InitReport, ReposAnswer, SlotSummary, answer_repos, init, init_dry_run,
+    machine_evidence, machine_evidence_from, machine_evidence_script, runs_nothing, slot_value,
 };
 pub use installed::{InstalledBuild, Simulators, installed_builds, openable_apps};
 pub use lifecycle::{

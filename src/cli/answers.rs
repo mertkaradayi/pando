@@ -65,6 +65,9 @@ pub(super) fn slot_names() -> Vec<String> {
 #[derive(Debug)]
 pub struct Answers {
     by_slot: BTreeMap<crate::detect::Slot, serde_json::Value>,
+    /// `repos`, for a multi-repo project's `[repos]`: no question, but
+    /// the one way to give one repository a base the others lack.
+    repos: Option<actions::ReposAnswer>,
     /// Which slots a question actually reached, so the ones nothing asked
     /// about can be reported instead of silently dropped.
     asked: std::cell::RefCell<std::collections::BTreeSet<crate::detect::Slot>>,
@@ -83,11 +86,16 @@ impl Answers {
             ));
         };
         let mut by_slot = BTreeMap::new();
+        let mut repos = None;
         for (name, value) in object {
+            if name == REPOS {
+                repos = Some(repos_answer(value)?);
+                continue;
+            }
             let slot = slot_named(&name).ok_or_else(|| {
                 usage(format!(
                     "--answers names {name:?}, which is not a question pando asks — it asks \
-                     about: {}",
+                     about: {}, and takes {REPOS} for a folder of repositories",
                     slot_names().join(", ")
                 ))
             })?;
@@ -100,6 +108,7 @@ impl Answers {
         }
         Ok(Answers {
             by_slot,
+            repos,
             asked: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         })
     }
@@ -112,6 +121,11 @@ impl Answers {
         let value = self.by_slot.get(&question.slot)?;
         self.asked.borrow_mut().insert(question.slot);
         Some(answer_from(question, value))
+    }
+
+    /// The file's `repos`, when it has one.
+    pub(super) fn repos(&self) -> Option<&actions::ReposAnswer> {
+        self.repos.as_ref()
     }
 
     /// Every slot the file answers.
@@ -128,6 +142,29 @@ impl Answers {
             .filter(|slot| !asked.contains(slot))
             .collect()
     }
+}
+
+/// The key an answers file gives a multi-repo project's `[repos]` under.
+pub const REPOS: &str = "repos";
+
+/// `repos`, read as the `[repos]` table it is written to: `members`, a
+/// list of repository names, and `base`, an object of repository name to
+/// branch. Anything else is a usage error before a key is written; which
+/// repositories and branches there are is the action's to check.
+fn repos_answer(value: serde_json::Value) -> Result<actions::ReposAnswer> {
+    let shape = "an object, {\"members\": [\"…\"], \"base\": {\"<repository>\": \"<branch>\"}}";
+    if !value.is_object() {
+        return Err(usage(format!("{REPOS} takes {shape} — not {value}")));
+    }
+    let answer: actions::ReposAnswer = serde_json::from_value(value).map_err(|e| {
+        usage(format!(
+            "{REPOS} is not what [repos] takes: {e} — it takes {shape}"
+        ))
+    })?;
+    if answer.members.is_none() && answer.base.is_empty() {
+        return Err(usage(format!("{REPOS} says nothing — it takes {shape}")));
+    }
+    Ok(answer)
 }
 
 /// Which shapes a slot's answer may take, decided from the slot alone.
@@ -595,6 +632,25 @@ impl InitFiles {
             .map(|(path, _)| format!("wrote {}\n", path.display()))
             .collect()
     }
+}
+
+/// What `init` says of a `repos` answer: the `[repos]` keys and the file.
+pub(super) fn render_repos(
+    answer: &actions::ReposAnswer,
+    verb: &str,
+    file: &std::path::Path,
+) -> String {
+    let mut said: Vec<String> = Vec::new();
+    if let Some(members) = &answer.members {
+        said.push(format!("members = {}", members.join(", ")));
+    }
+    said.extend(
+        answer
+            .base
+            .iter()
+            .map(|(repo, base)| format!("base.{repo} = {base}")),
+    );
+    format!("{verb} [repos] {} in {}\n", said.join("; "), file.display())
 }
 
 /// What `init` prints: where the answers went, and what they say.

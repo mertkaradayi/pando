@@ -331,7 +331,9 @@ Four more facts about `slots` that are not visible in the shape:
   is where `new` forks from and `check` tests, as it is for most
   repositories. Either way it takes a branch name of your own, written as
   `[project] base`, and one this repository has no branch for, here or on
-  origin, is refused with exit 2.
+  origin, is refused with exit 2. In a multi-repo project every repository
+  without a `[repos.base]` must have it; `repos` in the answers file
+  gives one repository a base of its own.
 - **Answering one slot can settle another.** Taking the per-app form at
   `processes`, or answering it with an object of process tables, fills
   the dev command and its ports for every process, so
@@ -871,6 +873,20 @@ as `{port}` or `{port:<role>}`, or a map of environment variable to role;
 `role` and `timeout_s`. `page = false` marks a process whose port no
 browser opens, which the worktree's URL then skips. Each table is written with
 `# answered: a program` on its header.
+
+A multi-repo project takes one key more, `"repos"`, which is no question:
+`{"repos": {"members": ["api", "web"], "base": {"web": "develop"}}}`,
+written to `[repos] members` and `[repos.base]` before any question is
+asked, so the answers after it are checked against it. `members` is every
+repository the project is made of, each a git repository directly under
+the folder; `base` gives each repository it names the branch its new
+branches fork from, which that repository must have, here or on origin. A
+`base` answer is `[project] base`, the base of every repository
+`[repos.base]` does not name, so a branch only some of them have is
+refused with the ones that lack it named and the `repos` answer that gives
+it to the others. `repos` in a project that is one repository, a member or
+a branch that is not there, or, without `--replace`, a value config
+already holds differently is exit 2, before anything is written.
 
 **Answers are by value, never by index.** An index breaks the day a rule
 finds one more candidate; the text does not, and picking an option by its

@@ -364,3 +364,68 @@ fn a_set_runs_private_services_from_a_repositorys_compose_file() {
     ok(&f.pando(&["rm", "feat/x"]));
     assert!(common::docker::was_downed(&f.home, &compose));
 }
+
+impl Folder {
+    /// `pando init --answers -` with `answers` on stdin.
+    fn init_answers(&self, answers: &str, extra: &[&str]) -> Output {
+        use std::io::Write;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_pando"))
+            .env("PANDO_HOME", &self.home)
+            .current_dir(&self.root)
+            .args(["init", "--answers", "-"])
+            .args(extra)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("run pando");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(answers.as_bytes())
+            .unwrap();
+        child.wait_with_output().expect("wait for pando")
+    }
+}
+
+// A base only one repository has: answered for the whole project it is
+// refused naming the one that lacks it and the answer that works, and
+// that answer, `repos`, is taken and written to `[repos.base]`.
+#[test]
+fn a_base_only_one_repository_has_is_answered_through_repos() {
+    let f = Folder::new();
+    git(&f.root.join("frontend"), &["branch", "develop"]);
+    f.write_config("[dev]\ncmd = \"true\"\nports = []\n");
+
+    let out = f.init_answers(r#"{"base": "develop"}"#, &["--yes"]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("backend has no such branch, here or on origin"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(r#"{"repos": {"base": {"frontend": "develop"}}}"#),
+        "{stderr}"
+    );
+
+    let out = f.init_answers(
+        r#"{"repos": {"base": {"frontend": "develop"}}}"#,
+        &["--yes"],
+    );
+    let stdout = ok(&out);
+    assert!(
+        stdout.contains("wrote [repos] base.frontend = develop"),
+        "{stdout}"
+    );
+    let config = std::fs::read_to_string(f.project_dir().join("pando.toml")).unwrap();
+    assert!(
+        config.contains("[repos.base]\nfrontend = \"develop\""),
+        "{config}"
+    );
+
+    // A key that is not the answers file's is still a usage error.
+    let out = f.init_answers(r#"{"repoz": {}}"#, &[]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+}
