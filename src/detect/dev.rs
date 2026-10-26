@@ -730,7 +730,7 @@ pub(super) fn roles_named_by<'a>(vars: &[&'a str]) -> Result<BTreeMap<String, St
 }
 
 /// `a`, `a and b`, `a, b and c` — a list in a sentence.
-pub(super) fn listed<S: AsRef<str>>(names: &[S]) -> String {
+pub fn listed<S: AsRef<str>>(names: &[S]) -> String {
     match names.split_last() {
         None => String::new(),
         Some((last, [])) => last.as_ref().to_string(),

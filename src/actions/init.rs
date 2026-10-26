@@ -682,3 +682,147 @@ pub fn machine_evidence_from(stdout: &str, names: &[String]) -> detect::MachineE
 /// `command -v` a dozen times, which is fast; the budget is for a shell
 /// whose profile is slow, not for the lookups.
 const EVIDENCE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// The `repos` an answers file gives: which of a folder's repositories
+/// are the project, and the base of each that has its own — what
+/// `[repos] members` and `[repos.base]` say, written there.
+///
+/// Not a slot: no rule proposes it and nobody is asked it. It is how a
+/// program says what `base` cannot, when a branch work starts from is in
+/// one repository and not another.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReposAnswer {
+    /// `[repos] members`, whole.
+    #[serde(default)]
+    pub members: Option<Vec<String>>,
+    /// `[repos.base]`, by repository; a repository it leaves out keeps
+    /// whatever it had.
+    #[serde(default)]
+    pub base: std::collections::BTreeMap<String, String>,
+}
+
+/// Checks a `repos` answer against the project and, with `write`, writes
+/// it to the project layer; either way returns the paths and config the
+/// rest of the run goes on with, as the next run would load them.
+///
+/// Everything is checked before a key is written: that the project is a
+/// folder of repositories, that every member is one of them, that every
+/// base names a member and a branch that member has, here or on origin
+/// (looked up as `new` looks a base up), and, without `replace`, that
+/// nothing it says changes what config already says. A refusal is a
+/// [`RefusedAnswer`], exit 2.
+pub fn answer_repos(
+    paths: &PandoPaths,
+    config: &Config,
+    answer: &ReposAnswer,
+    replace: bool,
+    write: bool,
+) -> Result<(PandoPaths, Config)> {
+    let refuse = |message: String| {
+        anyhow::Error::new(RefusedAnswer(format!("{message} — nothing was written")))
+    };
+    let root = paths.root();
+    if !paths.project.is_multi_repo() {
+        return Err(refuse(
+            "repos is about a folder of git repositories, and this project is one repository"
+                .to_string(),
+        ));
+    }
+    let folder = crate::project::repos_in(root);
+    let members: Option<Vec<String>> = match &answer.members {
+        None => None,
+        Some(members) => {
+            let mut members = members.clone();
+            members.sort();
+            members.dedup();
+            if members.is_empty() {
+                return Err(refuse(
+                    "repos.members names no repository — leave it out for every one".to_string(),
+                ));
+            }
+            if let Some(stranger) = members.iter().find(|m| !folder.contains(m)) {
+                return Err(refuse(format!(
+                    "repos.members names {stranger:?}, which is not a git repository directly \
+                     under {} — the repositories there are {}",
+                    root.display(),
+                    folder.join(", ")
+                )));
+            }
+            Some(members)
+        }
+    };
+    let repos: &[String] = members.as_deref().unwrap_or(&paths.project.repos);
+    for (repo, base) in &answer.base {
+        if !repos.contains(repo) {
+            return Err(refuse(format!(
+                "repos.base names {repo:?}, which is not one of this project's repositories — \
+                 they are {}",
+                repos.join(", ")
+            )));
+        }
+        let checkout = root.join(repo);
+        let found = super::worktree::resolve_create_base(&checkout, base);
+        if base.trim().is_empty() || !super::worktree::ref_exists(&checkout, &found) {
+            return Err(refuse(format!(
+                "repos.base gives {repo} the base {base:?}, and {repo} has no such branch, here \
+                 or on origin"
+            )));
+        }
+    }
+    if !replace {
+        let members_changed = members.as_ref().is_some_and(|members| {
+            !config.repos.members.is_empty() && *members != config.repos.members
+        });
+        let base_changed = answer.base.iter().find(|(repo, base)| {
+            config
+                .repos
+                .base
+                .get(*repo)
+                .is_some_and(|held| held != *base)
+        });
+        if members_changed {
+            return Err(refuse(
+                "repos.members is already answered, and --replace replaces it".to_string(),
+            ));
+        }
+        if let Some((repo, _)) = base_changed {
+            return Err(refuse(format!(
+                "repos.base.{repo} is already answered, and --replace replaces it"
+            )));
+        }
+    }
+    let mut config = config.clone();
+    if let Some(members) = &members {
+        config.repos.members = members.clone();
+    }
+    config.repos.base.extend(answer.base.clone());
+    if write {
+        if let Some(members) = &members {
+            config::set_detected(
+                paths,
+                config::Layer::Project,
+                &["repos"],
+                "members",
+                toml_edit::Value::Array(toml_edit::Array::from_iter(members.iter().cloned())),
+                config::Note::Program,
+            )?;
+        }
+        for (repo, base) in &answer.base {
+            config::set_detected(
+                paths,
+                config::Layer::Project,
+                &["repos", "base"],
+                repo,
+                base.as_str(),
+                config::Note::Program,
+            )?;
+        }
+    }
+    // As `main` reads a project: the folder's repositories, narrowed by
+    // what config names.
+    let mut project = paths.project.clone();
+    project.repos = folder;
+    let _ = config.apply_to(&mut project);
+    Ok((PandoPaths::new(paths.home.clone(), project), config))
+}

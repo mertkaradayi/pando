@@ -6154,3 +6154,59 @@ mod update {
         );
     }
 }
+
+// `repos` is read as the `[repos]` table it is written to: anything else
+// is a usage error before a key is written, and the contract names it.
+#[test]
+fn the_answers_file_takes_repos_as_the_repos_table() {
+    let answers =
+        Answers::parse(r#"{"repos": {"members": ["api", "ui"], "base": {"ui": "develop"}}}"#)
+            .unwrap();
+    let repos = answers.repos().expect("the repos answer");
+    assert_eq!(
+        repos.members.as_deref(),
+        Some(&["api".to_string(), "ui".to_string()][..])
+    );
+    assert_eq!(repos.base["ui"], "develop");
+    assert!(answers.slots().is_empty(), "repos is no question");
+
+    for bad in [
+        r#"{"repos": "ui"}"#,
+        r#"{"repos": {}}"#,
+        r#"{"repos": {"bases": {"ui": "develop"}}}"#,
+        r#"{"repos": {"base": {"ui": 3}}}"#,
+    ] {
+        let err = Answers::parse(bad).unwrap_err();
+        assert!(err.downcast_ref::<UsageError>().is_some(), "{bad}: {err:#}");
+        assert!(format!("{err:#}").contains("[repos]") || format!("{err:#}").contains("repos"));
+    }
+    let err = Answers::parse(r#"{"repo": {}}"#).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("takes repos for a folder of repositories"),
+        "{err:#}"
+    );
+
+    let doc = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("agent/json.md"),
+    )
+    .unwrap();
+    let section = doc
+        .split("## The answers file")
+        .nth(1)
+        .expect("the answers section")
+        .split("\n## ")
+        .next()
+        .unwrap();
+    let flat = section.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains(&format!(
+            "takes one key more, `\"{}\"`",
+            super::answers::REPOS
+        )),
+        "{flat}"
+    );
+    assert!(
+        flat.contains("`[repos] members` and `[repos.base]`"),
+        "{flat}"
+    );
+}

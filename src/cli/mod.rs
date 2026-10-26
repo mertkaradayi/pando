@@ -29,6 +29,7 @@ mod wait;
 use self::answers::init_asker;
 use self::answers::read_answers;
 use self::answers::refuse_answered;
+use self::answers::render_repos;
 use self::answers::report_unused;
 use self::answers::volunteered_from;
 use self::answers::{InitFiles, render_init};
@@ -786,6 +787,20 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
             if let Some(answers) = &answers {
                 refuse_answered(answers, config, replace)?;
             }
+            // `[repos]` before any question: which repositories the project
+            // is and the base each has are what the answers after it, `base`
+            // among them, are checked against. Written before them, and only
+            // once every part of it has been checked.
+            let repos_answered = match answers.as_ref().and_then(|a| a.repos()) {
+                Some(repos) => Some(actions::answer_repos(
+                    paths, config, repos, replace, !dry_run,
+                )?),
+                None => None,
+            };
+            let (paths, config) = match &repos_answered {
+                Some((paths, config)) => (paths, config),
+                None => (paths, config),
+            };
             // Every slot the file names: `actions` refuses the ones
             // `--replace` may not change, before anything is written.
             let replacing: Vec<crate::detect::Slot> = match (&answers, replace) {
@@ -833,7 +848,15 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
             for warning in &report.warnings {
                 notice(warning);
             }
+            let repos = answers.as_ref().and_then(|a| a.repos());
             if !dry_run {
+                if let Some(repos) = repos {
+                    write!(
+                        out,
+                        "{}",
+                        render_repos(repos, "wrote", &paths.config_file())
+                    )?;
+                }
                 write!(out, "{}", render_init(&report, "wrote"))?;
                 return Ok(());
             }
@@ -844,6 +867,11 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
             // The summary goes to stderr on this path: stdout is the
             // config, so `pando init --dry-run > preview.toml` is a file
             // and nothing else.
+            // Checked, and left out of the preview above, which is of the
+            // questions' answers alone.
+            if let Some(repos) = repos {
+                to_stderr(&render_repos(repos, "would write", &paths.config_file()));
+            }
             to_stderr(&render_init(&report, "would write"));
             Ok(())
         }
