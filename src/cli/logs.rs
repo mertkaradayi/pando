@@ -299,6 +299,30 @@ fn process_names(paths: &PandoPaths, name: &str) -> Vec<String> {
     out
 }
 
+/// The processes that run in `repo`, a repository of a multi-repo project,
+/// by name: those whose `cwd` is in it. None when `repo` is no repository
+/// of the project, which `--source` then reads as a log's name.
+pub fn sources_in_repo(
+    paths: &PandoPaths,
+    config: &crate::config::Config,
+    repo: &str,
+) -> Vec<String> {
+    if !paths.project.repos.iter().any(|r| r == repo) {
+        return Vec::new();
+    }
+    config
+        .runnable_processes()
+        .filter(|(_, process)| {
+            process
+                .cwd
+                .as_deref()
+                .and_then(|cwd| cwd.trim_start_matches("./").split('/').next())
+                == Some(repo)
+        })
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
 /// Prints several logs as one, each line prefixed with its source padded
 /// to a common width — `api | …`, `web | …` — or, in JSON, carrying a
 /// `source` key.

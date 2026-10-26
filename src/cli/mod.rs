@@ -1025,6 +1025,19 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
         } => {
             let name = names::target(paths, name.as_deref(), "logs")?;
             let source = match source {
+                // A repository of a multi-repo project, for the logs of the
+                // processes that run in it.
+                Some(source) if !paths.log_file(&name, &source).exists() => {
+                    match logs::sources_in_repo(paths, config, &source).as_slice() {
+                        [] => source,
+                        [one] => one.clone(),
+                        several => {
+                            return logs::logs_merged(
+                                paths, &name, several, tail, follow, json, &mut out, &notice,
+                            );
+                        }
+                    }
+                }
                 Some(source) => source,
                 None => match logs::default_sources(paths, &name, DEFAULT_SOURCE) {
                     logs::Sources::One(source) => source,
