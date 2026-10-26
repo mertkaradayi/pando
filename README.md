@@ -460,8 +460,9 @@ base = { backend = "develop" }
 
 From inside a set, or one of its checkouts, pando finds the folder's
 project. From a repository's own main checkout it is that repository, as
-before. The git menu acts on one checkout, so it is not offered on a set
-yet: `!` opens a shell there.
+before. The git menu moves one checkout at a time: on a set it opens on
+the first repository's, measured against that repository's base, and
+`tab` goes to the next.
 
 ### Shared, namespaced, isolated
 

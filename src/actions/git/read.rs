@@ -46,9 +46,13 @@ pub struct GitRead {
 /// worktree was made to go onto (`recorded`), while that still names a
 /// commit; then the config's rule for it, then the project's base, each
 /// preferring `origin`'s copy as `new` does, then the repository's default.
+///
+/// `repo` is the repository of a multi-repo project whose checkout this
+/// is, whose `[repos.base]` comes before the project's base.
 pub fn base_for(
     root: &Path,
     config: &Config,
+    repo: Option<&str>,
     branch: Option<&str>,
     recorded: Option<&str>,
 ) -> Option<String> {
@@ -66,9 +70,16 @@ pub fn base_for(
     {
         return Some(recorded.to_string());
     }
-    let configured = match branch {
-        Some(branch) => config.base_for_branch(branch),
-        None => config.project.base.as_deref(),
+    let configured = match (repo, branch) {
+        (Some(repo), Some(branch)) => config.base_for_repo(repo, branch),
+        (Some(repo), None) => config
+            .repos
+            .base
+            .get(repo)
+            .map(String::as_str)
+            .or(config.project.base.as_deref()),
+        (None, Some(branch)) => config.base_for_branch(branch),
+        (None, None) => config.project.base.as_deref(),
     };
     configured
         .map(|base| resolve_create_base(root, base))
