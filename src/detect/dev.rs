@@ -729,6 +729,15 @@ pub(super) fn roles_named_by<'a>(vars: &[&'a str]) -> Result<BTreeMap<String, St
         .collect()
 }
 
+/// "has" for one of `count`, "have" for several, as a sentence that
+/// [`listed`] them goes on.
+pub fn has_or_have(count: usize) -> &'static str {
+    match count {
+        1 => "has",
+        _ => "have",
+    }
+}
+
 /// `a`, `a and b`, `a, b and c` — a list in a sentence.
 pub fn listed<S: AsRef<str>>(names: &[S]) -> String {
     match names.split_last() {

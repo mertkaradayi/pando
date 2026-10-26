@@ -537,7 +537,7 @@ fn repo_rows<'a>(app: &App, wt: &crate::worktree::Worktree, width: usize) -> Vec
             // What adds it back is a command somebody types, so it is
             // never cut: on the row when it fits, under it when not.
             None => {
-                let fix = format!("pando new {} adds it", wt.new_arg());
+                let fix = format!("{} adds it", wt.checkout_hint(app.paths.root(), repo));
                 let whole = format!("no checkout — {fix}");
                 match text_width(&whole) <= room {
                     true => (whole, Style::new().fg(orange()), None),

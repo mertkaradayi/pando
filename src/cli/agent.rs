@@ -104,7 +104,7 @@ pub(super) fn job_on(paths: &PandoPaths, machine: &actions::Machine<'_>) -> Stri
         "{what} You are done when `pando check` passes and you have told\n\
          the developer so, as the steps below say.\n"
     );
-    if let Some(folder) = crate::project::folder_of(&paths.project) {
+    if let Some(folder) = crate::project::folder_of(&paths.project, &paths.home) {
         out.push_str(&beside_others(&paths.project, &folder));
     }
 
@@ -328,6 +328,24 @@ fn project_now(
                 repos.len(),
                 repos.join(", "),
             );
+            // A repository detection reads no app in is in no proposal,
+            // and an agent answering only what is proposed leaves it out.
+            let unread: Vec<&str> = paths
+                .project
+                .repos
+                .iter()
+                .filter(|repo| !signals.app_dirs.iter().any(|app| app.dir == **repo))
+                .map(String::as_str)
+                .collect();
+            if !unread.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "- read as no app: {} — no manifest pando knows is there. Look: if one runs a \
+                     server, add it to `processes` yourself, with its command and its `cwd`, and \
+                     say so in your report; if it only holds services or a library, leave it out",
+                    unread.join(", ")
+                );
+            }
         }
         false => {
             let branch = main
@@ -691,9 +709,8 @@ fn beside_others(project: &ProjectRef, folder: &ProjectRef) -> String {
         .filter(|repo| Some(*repo) != project.root.file_name().and_then(|n| n.to_str()))
         .collect();
     format!(
-        "**This repository sits in {} beside {}.** pando runs such a folder as one \
-         project, a worktree of every repository on one branch, when it is set up from \
-         there. If this app needs theirs to run — a web app and its API — set pando up \
+        "**This repository is one of the folder {} that pando runs as one project, beside \
+         {}.** That project is a worktree of every repository on one branch. If this app needs theirs to run — a web app and its API — set pando up \
          from the folder instead: run `pando init --agent` in {} and follow that job, not \
          this one. Say in your report which you chose and why.\n\n",
         folder.root.display(),

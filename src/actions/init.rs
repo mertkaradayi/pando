@@ -771,9 +771,14 @@ pub fn answer_repos(
         }
     }
     if !replace {
-        let members_changed = members.as_ref().is_some_and(|members| {
-            !config.repos.members.is_empty() && *members != config.repos.members
-        });
+        // Compared as sets: the same repositories in another order are the
+        // same answer.
+        let mut held = config.repos.members.clone();
+        held.sort();
+        held.dedup();
+        let members_changed = members
+            .as_ref()
+            .is_some_and(|members| !held.is_empty() && *members != held);
         let base_changed = answer.base.iter().find(|(repo, base)| {
             config
                 .repos

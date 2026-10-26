@@ -713,14 +713,24 @@ impl EnvFiles {
             }
             seen.push(dir);
             for (name, env) in read_env_files(&root.join(dir)) {
+                let local = LOCAL_ENV_FILES.contains(&name.as_str());
                 let name = match dir {
                     "" | "." => name,
                     dir => format!("{dir}/{name}"),
                 };
-                files.push((name, env));
+                files.push((local, name, env));
             }
         }
-        EnvFiles { files }
+        // Every directory's real files before any directory's examples, as
+        // one directory's own are read: a tracked example in one never
+        // speaks over another's real value.
+        files.sort_by_key(|(local, _, _)| !local);
+        EnvFiles {
+            files: files
+                .into_iter()
+                .map(|(_, name, env)| (name, env))
+                .collect(),
+        }
     }
 
     /// A key's value, as [`value_in_env`] reads it.
@@ -2424,5 +2434,29 @@ REDIS_PORT=6379
         let (_dir, paths) = home_with_shim("#!/bin/sh\nexit 3\n");
         let compose = Compose::by_project(docker_program(&paths), "pando-x-y");
         wait_ready(&compose, &[], Duration::from_secs(1), &|_| {}).unwrap();
+    }
+
+    #[test]
+    fn a_directorys_real_env_file_speaks_over_anothers_example() {
+        let dir = tempfile::tempdir().unwrap();
+        for (rel, text) in [
+            (
+                "frontend/.env.example",
+                "DATABASE_URL=postgres://user:pass@localhost:5432/app\n",
+            ),
+            (
+                "backend/.env",
+                "DATABASE_URL=postgres://real:secret@localhost:5432/shop\n",
+            ),
+        ] {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let files = EnvFiles::read(dir.path(), &["frontend".into(), "backend".into()]);
+        assert_eq!(
+            files.value("DATABASE_URL").unwrap().as_deref(),
+            Some("postgres://real:secret@localhost:5432/shop")
+        );
     }
 }

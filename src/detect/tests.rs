@@ -4849,3 +4849,17 @@ fn a_folders_service_evidence_names_the_repositorys_env_example() {
         postgres.why
     );
 }
+
+#[test]
+fn a_local_url_with_an_opaque_path_is_never_taken_into_config() {
+    use super::workspaces::plain_path;
+    assert!(plain_path("http://localhost:3001"));
+    assert!(plain_path("http://localhost:3001/"));
+    assert!(plain_path("http://localhost:3001/api/v1"));
+    assert!(!plain_path(
+        "http://localhost:3000/hooks/9f8e7d6c5b4a3f2e1d0c"
+    ));
+    assert!(!plain_path(
+        "http://localhost:3000/hooks/abcdefghijklmnopqrstuvwxyz"
+    ));
+}

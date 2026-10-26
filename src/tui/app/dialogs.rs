@@ -136,14 +136,11 @@ impl RemoveBlocker {
                 [] => "it has uncommitted changes or untracked files — F removes it and \
                        discards them"
                     .to_string(),
-                [one] => format!(
-                    "{one} has uncommitted changes or untracked files — F removes the set and \
-                     discards them"
-                ),
-                [rest @ .., last] => format!(
-                    "{} and {last} have uncommitted changes or untracked files — F removes the \
-                     set and discards them",
-                    rest.join(", ")
+                repos => format!(
+                    "{} {} uncommitted changes or untracked files — F removes the set and \
+                     discards them",
+                    crate::detect::listed(repos),
+                    crate::detect::has_or_have(repos.len())
                 ),
             },
             RemoveBlocker::DirtyUnknown => {

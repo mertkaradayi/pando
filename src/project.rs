@@ -178,23 +178,23 @@ impl ProjectRef {
     }
 }
 
-/// The folder of repositories `project`, a single repository, sits in
-/// beside others: the multi-repo project pando would run from that folder.
-/// `None` for a repository with no sibling repository, for one inside a
-/// repository, and for a multi-repo project itself.
-pub fn folder_of(project: &ProjectRef) -> Option<ProjectRef> {
+/// The multi-repo project `project`, a single repository, is one
+/// repository of: the folder it sits in, when pando knows that folder as a
+/// project of its own. A folder pando has never run is not said to be
+/// one — `~/code` holds every repository a developer has, and naming them
+/// all beside one would be noise, and a list nobody asked to publish.
+/// `None` for a multi-repo project itself.
+pub fn folder_of(project: &ProjectRef, home: &Path) -> Option<ProjectRef> {
     if project.is_multi_repo() {
         return None;
     }
-    let folder = project.root.parent()?;
-    if folder.join(".git").exists() {
-        return None;
-    }
-    let repos = repos_in(folder);
+    let folder = known_multi_repo(project.root.parent()?, home)?;
     let name = project.root.file_name()?.to_str()?;
-    (repos.len() >= FIRST_SIGHT_REPOS && repos.iter().any(|repo| repo == name))
-        .then(|| ProjectRef::multi_repo(folder, repos).ok())
-        .flatten()
+    folder
+        .repos
+        .iter()
+        .any(|repo| repo == name)
+        .then_some(folder)
 }
 
 /// The repositories directly under `dir`: its subdirectories whose `.git`

@@ -737,14 +737,17 @@ fn sibling_port_vars(
 /// down — then its env example for the keys they lack.
 ///
 /// A local file's value is taken only when it is a bare address on this
-/// machine, `http://localhost:3001` with a path at most: a reference
-/// becomes a template written into config, and a password or a token in
-/// a local file is never config's business. Nothing read here is printed.
+/// machine, `http://localhost:3001` with a short path of words at most
+/// (`/api/v1`): a reference becomes a template written into config, and a
+/// password or a token in a local file — a webhook's secret in its path —
+/// is never config's business. Nothing read here is printed.
 fn own_env(dir: &Path) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = super::signals::local_env(dir)
         .into_iter()
         .filter(|(_, value)| {
-            localhost_url_port(value).is_some() && !value.contains(['@', '?', '#'])
+            localhost_url_port(value).is_some()
+                && !value.contains(['@', '?', '#'])
+                && plain_path(value)
         })
         .collect();
     for (key, value) in super::signals::env_example(dir) {
@@ -753,6 +756,25 @@ fn own_env(dir: &Path) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+/// Whether a URL's path, if it has one, is a few short words: `/api`,
+/// `/api/v1`, never an opaque segment that could be a token.
+pub(super) fn plain_path(url: &str) -> bool {
+    let Some((_, after)) = url.split_once("://") else {
+        return false;
+    };
+    let path = after.split_once('/').map_or("", |(_, path)| path);
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    // A word has few digits; a token is long, or mostly digits and hex.
+    segments.len() <= 3
+        && segments.iter().all(|segment| {
+            segment.len() <= 16
+                && segment.chars().filter(char::is_ascii_digit).count() <= 2
+                && segment
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        })
 }
 
 /// The port of a URL that points at this machine, if that is what this is.

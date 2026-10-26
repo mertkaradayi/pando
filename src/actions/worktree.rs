@@ -179,8 +179,10 @@ fn missing_checkouts<'a>(paths: &'a PandoPaths, set: &Worktree) -> Vec<&'a str> 
 /// `new` of a set pando made that lacks some repositories' checkouts:
 /// those are checked out into it on its branch as `new` would, each
 /// forking from its repository's base where the branch is new there, and
-/// provisioned, cloned and installed like the rest. The checkouts it has
-/// are left as they are.
+/// provisioned and cloned like a new set's; the install runs again, over
+/// the whole set. The checkouts it has are left as they are, and so is a
+/// set that runs: its processes would see their dependencies change under
+/// them.
 fn complete_set(
     paths: &PandoPaths,
     config: &Config,
@@ -191,14 +193,20 @@ fn complete_set(
 ) -> Result<String> {
     let shown = set.display_name();
     let store = state::load(&paths.state_file())?;
-    let ours = store
+    let record = store
         .worktrees
         .get(&set.name)
-        .is_some_and(|record| record.created_by_pando && record_is_for(record, set));
-    if !ours {
+        .filter(|record| record.created_by_pando && record_is_for(record, set));
+    let Some(record) = record else {
         bail!(
             "{shown} is a set pando did not make, so it adds no checkout to it — `pando rm {shown} \
              --yes` removes it, and then `pando new {branch}` makes it whole"
+        );
+    };
+    if !record.processes.is_empty() {
+        bail!(
+            "{shown} is running — `pando stop {shown}`, and then `pando new {branch}` gives it the \
+             checkouts it lacks"
         );
     }
     let on = set
@@ -213,8 +221,96 @@ fn complete_set(
         );
     }
     let missing = missing_checkouts(paths, set);
-    // A checkout git still lists with its directory gone is cleared first,
-    // as `rm` clears one: nothing is there to lose.
+    clear_gone_checkouts(paths, set, &missing)?;
+    let sources = sources_for(
+        paths,
+        config,
+        branch,
+        base,
+        &|repo| repo.is_some_and(|repo| missing.contains(&repo)),
+        progress,
+    )?;
+    let claimed = claim_checkouts(paths, set, &sources)?;
+    let worktrees_dir = config.worktrees_dir(paths);
+    let mut added: Vec<(&RepoSource, PathBuf)> = Vec::new();
+    for source in &sources {
+        let at = source.target(&set.path);
+        let made = add_checkout(source, &at, branch, config, &worktrees_dir, progress).and_then(
+            |(plan, failed)| match (failed, &plan) {
+                (Some(failed), _) => Err(failed),
+                (None, CheckoutPlan::CopyOnWrite(from)) => {
+                    super::checkout::fill(&at, from, progress).map(|_| ())
+                }
+                (None, CheckoutPlan::Git) => Ok(()),
+            },
+        );
+        match made {
+            Ok(()) => added.push((source, at)),
+            Err(e) => {
+                // The path was claimed by this call, so a checkout git
+                // kept there is this call's to undo, with the rest.
+                if is_registered(&source.root, &at) {
+                    added.push((source, at));
+                }
+                let err = unwind_checkouts(&added, &set.path, branch, e);
+                for dir in &claimed {
+                    let _ = std::fs::remove_dir(dir);
+                }
+                return Err(err);
+            }
+        }
+    }
+    // Only into the checkouts just made: the others have what they had.
+    let names: Vec<&str> = sources.iter().filter_map(|s| s.repo.as_deref()).collect();
+    let theirs = |rel: &&String| {
+        paths
+            .project
+            .repo_of(rel)
+            .is_some_and(|repo| names.contains(&repo))
+    };
+    for rel in config.project.provision_paths().iter().filter(theirs) {
+        provision_path(paths, config, &set.path, rel, progress)
+            .map_err(|e| unwind_checkouts(&added, &set.path, branch, e))?;
+    }
+    record_bases(paths, set, &sources)?;
+    let clones: Vec<String> = config
+        .project
+        .clones()
+        .iter()
+        .filter(theirs)
+        .cloned()
+        .collect();
+    clone_ignored_paths(
+        &paths.project,
+        &clones,
+        config.project.install.as_deref(),
+        &set.path,
+        progress,
+    );
+    progress(&format!("added {} to {shown}", names.join(", ")));
+    if has_install_step(config) {
+        progress("installing");
+    }
+    let no_ports: BTreeMap<String, u16> = BTreeMap::new();
+    let no_services: BTreeMap<String, String> = BTreeMap::new();
+    let ctx = HookContext {
+        name: &set.name,
+        branch: Some(branch),
+        worktree: &set.path,
+        ports: &no_ports,
+        service_env: &no_services,
+        own_data: false,
+        not_own: None,
+    };
+    run_hooks(paths, config, config::HookPoint::Create, &ctx, progress)
+        .with_context(|| format!("{branch} {CREATED_BUT_INSTALL_FAILED}"))?;
+    Ok(set.name.clone())
+}
+
+/// Clears the entries git still lists for `missing` checkouts of `set`
+/// whose directories are gone, as `rm` clears one: nothing is there to
+/// lose, and `git worktree add` refuses a path git still lists.
+fn clear_gone_checkouts(paths: &PandoPaths, set: &Worktree, missing: &[&str]) -> Result<()> {
     for checkout in set
         .repos
         .iter()
@@ -234,78 +330,54 @@ fn complete_set(
             );
         }
     }
-    let sources = sources_for(
-        paths,
-        config,
-        branch,
-        base,
-        &|repo| repo.is_some_and(|repo| missing.contains(&repo)),
-        progress,
-    )?;
-    let worktrees_dir = config.worktrees_dir(paths);
-    let mut added: Vec<(&RepoSource, PathBuf)> = Vec::new();
-    for source in &sources {
+    Ok(())
+}
+
+/// Claims the path of each checkout `sources` will add to `set`, under the
+/// state lock and before git runs, as `new` claims a worktree's: a second
+/// `new` of the same set finds them taken and refuses, so the one that
+/// loses never undoes what the winner made.
+fn claim_checkouts(
+    paths: &PandoPaths,
+    set: &Worktree,
+    sources: &[RepoSource],
+) -> Result<Vec<PathBuf>> {
+    let _lock = state::lock(&paths.lock_file())?;
+    let mut claimed = Vec::new();
+    for source in sources {
         let at = source.target(&set.path);
-        let made = add_checkout(source, &at, branch, config, &worktrees_dir, progress).and_then(
-            |(plan, failed)| match (failed, &plan) {
-                (Some(failed), _) => Err(failed),
-                (None, CheckoutPlan::CopyOnWrite(from)) => {
-                    super::checkout::fill(&at, from, progress).map(|_| ())
-                }
-                (None, CheckoutPlan::Git) => Ok(()),
-            },
-        );
-        match made {
-            Ok(()) => added.push((source, at)),
-            Err(e) => {
-                // A failed add that git kept is undone with the rest.
-                if is_registered(&source.root, &at) {
-                    added.push((source, at));
-                }
-                return Err(unwind_checkouts(&added, &set.path, branch, e));
+        if let Err(e) = std::fs::create_dir(&at) {
+            for dir in &claimed {
+                let _ = std::fs::remove_dir(dir);
             }
+            return Err(match e.kind() {
+                std::io::ErrorKind::AlreadyExists => anyhow::anyhow!(
+                    "{} already exists — another `pando new` may be giving {} its checkout",
+                    at.display(),
+                    set.display_name()
+                ),
+                _ => anyhow::Error::from(e).context(format!("create {}", at.display())),
+            });
         }
+        claimed.push(at);
     }
-    provision_worktree_files(paths, config, &set.path, progress)
-        .map_err(|e| unwind_checkouts(&added, &set.path, branch, e))?;
-    {
-        let _lock = state::lock(&paths.lock_file())?;
-        let mut store = state::load(&paths.state_file())?;
-        if let Some(record) = store.worktrees.get_mut(&set.name) {
-            for source in &sources {
-                if let CreateSource::Fork { base } = &source.source {
-                    record.set_base(source.repo.as_deref(), base);
-                }
-            }
-            state::save(&paths.state_file(), &store)?;
-        }
-    }
-    clone_ignored_paths(
-        &paths.project,
-        config.project.clones(),
-        config.project.install.as_deref(),
-        &set.path,
-        progress,
-    );
-    let names: Vec<&str> = sources.iter().filter_map(|s| s.repo.as_deref()).collect();
-    progress(&format!("added {} to {shown}", names.join(", ")));
-    if has_install_step(config) {
-        progress("installing");
-    }
-    let no_ports: BTreeMap<String, u16> = BTreeMap::new();
-    let no_services: BTreeMap<String, String> = BTreeMap::new();
-    let ctx = HookContext {
-        name: &set.name,
-        branch: Some(branch),
-        worktree: &set.path,
-        ports: &no_ports,
-        service_env: &no_services,
-        own_data: false,
-        not_own: None,
+    Ok(claimed)
+}
+
+/// Records the base each forked checkout of `sources` went onto, in
+/// `set`'s record.
+fn record_bases(paths: &PandoPaths, set: &Worktree, sources: &[RepoSource]) -> Result<()> {
+    let _lock = state::lock(&paths.lock_file())?;
+    let mut store = state::load(&paths.state_file())?;
+    let Some(record) = store.worktrees.get_mut(&set.name) else {
+        return Ok(());
     };
-    run_hooks(paths, config, config::HookPoint::Create, &ctx, progress)
-        .with_context(|| format!("{branch} {CREATED_BUT_INSTALL_FAILED}"))?;
-    Ok(set.name.clone())
+    for source in sources {
+        if let CreateSource::Fork { base } = &source.source {
+            record.set_base(source.repo.as_deref(), base);
+        }
+    }
+    state::save(&paths.state_file(), &store)
 }
 
 /// One repository's part of a new worktree: which repository (none for a
@@ -1683,7 +1755,7 @@ pub(super) fn find_worktree(paths: &PandoPaths, name: &str) -> Result<Worktree> 
 /// checkout: see [`refuse_a_gone_directory`].
 pub(super) fn find_live_checkout(paths: &PandoPaths, name: &str) -> Result<Checkout> {
     let checkout = find_checkout(paths, name)?;
-    refuse_a_gone_directory(&checkout.worktree)?;
+    refuse_a_gone_directory(paths.root(), &checkout.worktree)?;
     refuse_a_missing_repo(paths, &checkout.worktree)?;
     Ok(checkout)
 }
@@ -1701,10 +1773,24 @@ fn refuse_a_missing_repo(paths: &PandoPaths, worktree: &Worktree) -> Result<()> 
         return Ok(());
     };
     let shown = worktree.display_name();
+    // A set pando did not make it adds nothing to: `rm --yes` first.
+    let ours = state::load(&paths.state_file()).is_ok_and(|store| {
+        store
+            .worktrees
+            .get(&worktree.name)
+            .is_some_and(|record| record.created_by_pando && record_is_for(record, worktree))
+    });
+    if !ours {
+        bail!(
+            "{shown} has no checkout of {missing}, and pando did not make it — `pando rm {shown} \
+             --yes` removes it, and then `pando new {}` makes it with every repository",
+            worktree.new_arg()
+        );
+    }
     bail!(
-        "{shown} has no checkout of {missing} — `pando new {}` adds it to the set, and leaves \
-         the others as they are",
-        worktree.new_arg()
+        "{shown} has no checkout of {missing} — {} adds it to the set, and leaves the others \
+         as they are",
+        worktree.checkout_hint(paths.root(), missing)
     )
 }
 
@@ -1716,7 +1802,7 @@ fn refuse_a_missing_repo(paths: &PandoPaths, worktree: &Worktree) -> Result<()> 
 /// bare "No such file or directory" that read as the install command or
 /// bash being missing. `rm` keeps the plain lookup: clearing such an entry
 /// is what it is for.
-pub(super) fn refuse_a_gone_directory(worktree: &Worktree) -> Result<()> {
+pub(super) fn refuse_a_gone_directory(root: &Path, worktree: &Worktree) -> Result<()> {
     // A set whose own directory is there can still have lost a checkout:
     // a process whose `cwd` is that repository's would fail the same way.
     if !worktree.prunable && worktree.path.is_dir() {
@@ -1728,15 +1814,11 @@ pub(super) fn refuse_a_gone_directory(worktree: &Worktree) -> Result<()> {
             None => Ok(()),
             Some(gone) => bail!(
                 "the checkout of {} in {} is gone: git still lists it at {}, but nothing can \
-                 run there — `pando new {}` checks it out again, and leaves the others as they \
-                 are",
+                 run there — {} checks it out again, and leaves the others as they are",
                 gone.name,
                 worktree.display_name(),
                 gone.path.display(),
-                worktree
-                    .branch
-                    .as_deref()
-                    .unwrap_or(&worktree.display_name())
+                worktree.checkout_hint(root, &gone.name)
             ),
         };
     }
