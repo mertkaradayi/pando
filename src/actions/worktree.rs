@@ -221,7 +221,7 @@ fn complete_set(
         );
     }
     let missing = missing_checkouts(paths, set);
-    clear_gone_checkouts(paths, set, &missing)?;
+    clear_gone_checkouts(paths, set, &missing, progress)?;
     let sources = sources_for(
         paths,
         config,
@@ -310,7 +310,12 @@ fn complete_set(
 /// Clears the entries git still lists for `missing` checkouts of `set`
 /// whose directories are gone, as `rm` clears one: nothing is there to
 /// lose, and `git worktree add` refuses a path git still lists.
-fn clear_gone_checkouts(paths: &PandoPaths, set: &Worktree, missing: &[&str]) -> Result<()> {
+fn clear_gone_checkouts(
+    paths: &PandoPaths,
+    set: &Worktree,
+    missing: &[&str],
+    progress: &dyn Fn(&str),
+) -> Result<()> {
     for checkout in set
         .repos
         .iter()
@@ -329,6 +334,13 @@ fn clear_gone_checkouts(paths: &PandoPaths, set: &Worktree, missing: &[&str]) ->
                 crate::process::shell_word(&root.display().to_string())
             );
         }
+        // git hands the new checkout the entry the lost one had, so a copy
+        // of it moved somewhere else would share the new one's index.
+        progress(&format!(
+            "{} had no checkout at {path} any more; if it was moved rather than deleted, delete \
+             the moved copy, which git would take for the new one",
+            checkout.name
+        ));
     }
     Ok(())
 }

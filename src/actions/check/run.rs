@@ -216,7 +216,18 @@ pub fn check_at(
     };
     // One commit per repository, in the project's order, for several.
     let commit = commits.join(" ");
-    let short = short_commits(&commits);
+    // Each beside its repository's name, for several.
+    let short = match paths.project.is_multi_repo() {
+        true => paths
+            .project
+            .repos
+            .iter()
+            .zip(&commits)
+            .map(|(repo, commit)| format!("{repo} {}", short_commits(std::slice::from_ref(commit))))
+            .collect::<Vec<_>>()
+            .join(" · "),
+        false => short_commits(&commits),
+    };
     run.record.commit = Some(commit.clone());
     run.record.base_ref = base_ref.clone();
     // Where the data runs. The hooks after the services — the schema
