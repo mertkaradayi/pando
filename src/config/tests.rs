@@ -2388,3 +2388,19 @@ fn repos_names_only_the_folders_repositories() {
     assert_eq!(untouched.repos, ["backend", "frontend"]);
     assert_eq!(warnings.len(), 2, "{warnings:?}");
 }
+
+#[test]
+fn a_base_for_a_repository_members_leaves_out_says_so() {
+    let dir = TempDir::new().unwrap();
+    for repo in ["api", "web"] {
+        crate::testutil::init_repo(&dir.path().join(repo));
+    }
+    let project = crate::project::ProjectRef::multi_repo(dir.path(), vec!["api".into()]).unwrap();
+    let mut config = Config::default();
+    config.repos.base = BTreeMap::from([("web".to_string(), "main".to_string())]);
+    let err = validate(&config, &project).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("which `[repos] members` leaves out of the project"),
+        "{err:#}"
+    );
+}

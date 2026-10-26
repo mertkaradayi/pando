@@ -16,6 +16,23 @@ may change behaviour.
   is refused naming them.
 - `signals` publishes `env_examples`: every env example read, whole,
   under its path.
+- The first-run setup knows a folder of repositories. `pando init
+  --agent` there says the job is a set of worktrees, that a path names
+  its repository first, which repositories it reads no app in, and how a
+  repository takes a base of its own; run inside a repository of a
+  folder pando already runs, it says so. The brief gains a worked
+  example of the shape.
+- `pando new` of a set that lacks a repository's checkout — lost, or of a
+  repository that joined the project since — adds just that checkout,
+  leaving the others and their work as they are.
+- `pando status` lists each repository of a set with its checkout's
+  branch, and names a process by its repository: `api (backend)`. `pando
+  logs --source <repository>` reads the logs of the processes in it.
+- The TUI says which repository a process, a log tab and a commit are
+  of, keeps a row for a checkout a set lacks, names the dirty
+  repository in the remove dialog, lets the create dialog come back to
+  each repository's own base, and welcomes a folder of repositories as
+  one.
 
 ### Fixed
 
@@ -31,6 +48,13 @@ may change behaviour.
 - The worktree's URL goes to the app that serves pages rather than an
   API that sorts first: the API's table says `page = false`.
 - A `page` in an answered process table is written.
+- A multi-repo project's services: a compose file at a repository's root
+  (`infra/docker-compose.yml`) is proposed and run, and an isolated start
+  reads the address it rewrites from the repository that keeps it,
+  where it failed on every such project. Every directory's real env file
+  now speaks before any directory's example.
+- doctor reports a repository whose origin/HEAD is far behind its main
+  checkout's branch, with the `[repos.base]` line that fixes it.
 
 ## 0.11.0 — 2026-10-26
 

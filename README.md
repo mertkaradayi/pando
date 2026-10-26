@@ -458,6 +458,14 @@ members = ["backend", "frontend"]
 base = { backend = "develop" }
 ```
 
+`pando init --agent` from the folder hands that setup to your coding
+agent the way it does for one repository, and detection reads each
+repository as an app: its process, its install, its `.env`, a compose
+file at its root, and the port one app reaches another on. A set that
+lacks a repository's checkout, lost or added since, gets it from `pando
+new` on its branch; `pando status` lists each repository of a set, and
+`pando logs --source backend` reads the processes that run in it.
+
 From inside a set, or one of its checkouts, pando finds the folder's
 project. From a repository's own main checkout it is that repository, as
 before. The git menu moves one checkout at a time: on a set it opens on

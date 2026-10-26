@@ -37,12 +37,21 @@ pub fn validate(config: &Config, project: &ProjectRef) -> Result<()> {
             .keys()
             .find(|repo| !project.repos.contains(repo))
     {
-        bail!(
-            "[repos.base] names {stranger:?}, which is not a git repository directly under {} — \
-             the repositories there are {}",
-            project.root.display(),
-            project.repos.join(", ")
-        );
+        // One `[repos] members` leaves out is still a repository of the
+        // folder: what to change is the one setting or the other.
+        match crate::project::repos_in(&project.root).contains(stranger) {
+            true => bail!(
+                "[repos.base] names {stranger:?}, which `[repos] members` leaves out of the \
+                 project — its repositories are {}; drop its base, or name it a member",
+                project.repos.join(", ")
+            ),
+            false => bail!(
+                "[repos.base] names {stranger:?}, which is not a git repository directly under \
+                 {} — the repositories there are {}",
+                project.root.display(),
+                project.repos.join(", ")
+            ),
+        }
     }
     if let Some(prefer) = config.isolation.preferred()
         && !ISOLATION_KINDS.contains(&prefer)
