@@ -261,7 +261,7 @@ pub(super) fn render_detail(f: &mut Frame, area: Rect, app: &mut App) {
     if let Some(commit) = commit_row(app, &wt, width) {
         rows.push((KEEP_HEAD, commit));
     }
-    for line in repo_rows(&wt, width) {
+    for line in repo_rows(app, &wt, width) {
         rows.push((KEEP_HEAD, line));
     }
     if let Some(pr) = app.pr_for(&wt) {
@@ -487,53 +487,128 @@ fn branch_rows<'a>(wt: &crate::worktree::Worktree, width: usize) -> Vec<Line<'a>
     rows
 }
 
-/// A set's checkouts, one row each: the repository, its branch, and what
-/// git says of it, so a set whose row says "uncommitted changes" says in
-/// which repository. Nothing for one repository's checkout.
-fn repo_rows<'a>(wt: &crate::worktree::Worktree, width: usize) -> Vec<Line<'a>> {
-    let name_width = wt
-        .repos
+/// A set's checkouts, one row each: the repository, its branch where it
+/// is not the set's own, and what git says of it, so a set whose row says
+/// "uncommitted changes" says in which repository. A repository the set
+/// has no checkout of keeps its row, saying so and what adds it back.
+/// Nothing for one repository's checkout.
+fn repo_rows<'a>(app: &App, wt: &crate::worktree::Worktree, width: usize) -> Vec<Line<'a>> {
+    if !wt.is_set() {
+        return Vec::new();
+    }
+    // The project's order, each repository whether or not the set has a
+    // checkout of it, then any checkout of one the project no longer
+    // names.
+    let project = &app.paths.project.repos;
+    let mut entries: Vec<(&str, Option<&crate::worktree::Worktree>)> = project
         .iter()
-        .map(|r| text_width(&r.name))
-        .max()
-        .unwrap_or(0);
-    wt.repos
-        .iter()
-        .enumerate()
-        .map(|(i, checkout)| {
-            let mut said = vec![
-                checkout
-                    .branch
-                    .clone()
-                    .unwrap_or_else(|| "(detached)".to_string()),
-            ];
-            match checkout.dirty {
-                Some(true) => said.push("✎ changes".to_string()),
-                Some(false) => said.push("clean".to_string()),
-                None if checkout.prunable => said.push("gone".to_string()),
-                None => {}
-            }
-            match checkout.ahead_behind {
-                Some((0, 0)) | None => {}
-                Some((ahead, 0)) => said.push(format!("↑{ahead}")),
-                Some((0, behind)) => said.push(format!("↓{behind}")),
-                Some((ahead, behind)) => said.push(format!("↓{behind} ↑{ahead}")),
-            }
-            let name = format!("{:<name_width$}  ", checkout.name);
-            let room = width.saturating_sub(LABEL_WIDTH + text_width(&name));
-            let style = match checkout.dirty {
-                Some(true) => Style::new().fg(yellow()),
-                _ => Style::new().fg(text_dim()),
-            };
-            detail_row(
-                if i == 0 { "repos" } else { "" },
-                vec![
-                    Span::styled(name, Style::new().fg(text())),
-                    Span::styled(truncate(&said.join(" · "), room), style),
-                ],
+        .map(|repo| {
+            (
+                repo.as_str(),
+                wt.repos.iter().find(|checkout| checkout.name == *repo),
             )
         })
-        .collect()
+        .collect();
+    entries.extend(
+        wt.repos
+            .iter()
+            .filter(|checkout| !project.contains(&checkout.name))
+            .map(|checkout| (checkout.name.as_str(), Some(checkout))),
+    );
+    let name_width = entries
+        .iter()
+        .map(|(repo, _)| text_width(repo))
+        .max()
+        .unwrap_or(0);
+    let mut rows = Vec::new();
+    for (i, (repo, checkout)) in entries.into_iter().enumerate() {
+        let name = format!("{repo:<name_width$}  ");
+        let indent = LABEL_WIDTH + text_width(&name);
+        let room = width.saturating_sub(indent);
+        let (said, style, more) = match checkout {
+            Some(checkout) => {
+                let (said, style) = repo_said(wt, checkout);
+                (said, style, None)
+            }
+            // What adds it back is a command somebody types, so it is
+            // never cut: on the row when it fits, under it when not.
+            None => {
+                let fix = format!("pando new {} adds it", set_word(wt));
+                let whole = format!("no checkout — {fix}");
+                match text_width(&whole) <= room {
+                    true => (whole, Style::new().fg(orange()), None),
+                    false => (
+                        "no checkout".to_string(),
+                        Style::new().fg(orange()),
+                        Some(fix),
+                    ),
+                }
+            }
+        };
+        rows.push(detail_row(
+            if i == 0 { "repos" } else { "" },
+            vec![
+                Span::styled(name, Style::new().fg(text())),
+                Span::styled(truncate(&said, room), style),
+            ],
+        ));
+        if let Some(fix) = more {
+            let room = room.max(1);
+            for piece in chunk_cells(&fix, room) {
+                rows.push(Line::from(vec![
+                    Span::raw(" ".repeat(indent)),
+                    Span::styled(piece, Style::new().fg(text_dim())),
+                ]));
+            }
+        }
+    }
+    rows
+}
+
+/// What a set's repository row says of its checkout: its branch only when
+/// it is not the set's own — the branch row above already says that one,
+/// and a narrow pane wants the room for the changes — then its changes
+/// and its drift.
+fn repo_said(
+    set: &crate::worktree::Worktree,
+    checkout: &crate::worktree::Worktree,
+) -> (String, Style) {
+    let mut said = Vec::new();
+    if set.branch.is_none() || checkout.branch != set.branch {
+        said.push(
+            checkout
+                .branch
+                .clone()
+                .unwrap_or_else(|| "(detached)".to_string()),
+        );
+    }
+    // A checkout whose directory is gone has nothing else to say.
+    if checkout.prunable {
+        said.push("gone".to_string());
+        return (said.join(" · "), Style::new().fg(red()));
+    }
+    match checkout.dirty {
+        Some(true) => said.push("✎ changes".to_string()),
+        Some(false) => said.push("clean".to_string()),
+        None => {}
+    }
+    match checkout.ahead_behind {
+        Some((0, 0)) | None => {}
+        Some((ahead, 0)) => said.push(format!("↑{ahead}")),
+        Some((0, behind)) => said.push(format!("↓{behind}")),
+        Some((ahead, behind)) => said.push(format!("↓{behind} ↑{ahead}")),
+    }
+    let style = match checkout.dirty {
+        Some(true) => Style::new().fg(yellow()),
+        _ => Style::new().fg(text_dim()),
+    };
+    (said.join(" · "), style)
+}
+
+/// The word `pando new` takes for a set: its branch, or its directory's
+/// name when its checkouts are on different branches.
+fn set_word(wt: &crate::worktree::Worktree) -> String {
+    wt.branch.clone().unwrap_or_else(|| wt.display_name())
 }
 
 /// The checked-out commit: its sha, its subject, and how old it is — now,
@@ -545,11 +620,20 @@ fn commit_row<'a>(app: &App, wt: &crate::worktree::Worktree, width: usize) -> Op
         .map(|age| format!(" · {age}"))
         .unwrap_or_default();
     let subject = wt.head_subject.clone().unwrap_or_default();
-    let room = width.saturating_sub(LABEL_WIDTH + sha.len() + 1 + text_width(&age));
+    // A set's commit is one of its repositories', so it says whose.
+    let whose = wt
+        .repos
+        .iter()
+        .find(|checkout| checkout.head_sha.as_deref() == Some(sha.as_str()))
+        .map(|checkout| format!(" ({})", checkout.name))
+        .unwrap_or_default();
+    let room =
+        width.saturating_sub(LABEL_WIDTH + sha.len() + text_width(&whose) + 1 + text_width(&age));
     Some(detail_row(
         "commit",
         vec![
             Span::styled(sha, Style::new().fg(text_muted())),
+            Span::styled(whose, Style::new().fg(text_dim())),
             Span::raw(" "),
             Span::styled(truncate(&subject, room), Style::new().fg(text_dim())),
             Span::styled(age, Style::new().fg(text_muted())),
@@ -700,6 +784,10 @@ fn failure_rows<'a>(app: &App, name: &str, width: usize) -> Vec<Line<'a>> {
         .collect()
 }
 
+/// The fewest cells of a process row's phase — `running   pid 4242` —
+/// worth naming the process's repository beside it for.
+const MIN_PROCESS_DETAIL: usize = 18;
+
 /// One row per process, under the worktree's own status: what each of them
 /// is doing, and which one the tail below is showing.
 fn process_rows<'a>(app: &App, name: &str, width: usize) -> Vec<Line<'a>> {
@@ -711,14 +799,30 @@ fn process_rows<'a>(app: &App, name: &str, width: usize) -> Vec<Line<'a>> {
         return Vec::new();
     }
     let shown = app.tail_target().map(|(_, process, _)| process);
-    let label_width = processes
-        .iter()
-        .map(|(process, _)| text_width(process))
-        .max()
-        .unwrap_or(0);
+    // In a multi-repo project, each beside the repository it runs in —
+    // `api (backend)` — since a set's processes are spread over its
+    // checkouts and the name alone does not say whose code is failing.
+    // A pane too narrow to keep the phase readable beside them drops the
+    // repositories again: the phase is what the row is for.
+    let labels_with = |with_repo: bool| -> Vec<String> {
+        processes
+            .iter()
+            .map(|(process, _)| match app.process_repo(process) {
+                Some(repo) if with_repo => format!("{process} ({repo})"),
+                _ => process.clone(),
+            })
+            .collect()
+    };
+    let widest = |labels: &[String]| labels.iter().map(|l| text_width(l)).max().unwrap_or(0);
+    let mut labels = labels_with(true);
+    if 7 + widest(&labels) + MIN_PROCESS_DETAIL > width {
+        labels = labels_with(false);
+    }
+    let label_width = widest(&labels);
     processes
         .iter()
-        .map(|(process, record)| {
+        .zip(&labels)
+        .map(|((process, record), label)| {
             let (glyph, color) = run_marker(Some(&phase_as_aggregate(process, record)));
             let marker = if shown.as_deref() == Some(process.as_str()) {
                 "▸"
@@ -744,7 +848,7 @@ fn process_rows<'a>(app: &App, name: &str, width: usize) -> Vec<Line<'a>> {
                 Span::styled(format!(" {marker} "), Style::new().fg(text_muted())),
                 Span::styled(glyph, Style::new().fg(color)),
                 Span::styled(
-                    format!(" {process:<label_width$}  "),
+                    format!(" {label:<label_width$}  "),
                     Style::new().fg(text_dim()),
                 ),
                 Span::styled(

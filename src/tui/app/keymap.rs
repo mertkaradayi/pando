@@ -182,6 +182,10 @@ pub const LIST_LEGEND: &[(&str, &str)] = &[
         "prunable",
         "git: its directory is missing — git worktree prune removes the entry",
     ),
+    (
+        "1 missing",
+        "git: a set lacks a repository's checkout — pando new <branch> adds it back",
+    ),
     (":17342", "port: where it serves — c copies the URL"),
     (
         "◈",
