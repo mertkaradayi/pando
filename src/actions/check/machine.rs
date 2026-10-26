@@ -30,7 +30,7 @@ pub(super) fn first_down(
     config: &Config,
     progress: &dyn Fn(&str),
 ) -> Option<Down> {
-    let dirs = env_dirs(config);
+    let dirs = env_dirs(&paths.project, config);
     for shared in shared_service_keys(paths, config) {
         let Some((file, value)) = services::env_value_below(paths.root(), &dirs, &shared.key)
         else {

@@ -94,7 +94,10 @@ const HOST_SUFFIXES: &[&str] = &["_HOST", "_SERVER"];
 /// of the directories the processes run in — `backend/.env` in a project
 /// whose root has no manifest.
 pub(super) fn main_env(paths: &PandoPaths, config: &Config) -> EnvFiles {
-    EnvFiles::read(paths.root(), &super::services::env_dirs(config))
+    EnvFiles::read(
+        paths.root(),
+        &super::services::env_dirs(&paths.project, config),
+    )
 }
 
 /// Why a namespaced start stops when the main checkout's env files hold

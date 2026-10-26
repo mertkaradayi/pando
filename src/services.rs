@@ -496,8 +496,8 @@ const ENV_FILES: [&str; 5] = [
 /// The environment that points an app at *this* worktree's services.
 ///
 /// For each `ENV_KEY = "service"` in a `[[services]]` entry, the value the
-/// project already uses is read from the worktree's own env files and its
-/// port replaced with the one pando allocated. A URL keeps its
+/// project already uses is read from the worktree's own env files, `env`,
+/// and its port replaced with the one pando allocated. A URL keeps its
 /// credentials, its database name, and its query string; a bare number
 /// becomes the port. A value that holds a reference nothing sets is an
 /// error of [`Unresolved`] underneath: rewritten around it, the app logged
@@ -507,17 +507,17 @@ const ENV_FILES: [&str; 5] = [
 /// worktree, which Invariant 1 forbids unless the project ignores it. The
 /// same map reaches the processes, the hooks, and `pando status --env`.
 pub fn app_env(
-    worktree: &Path,
+    env: &EnvFiles,
     mapping: &std::collections::BTreeMap<String, String>,
     ports: &std::collections::BTreeMap<String, u16>,
 ) -> Result<std::collections::BTreeMap<String, String>> {
-    let files = read_env_files(worktree);
+    let files = &env.files;
     let mut out = std::collections::BTreeMap::new();
     for (key, service) in mapping {
         let port = *ports.get(service).with_context(|| {
             format!("no port was allocated for the service {service:?} (env.{key})")
         })?;
-        let found = value_in_files(&files, key).map_err(|unresolved| {
+        let found = value_in_files(files, key).map_err(|unresolved| {
             anyhow::Error::new(unresolved).context(format!(
                 "env.{key} points at the service {service:?}, but pando cannot tell what {key} \
                  will be"
@@ -629,10 +629,10 @@ pub fn url_identity(value: &str) -> (Option<String>, Option<String>) {
 /// "name" that is all digits is a numbered database — redis's `REDIS_DB=2`
 /// — and not a name anything creates.
 pub fn sibling_identity<'a>(
-    worktree: &Path,
+    env: &EnvFiles,
     keys: impl IntoIterator<Item = &'a str>,
 ) -> (Option<String>, Option<String>) {
-    let files = read_env_files(worktree);
+    let files = &env.files;
     // As written: a reference nothing sets is no plain identifier, and the
     // create step refuses it by name.
     let lookup = |key: &str| {
@@ -683,15 +683,18 @@ pub fn sibling_value<'a>(
     EnvFiles::read(dir, &[]).sibling(keys, suffixes)
 }
 
-/// The env files of the main checkout, read once, in the order a key is
-/// looked up in: the root's, then those of each of `dirs` below it — the
-/// directories the processes run in — the order [`env_value_below`] reads
-/// them in. The first file that sets a key wins.
+/// The env files of a checkout — the main one or a worktree — read once,
+/// in the order a key is looked up in: the root's, then those of each of
+/// `dirs` below it — the directories the processes run in, and each
+/// repository of a multi-repo project — the order [`env_value_below`]
+/// reads them in. The first file that sets a key wins.
 ///
 /// What namespaced mode reads a server's address, its database and its
-/// login from. A project whose root has no manifest keeps them beside its
-/// apps, in `backend/.env`, where a lookup at the root alone found no
-/// port and left the database shared.
+/// login from, and what an isolated start reads the value it rewrites
+/// from. A project whose root has no manifest keeps them beside its apps,
+/// in `backend/.env`, where a lookup at the root alone found no port and
+/// left the database shared; a set's root is a plain directory and has no
+/// env file at all.
 ///
 /// No `Debug`: the values are passwords as often as not.
 #[derive(Default)]
@@ -1431,19 +1434,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            sibling_identity(dir.path(), ["DB_PORT"]),
+            sibling_identity(&EnvFiles::read(dir.path(), &[]), ["DB_PORT"]),
             (Some("shop_user".to_string()), Some("shop".to_string()))
         );
         assert_eq!(
-            sibling_identity(dir.path(), ["REDIS_PORT"]),
+            sibling_identity(&EnvFiles::read(dir.path(), &[]), ["REDIS_PORT"]),
             (None, None),
             "a numbered database is not a name anything creates"
         );
-        assert_eq!(sibling_identity(dir.path(), ["PORT"]), (None, None));
+        assert_eq!(
+            sibling_identity(&EnvFiles::read(dir.path(), &[]), ["PORT"]),
+            (None, None)
+        );
         // `.env` is read before the example, as everywhere else.
         std::fs::write(dir.path().join(".env"), "DB_NAME=shop_local\n").unwrap();
         assert_eq!(
-            sibling_identity(dir.path(), ["DB_PORT"]).1.as_deref(),
+            sibling_identity(&EnvFiles::read(dir.path(), &[]), ["DB_PORT"])
+                .1
+                .as_deref(),
             Some("shop_local")
         );
     }
@@ -1873,7 +1881,7 @@ mod tests {
              REDIS_URL=redis://localhost:6379\n",
         )]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DATABASE_URL", "postgres"), ("REDIS_URL", "redis")]),
             &ports(&[("postgres", 17_004), ("redis", 17_006)]),
         )
@@ -1922,7 +1930,7 @@ REDIS_PORT=6379
             ),
         ]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DATABASE_URL", "postgres"), ("REDIS_PORT", "redis")]),
             &ports(&[("postgres", 17_004), ("redis", 17_006)]),
         )
@@ -1942,7 +1950,7 @@ REDIS_PORT=6379
              DB_PORT=5432 # default\n",
         )]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DATABASE_URL", "postgres"), ("DB_PORT", "postgres")]),
             &ports(&[("postgres", 17_004)]),
         )
@@ -1961,7 +1969,7 @@ REDIS_PORT=6379
             "DATABASE_URL=postgres://app@postgres:5432/app\nOTHER_URL=redis://cache-a:6379\n",
         )]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DATABASE_URL", "postgres"), ("OTHER_URL", "redis")]),
             &ports(&[("postgres", 17_004), ("redis", 17_006)]),
         )
@@ -1977,7 +1985,7 @@ REDIS_PORT=6379
     fn a_url_with_no_port_gains_one() {
         let dir = worktree_with(&[(".env", "REDIS_URL=redis://localhost\n")]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("REDIS_URL", "redis")]),
             &ports(&[("redis", 17_006)]),
         )
@@ -1989,7 +1997,7 @@ REDIS_PORT=6379
     fn an_ipv6_host_keeps_its_brackets() {
         let dir = worktree_with(&[(".env", "DB=postgres://[::1]:5432/app\n")]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DB", "postgres")]),
             &ports(&[("postgres", 17_004)]),
         )
@@ -2001,7 +2009,7 @@ REDIS_PORT=6379
     fn a_bare_number_becomes_the_port() {
         let dir = worktree_with(&[(".env", "DB_HOST=localhost\nDB_PORT=5432\n")]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DB_PORT", "db")]),
             &ports(&[("db", 17_004)]),
         )
@@ -2023,7 +2031,7 @@ REDIS_PORT=6379
             ),
         ]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DATABASE_URL", "postgres"), ("EXTRA_URL", "redis")]),
             &ports(&[("postgres", 17_004), ("redis", 17_006)]),
         )
@@ -2044,7 +2052,7 @@ REDIS_PORT=6379
         let err = format!(
             "{:#}",
             app_env(
-                dir.path(),
+                &EnvFiles::read(dir.path(), &[]),
                 &map(&[("DATABASE_URL", "postgres")]),
                 &ports(&[("postgres", 17_004)]),
             )
@@ -2063,7 +2071,7 @@ REDIS_PORT=6379
         let err = format!(
             "{:#}",
             app_env(
-                dir.path(),
+                &EnvFiles::read(dir.path(), &[]),
                 &map(&[("DB", "postgres")]),
                 &ports(&[("postgres", 17_004)]),
             )
@@ -2200,7 +2208,7 @@ REDIS_PORT=6379
              DB_PORT=${PANDO_TEST_PG_PORT:-5432}\n",
         )]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DATABASE_URL", "postgres"), ("DB_PORT", "postgres")]),
             &ports(&[("postgres", 17_004)]),
         )
@@ -2261,7 +2269,7 @@ REDIS_PORT=6379
             "DATABASE_URL=postgres://app:pa$pando_test_unset_word@localhost:5432/shop\n",
         )]);
         let env = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DATABASE_URL", "postgres")]),
             &ports(&[("postgres", 17_004)]),
         )
@@ -2319,7 +2327,7 @@ REDIS_PORT=6379
             Err(unresolved.clone())
         );
         let e = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DATABASE_URL", "postgres")]),
             &ports(&[("postgres", 17_004)]),
         )
@@ -2352,7 +2360,7 @@ REDIS_PORT=6379
             "and the example's value is not the real one"
         );
         let e = app_env(
-            dir.path(),
+            &EnvFiles::read(dir.path(), &[]),
             &map(&[("DATABASE_URL", "postgres")]),
             &ports(&[("postgres", 17_004)]),
         )

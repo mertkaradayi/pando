@@ -842,7 +842,8 @@ fn the_ports_of_a_seeded_env_file_are_rewritten_like_any_other() {
         ("redis".to_string(), 16379),
     ]);
 
-    let env = services::app_env(&worktree, &mapping, &ports).unwrap();
+    let env =
+        services::app_env(&services::EnvFiles::read(&worktree, &[]), &mapping, &ports).unwrap();
     assert_eq!(
         env["DATABASE_URL"],
         "postgres://acme:acme@localhost:15432/acme"
@@ -858,7 +859,8 @@ fn the_ports_of_a_seeded_env_file_are_rewritten_like_any_other() {
          REDIS_URL=redis://localhost:6379\n",
     )
     .unwrap();
-    let env = services::app_env(&worktree, &mapping, &ports).unwrap();
+    let env =
+        services::app_env(&services::EnvFiles::read(&worktree, &[]), &mapping, &ports).unwrap();
     assert_eq!(
         env["DATABASE_URL"],
         "postgres://acme:acme@localhost:15432/just_this_worktree"

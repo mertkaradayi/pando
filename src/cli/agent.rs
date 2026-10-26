@@ -447,7 +447,7 @@ fn project_now(
     // process runs in, then each app directory detection read, so a
     // project whose env files sit beside its apps is probed before any
     // process is configured.
-    let mut dirs = actions::env_dirs(config);
+    let mut dirs = actions::env_dirs(&paths.project, config);
     for app in &signals.app_dirs {
         if !dirs.contains(&app.dir) {
             dirs.push(app.dir.clone());

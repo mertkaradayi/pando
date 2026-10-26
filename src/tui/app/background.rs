@@ -439,7 +439,7 @@ impl App {
                 shared: actions::shared_service_statuses(
                     &paths,
                     &config,
-                    &actions::env_dirs(&config),
+                    &actions::env_dirs(&paths.project, &config),
                 ),
                 worktrees: selected
                     .and_then(|name| {
