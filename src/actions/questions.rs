@@ -19,7 +19,7 @@ use super::runtime::{
     Machine, RuntimeOutcome, answer_prelude, prelude_proposal, resolve_runtime, runtime_shell,
 };
 use super::services::{backends_reachable, placeholder_ports, service_roles};
-use super::worktree::{find_checkout, ref_exists, refuse_a_gone_directory, resolve_create_base};
+use super::worktree::{find_checkout, refuse_a_gone_directory};
 use crate::state::ServiceMode;
 
 /// Something pando needs to know and cannot work out on its own.
@@ -1413,7 +1413,7 @@ fn refuse_missing_base(
     by_program: bool,
 ) -> Result<()> {
     let label = slot_label(Slot::Base);
-    let has = |checkout: &Path| ref_exists(checkout, &resolve_create_base(checkout, base));
+    let has = |checkout: &Path| super::worktree::base_exists(checkout, base);
     let message = match paths.project.is_multi_repo() {
         false if has(paths.root()) => return Ok(()),
         false => format!(

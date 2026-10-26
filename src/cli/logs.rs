@@ -307,16 +307,13 @@ pub fn sources_in_repo(
     config: &crate::config::Config,
     repo: &str,
 ) -> Vec<String> {
-    if !paths.project.repos.iter().any(|r| r == repo) {
-        return Vec::new();
-    }
     config
         .runnable_processes()
         .filter(|(_, process)| {
             process
                 .cwd
                 .as_deref()
-                .and_then(|cwd| cwd.trim_start_matches("./").split('/').next())
+                .and_then(|cwd| paths.project.repo_of(cwd))
                 == Some(repo)
         })
         .map(|(name, _)| name.clone())

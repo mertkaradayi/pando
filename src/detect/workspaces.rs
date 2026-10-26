@@ -391,10 +391,6 @@ pub fn workspace_apps(root: &Path, signals: &Signals) -> Vec<WorkspaceApp> {
 /// renders pages, one called `api` does not.
 const PAGE_NAMES: [&str; 7] = ["web", "www", "site", "frontend", "ui", "client", "app"];
 
-/// The role a worktree's URL takes when a process owns it, over the
-/// alphabetical rule: `actions`' own default.
-const URL_ROLE: &str = "web";
-
 /// Which apps say `page = false`, so the worktree's URL is a page.
 ///
 /// The URL is the `web` role's, else the first role of the alphabetically
@@ -413,7 +409,7 @@ fn pageless(apps: &[WorkspaceApp], owns_role: &[bool]) -> Vec<bool> {
         .collect();
     let mut by_name = owners.clone();
     by_name.sort_by(|a, b| a.name.cmp(&b.name));
-    let mark = !owners.iter().any(|app| app.name == URL_ROLE)
+    let mark = !owners.iter().any(|app| app.name == crate::config::WEB_ROLE)
         && owners.iter().any(|app| app.pages)
         && by_name.first().is_some_and(|first| !first.pages);
     apps.iter()
