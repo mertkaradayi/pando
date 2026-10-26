@@ -1182,19 +1182,8 @@ impl App {
     /// there is only one to run in, and for a process that runs at the
     /// set's own root.
     pub fn process_repo(&self, process: &str) -> Option<&str> {
-        let project = &self.paths.project;
-        if !project.is_multi_repo() {
-            return None;
-        }
         let cwd = self.config.processes.get(process)?.cwd.as_deref()?;
-        let first = cwd
-            .split('/')
-            .find(|part| !part.is_empty() && *part != ".")?;
-        project
-            .repos
-            .iter()
-            .find(|repo| repo.as_str() == first)
-            .map(String::as_str)
+        self.paths.project.repo_of(cwd)
     }
 
     /// The repositories of a multi-repo project that a set has no checkout
@@ -1205,13 +1194,7 @@ impl App {
         if !wt.is_set() {
             return Vec::new();
         }
-        self.paths
-            .project
-            .repos
-            .iter()
-            .filter(|repo| !wt.repos.iter().any(|checkout| checkout.name == **repo))
-            .map(String::as_str)
-            .collect()
+        wt.absent_from(&self.paths.project.repos)
     }
 
     /// How many worktrees the list has, the main checkout not among them:

@@ -169,9 +169,8 @@ fn missing_checkouts<'a>(paths: &'a PandoPaths, set: &Worktree) -> Vec<&'a str> 
         .repos
         .iter()
         .filter(|repo| {
-            !set.repos
-                .iter()
-                .any(|c| c.name == **repo && !c.prunable && c.path.is_dir())
+            set.checkout(repo)
+                .is_none_or(|c| c.prunable || !c.path.is_dir())
         })
         .map(String::as_str)
         .collect()
@@ -1705,7 +1704,7 @@ fn refuse_a_missing_repo(paths: &PandoPaths, worktree: &Worktree) -> Result<()> 
     bail!(
         "{shown} has no checkout of {missing} — `pando new {}` adds it to the set, and leaves \
          the others as they are",
-        worktree.branch.as_deref().unwrap_or(&shown)
+        worktree.new_arg()
     )
 }
 
@@ -2197,6 +2196,11 @@ pub(super) fn resolve_create_base(root: &Path, base: &str) -> String {
         return format!("origin/{base}");
     }
     base.to_string()
+}
+
+/// Whether `checkout`'s repository has `base`, read as `new` reads it.
+pub(super) fn base_exists(checkout: &Path, base: &str) -> bool {
+    ref_exists(checkout, &resolve_create_base(checkout, base))
 }
 
 fn validate_branch_name(root: &Path, branch: &str) -> Result<()> {

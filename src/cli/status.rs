@@ -113,8 +113,7 @@ fn process_label(paths: &PandoPaths, config: Option<&crate::config::Config>, nam
     let repo = config
         .and_then(|config| config.processes.get(name))
         .and_then(|process| process.cwd.as_deref())
-        .and_then(|cwd| cwd.trim_start_matches("./").split('/').next())
-        .filter(|first| paths.project.repos.iter().any(|repo| repo == first));
+        .and_then(|cwd| paths.project.repo_of(cwd));
     match repo {
         Some(repo) => format!("{name} ({repo})"),
         None => name.to_string(),
@@ -135,13 +134,13 @@ fn repo_rows(paths: &PandoPaths, w: &crate::worktree::Worktree) -> Vec<String> {
         .map(|repo| text_width(repo))
         .max()
         .unwrap_or(0);
-    let again = w.branch.clone().unwrap_or_else(|| display_name(w));
+    let again = w.new_arg();
     paths
         .project
         .repos
         .iter()
         .map(|repo| {
-            let said = match w.repos.iter().find(|c| c.name == *repo) {
+            let said = match w.checkout(repo) {
                 Some(c) if c.prunable || !c.path.is_dir() => {
                     format!("gone — `pando new {again}` checks it out again")
                 }

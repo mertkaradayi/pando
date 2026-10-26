@@ -246,12 +246,7 @@ fn signals_in(root: &Path, only: Option<&[String]>) -> Signals {
         if !signals.app_dirs.iter().any(|app| app.dir == *repo) {
             read_local_env(root, repo, &mut signals);
             if let Some(example) = env_example_in(root, repo) {
-                for (key, value) in &example.entries {
-                    if !signals.env_example.iter().any(|(held, _)| held == key) {
-                        signals.env_example.push((key.clone(), value.clone()));
-                    }
-                }
-                signals.env_examples.push(example);
+                signals.add_env_example(example);
             }
         }
     }
@@ -284,12 +279,7 @@ fn read_app_dirs(root: &Path, signals: &mut Signals) {
             .runtime_requirements
             .extend(crate::runtime::requirements_in(root, &dir));
         if let Some(example) = env_example_in(root, &dir) {
-            for (key, value) in &example.entries {
-                if !signals.env_example.iter().any(|(held, _)| held == key) {
-                    signals.env_example.push((key.clone(), value.clone()));
-                }
-            }
-            signals.env_examples.push(example);
+            signals.add_env_example(example);
         }
         read_local_env(root, &dir, signals);
     }
@@ -722,6 +712,18 @@ impl Signals {
     /// The env example's keys, for the rules that only care about names.
     pub fn env_keys(&self) -> impl Iterator<Item = &str> {
         self.env_example.iter().map(|(key, _)| key.as_str())
+    }
+
+    /// An app directory's or a repository's env example, kept whole, and
+    /// its keys merged into [`Signals::env_example`] where no earlier file
+    /// named them: the first spelling of a key wins.
+    fn add_env_example(&mut self, example: EnvExample) {
+        for (key, value) in &example.entries {
+            if !self.env_example.iter().any(|(held, _)| held == key) {
+                self.env_example.push((key.clone(), value.clone()));
+            }
+        }
+        self.env_examples.push(example);
     }
 
     /// The file `key`'s pair in [`Signals::env_example`] was read from, as

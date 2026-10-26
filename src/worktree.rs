@@ -222,6 +222,31 @@ impl Worktree {
             .join(" · ")
     }
 
+    /// A set's checkout of `repo`, if it has one.
+    pub fn checkout(&self, repo: &str) -> Option<&Worktree> {
+        self.repos.iter().find(|checkout| checkout.name == repo)
+    }
+
+    /// The repositories of `repos`, a multi-repo project's, a set has no
+    /// checkout of at all — not one that is gone, which git still lists.
+    /// None for a worktree of one repository.
+    pub fn absent_from<'a>(&self, repos: &'a [String]) -> Vec<&'a str> {
+        if !self.is_set() {
+            return Vec::new();
+        }
+        repos
+            .iter()
+            .filter(|repo| self.checkout(repo).is_none())
+            .map(String::as_str)
+            .collect()
+    }
+
+    /// The branch `pando new` takes to make this worktree, or to give a set
+    /// what it lacks: its branch, else the name a person knows it by.
+    pub fn new_arg(&self) -> String {
+        self.branch.clone().unwrap_or_else(|| self.display_name())
+    }
+
     /// Whether this is a multi-repo project's set of checkouts.
     pub fn is_set(&self) -> bool {
         !self.repos.is_empty()

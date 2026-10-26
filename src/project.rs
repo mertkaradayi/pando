@@ -103,6 +103,20 @@ impl ProjectRef {
         })
     }
 
+    /// The repository `rel`, a path relative to a checkout of this project
+    /// such as a process's `cwd`, is in: its first part, when that is one
+    /// of [`ProjectRef::repos`]. `None` for a project that is one
+    /// repository, and for a path in none of them.
+    pub fn repo_of(&self, rel: &str) -> Option<&str> {
+        let first = rel
+            .split('/')
+            .find(|part| !part.is_empty() && *part != ".")?;
+        self.repos
+            .iter()
+            .find(|repo| repo.as_str() == first)
+            .map(String::as_str)
+    }
+
     /// A repository a message can name as an example: the first. Empty
     /// for a project that is one repository, which has none to name.
     pub fn example_repo(&self) -> &str {

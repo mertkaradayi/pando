@@ -127,7 +127,7 @@ pub fn check_at(
 ) -> Result<Checked> {
     if let Some(base) = base {
         for (repo, root) in paths.project.repo_checkouts_in(paths.root()) {
-            if !ref_exists(&root, &resolve_create_base(&root, base)) {
+            if !super::super::worktree::base_exists(&root, base) {
                 let which = match repo {
                     Some(repo) => format!("the repository {repo}"),
                     None => "this repository".to_string(),

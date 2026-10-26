@@ -537,7 +537,7 @@ fn repo_rows<'a>(app: &App, wt: &crate::worktree::Worktree, width: usize) -> Vec
             // What adds it back is a command somebody types, so it is
             // never cut: on the row when it fits, under it when not.
             None => {
-                let fix = format!("pando new {} adds it", set_word(wt));
+                let fix = format!("pando new {} adds it", wt.new_arg());
                 let whole = format!("no checkout — {fix}");
                 match text_width(&whole) <= room {
                     true => (whole, Style::new().fg(orange()), None),
@@ -607,12 +607,6 @@ fn repo_said(
         _ => Style::new().fg(text_dim()),
     };
     (said.join(" · "), style)
-}
-
-/// The word `pando new` takes for a set: its branch, or its directory's
-/// name when its checkouts are on different branches.
-fn set_word(wt: &crate::worktree::Worktree) -> String {
-    wt.branch.clone().unwrap_or_else(|| wt.display_name())
 }
 
 /// The checked-out commit: its sha, its subject, and how old it is — now,
