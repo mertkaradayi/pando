@@ -1220,7 +1220,7 @@ fn render_remove(f: &mut Frame, area: Rect, label: &str, blockers: &[RemoveBlock
     for blocker in blockers {
         let (mark, color, sheds) = match blocker {
             RemoveBlocker::Locked(_) => ("⚠", yellow(), 1),
-            RemoveBlocker::Dirty => ("*", yellow(), 2),
+            RemoveBlocker::Dirty(_) => ("*", yellow(), 2),
             RemoveBlocker::DirtyUnknown => ("?", text_muted(), 2),
             RemoveBlocker::Running => ("●", yellow(), 4),
             RemoveBlocker::NotOurs => ("⚠", yellow(), 3),
@@ -1250,9 +1250,17 @@ fn render_remove(f: &mut Frame, area: Rect, label: &str, blockers: &[RemoveBlock
         )]
     } else if dirty {
         // `y` would only be refused by git, so the key offered is the one
-        // that works — and what it costs is on the line above.
+        // that works — and what it costs is on the line above: the
+        // changes, or only what sits beside a set's checkouts.
+        let changes = blockers
+            .iter()
+            .any(|b| matches!(b, RemoveBlocker::Dirty(_)));
+        let what = match changes {
+            true => " remove, discarding changes",
+            false => " remove it all",
+        };
         vec![
-            (key_span("F"), hint_span(" remove, discarding changes")),
+            (key_span("F"), hint_span(what)),
             (key_span("esc"), hint_span(" cancel")),
         ]
     } else {

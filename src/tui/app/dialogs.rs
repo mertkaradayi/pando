@@ -102,8 +102,10 @@ pub enum Modal {
 pub enum RemoveBlocker {
     Locked(Option<String>),
     /// Uncommitted changes or untracked files: git refuses without force,
-    /// and with it they are gone.
-    Dirty,
+    /// and with it they are gone. For a set, the repositories whose
+    /// checkouts have them, so the dialog says where to look first; empty
+    /// for one repository's worktree, or when no checkout says which.
+    Dirty(Vec<String>),
     /// Git has not been read yet, so nobody knows whether it is dirty.
     DirtyUnknown,
     /// Something runs in it, which the removal stops first.
@@ -130,10 +132,20 @@ impl RemoveBlocker {
             RemoveBlocker::Locked(None) => {
                 "locked — pando always refuses; unlock it first".to_string()
             }
-            RemoveBlocker::Dirty => {
-                "it has uncommitted changes or untracked files — F removes it and discards them"
-                    .to_string()
-            }
+            RemoveBlocker::Dirty(repos) => match repos.as_slice() {
+                [] => "it has uncommitted changes or untracked files — F removes it and \
+                       discards them"
+                    .to_string(),
+                [one] => format!(
+                    "{one} has uncommitted changes or untracked files — F removes the set and \
+                     discards them"
+                ),
+                [rest @ .., last] => format!(
+                    "{} and {last} have uncommitted changes or untracked files — F removes the \
+                     set and discards them",
+                    rest.join(", ")
+                ),
+            },
             RemoveBlocker::DirtyUnknown => {
                 "git has not been read yet — uncommitted changes, if any, stop y; F removes anyway"
                     .to_string()
@@ -164,7 +176,7 @@ impl RemoveBlocker {
     /// Whether only a forced removal gets past it: git's refusal over
     /// changes, and what sits beside a set's checkouts.
     pub fn needs_force(&self) -> bool {
-        matches!(self, RemoveBlocker::Dirty | RemoveBlocker::Beside(_))
+        matches!(self, RemoveBlocker::Dirty(_) | RemoveBlocker::Beside(_))
     }
 }
 
@@ -592,7 +604,13 @@ impl App {
             out.push(RemoveBlocker::Beside(beside));
         }
         match wt.dirty {
-            Some(true) => out.push(RemoveBlocker::Dirty),
+            Some(true) => out.push(RemoveBlocker::Dirty(
+                wt.repos
+                    .iter()
+                    .filter(|checkout| checkout.dirty == Some(true))
+                    .map(|checkout| checkout.name.clone())
+                    .collect(),
+            )),
             Some(false) => {}
             None => out.push(RemoveBlocker::DirtyUnknown),
         }
