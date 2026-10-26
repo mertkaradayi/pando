@@ -214,3 +214,41 @@ fn a_plain_folder_with_one_repository_is_still_refused() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn detection_and_the_agents_job_read_every_repository_of_the_folder() {
+    let f = Folder::new();
+    // `backend` is no app detection knows, and its `.env` is still the
+    // file its processes read.
+    let signals = json(&f.pando(&["signals"]));
+    assert_eq!(
+        signals["signals"]["ignored_present"],
+        serde_json::json!(["backend/.env"]),
+        "{}",
+        signals["signals"]
+    );
+    let job = ok(&f.pando(&["init", "--agent"]));
+    assert!(
+        job.contains("a folder of 2 git repositories: backend (on main), frontend (on main)"),
+        "{job}"
+    );
+}
+
+#[test]
+fn doctor_names_what_in_the_config_no_repository_of_the_folder_holds() {
+    let f = Folder::new();
+    f.write_config(
+        "[repos]\nmembers = [\"backend\", \"frontend\", \"gone\"]\n\n\
+         [project]\nclone = [\"node_modules\"]\n\n\
+         [processes.docs]\ncwd = \"docs\"\ncmd = \"true\"\n",
+    );
+    let out = f.pando(&["doctor"]);
+    let said = String::from_utf8_lossy(&out.stdout);
+    for line in [
+        "`[repos] members` names \"gone\"",
+        "process \"docs\" runs in \"docs\", which is in none of the repositories",
+        "`project.clone` names \"node_modules\", which is in none of the repositories",
+    ] {
+        assert!(said.contains(line), "{line}\n{said}");
+    }
+}

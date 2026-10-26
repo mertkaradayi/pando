@@ -86,11 +86,29 @@ pub fn new(
     }
     let mut sources = Vec::new();
     for (repo, checkout) in paths.project.repo_checkouts_in(&root) {
+        // No base, no `--base` and no commit to name: the one way past it
+        // for one repository of several is to leave it out.
+        if let Some(repo) = repo
+            && commit_of(&checkout, "HEAD").is_none()
+        {
+            bail!(
+                "the repository {repo} has no commit yet, so a set has nothing of it to check \
+                 out — commit to it, or leave it out of the project with `[repos] members` in \
+                 {}",
+                paths.config_file().display()
+            );
+        }
         let requested = base
             .or_else(|| config.base_for(repo, Some(branch)))
             .map(str::to_string);
+        // Each repository's lookup said as its own, or a fetch per
+        // repository reads as one line said twice.
+        let said = |line: &str| match repo {
+            Some(repo) => progress(&format!("{repo}: {line}")),
+            None => progress(line),
+        };
         let source = in_repo(
-            resolve_create_source(&checkout, branch, requested, progress),
+            resolve_create_source(&checkout, branch, requested, &said),
             repo,
         )?;
         sources.push(RepoSource {
@@ -562,7 +580,14 @@ fn unwind_checkouts(
 ) -> anyhow::Error {
     let mut err = err;
     for (source, at) in added.iter().rev() {
-        err = unwind_new(&source.root, at, branch, &source.source, err);
+        err = unwind_new(
+            &source.root,
+            source.repo.as_deref(),
+            at,
+            branch,
+            &source.source,
+            err,
+        );
     }
     if added.iter().any(|(source, _)| source.repo.is_some()) {
         // Empty once every checkout is gone, and kept when one is not: a
@@ -905,6 +930,28 @@ fn submodule_in(worktree: &Worktree) -> Result<Option<String>> {
     Ok(modules.is_dir().then(|| modules.display().to_string()))
 }
 
+/// What `rm` refuses over even when forced, before it stops or removes
+/// anything: a git checkout of its own in a set's directory beside the
+/// checkouts the set is made of — a repository cloned there, or the
+/// checkout of one the project no longer counts — which is never pando's
+/// to delete, and which would keep the set's directory there after it.
+fn refuse_foreign_checkouts(shown: &str, target: &Worktree) -> Result<()> {
+    let foreign: Vec<String> = beside_checkouts(target)
+        .into_iter()
+        .filter(|name| target.path.join(name).join(".git").exists())
+        .collect();
+    if foreign.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "{shown} holds {}, a git checkout pando does not count as one of the set's, in {} — \
+         nothing was stopped or removed; move it out of the set, or remove it with git, and \
+         then this can run again",
+        foreign.join(", "),
+        target.path.display()
+    )
+}
+
 /// What `rm` refuses over unless forced, before it stops or removes
 /// anything: git's own refusals of each checkout, and for a set anything
 /// in its directory beside its checkouts.
@@ -1092,8 +1139,12 @@ fn clear_set_dir(target: &Worktree, ours: bool) -> Option<String> {
 ///
 /// The returned error is the original one plus what was actually undone, so
 /// a partial unwind never reads as a clean one.
+///
+/// `repo` names the repository of a multi-repo project's set it was one
+/// checkout of, so each of a set's unwinds says whose it was.
 fn unwind_new(
     root: &Path,
+    repo: Option<&str>,
     target: &Path,
     branch: &str,
     source: &CreateSource,
@@ -1102,23 +1153,33 @@ fn unwind_new(
     let Some(target_str) = target.to_str() else {
         return err;
     };
+    let (partial, git) = match repo {
+        Some(repo) => (
+            format!("the partial checkout of {repo}"),
+            format!(
+                "git -C {}",
+                crate::process::shell_word(&root.display().to_string())
+            ),
+        ),
+        None => ("the partial worktree".to_string(), "git".to_string()),
+    };
     if !git_succeeds(root, &["worktree", "remove", "--force", target_str]) {
         return anyhow::anyhow!(
-            "{err:#} — the partial worktree at {} could not be removed; remove it with \
-             `git worktree remove --force` and delete the branch if it is new",
+            "{err:#} — {partial} at {} could not be removed; remove it with `{git} worktree \
+             remove --force` and delete the branch if it is new",
             target.display()
         );
     }
     if matches!(source, CreateSource::Local | CreateSource::Detached { .. }) {
-        return anyhow::anyhow!("{err:#} — the partial worktree was removed");
+        return anyhow::anyhow!("{err:#} — {partial} was removed");
     }
     if !git_succeeds(root, &["branch", "-D", branch]) {
         return anyhow::anyhow!(
-            "{err:#} — the partial worktree was removed, but the new branch {branch} is still \
-             there; delete it with `git branch -D {branch}`"
+            "{err:#} — {partial} was removed, but the new branch {branch} is still there; \
+             delete it with `{git} branch -D {branch}`"
         );
     }
-    anyhow::anyhow!("{err:#} — the partial worktree and the new branch {branch} were removed")
+    anyhow::anyhow!("{err:#} — {partial} and the new branch {branch} were removed")
 }
 
 /// Whether git lists a worktree at `target`.
@@ -1276,6 +1337,9 @@ pub fn rm(
     // process for pando's kill. The questions are the two git asks without
     // `--force`, in its order; ignored files never block a removal and do
     // not show here.
+    if let Some(target) = target {
+        refuse_foreign_checkouts(&shown, target)?;
+    }
     if !force && let Some(target) = target {
         refuse_unforced(&shown, target)?;
     }
@@ -1427,7 +1491,29 @@ pub(super) fn find_worktree(paths: &PandoPaths, name: &str) -> Result<Worktree> 
 pub(super) fn find_live_checkout(paths: &PandoPaths, name: &str) -> Result<Checkout> {
     let checkout = find_checkout(paths, name)?;
     refuse_a_gone_directory(&checkout.worktree)?;
+    refuse_a_missing_repo(paths, &checkout.worktree)?;
     Ok(checkout)
+}
+
+/// Refuses a set with no checkout of a repository the project has: one
+/// that joined the project after the set was made. A process whose `cwd`
+/// is that repository's would fail with a bare "does not exist".
+fn refuse_a_missing_repo(paths: &PandoPaths, worktree: &Worktree) -> Result<()> {
+    let Some(missing) = paths.project.repos.iter().find(|repo| {
+        !worktree
+            .repos
+            .iter()
+            .any(|checkout| checkout.name == **repo)
+    }) else {
+        return Ok(());
+    };
+    let shown = worktree.display_name();
+    bail!(
+        "{shown} has no checkout of {missing}, which is in the project now and was not when the \
+         set was made — `pando rm {shown}` and `pando new {}` make it again with every \
+         repository",
+        worktree.branch.as_deref().unwrap_or(&shown)
+    )
 }
 
 /// Refuses a worktree git still lists but whose directory is gone, naming

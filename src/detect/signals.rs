@@ -199,6 +199,14 @@ fn signals_in(root: &Path, only: Option<&[String]>) -> Signals {
         }
         read_app_dirs(root, &mut signals);
     }
+    // A repository of a folder of them that is no app of its own — an API
+    // in a language detection does not read, a repository of services —
+    // still keeps its local env file where its processes read it.
+    for repo in &repos {
+        if !signals.app_dirs.iter().any(|app| app.dir == *repo) {
+            read_local_env(root, repo, &mut signals);
+        }
+    }
     signals
 }
 
@@ -232,18 +240,26 @@ fn read_app_dirs(root: &Path, signals: &mut Signals) {
                 signals.env_example.push((key, value));
             }
         }
-        signals.ignored_present.extend(
-            ignored_present(&path)
-                .iter()
-                .filter(|name| is_local_env(name))
-                .map(|name| under(name)),
-        );
-        signals.provision_seeds.extend(
-            provision_seeds(&path)
-                .iter()
-                .map(|(destination, source)| (under(destination), under(source))),
-        );
+        read_local_env(root, &dir, signals);
     }
+}
+
+/// The local env files of `dir`, a directory under `root`, and the
+/// examples they would be seeded from: what a worktree is given of it.
+fn read_local_env(root: &Path, dir: &str, signals: &mut Signals) {
+    let path = root.join(dir);
+    let under = |name: &str| format!("{dir}/{name}");
+    signals.ignored_present.extend(
+        ignored_present(&path)
+            .iter()
+            .filter(|name| is_local_env(name))
+            .map(|name| under(name)),
+    );
+    signals.provision_seeds.extend(
+        provision_seeds(&path)
+            .iter()
+            .map(|(destination, source)| (under(destination), under(source))),
+    );
 }
 
 /// Whether a file name is an env file an app reads, `.env` or `.env.local`,

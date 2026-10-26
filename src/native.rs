@@ -803,7 +803,7 @@ mod tests {
                 id: "fixture-00000000".to_string(),
                 root: root.clone(),
                 display_name: "fixture".to_string(),
-                repos: Vec::new(),
+                ..Default::default()
             },
         };
         paths.ensure_home().unwrap();
@@ -883,7 +883,7 @@ mod tests {
                 id: "My App-00000000".to_string(),
                 root,
                 display_name: "My App".to_string(),
-                repos: Vec::new(),
+                ..Default::default()
             },
         };
         paths.ensure_home().unwrap();

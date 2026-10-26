@@ -50,7 +50,7 @@ pub fn test_app(names: &[&str]) -> App {
             id: "acme-shop-3f9a2c1d".into(),
             root: PathBuf::from("/pando-test-does-not-exist/acme-shop"),
             display_name: "acme-shop".into(),
-            repos: Vec::new(),
+            ..Default::default()
         },
     );
     let worktrees: Vec<Worktree> = names.iter().map(|n| wt(n)).collect();
@@ -2538,7 +2538,7 @@ pub fn app_with_logs(names: &[&str]) -> (tempfile::TempDir, App) {
             id: "acme-shop-3f9a2c1d".into(),
             root: dir.path().join("acme-shop"),
             display_name: "acme-shop".into(),
-            repos: Vec::new(),
+            ..Default::default()
         },
     );
     let worktrees: Vec<Worktree> = names.iter().map(|n| wt(n)).collect();
@@ -6540,7 +6540,7 @@ fn a_config_file_with_no_process_still_lets_enter_start() {
             id: "acme-shop-3f9a2c1d".into(),
             root: dir.path().join("acme-shop"),
             display_name: "acme-shop".into(),
-            repos: Vec::new(),
+            ..Default::default()
         },
     );
     std::fs::create_dir_all(paths.config_file().parent().unwrap()).unwrap();
@@ -7525,7 +7525,7 @@ pub fn app_on_setup_screen(settings: bool) -> (tempfile::TempDir, App) {
             id: "acme-shop-3f9a2c1d".into(),
             root: dir.path().join("acme-shop"),
             display_name: "acme-shop".into(),
-            repos: Vec::new(),
+            ..Default::default()
         },
     );
     let mut config = Config::default();

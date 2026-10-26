@@ -12,10 +12,88 @@ use super::report::{Finding, Section};
 
 pub(super) fn validate_config(paths: &PandoPaths, config: &Config, findings: &mut Vec<Finding>) {
     check_provision(paths, config, findings);
+    check_repos(paths, config, findings);
     check_install(paths.root(), config, findings);
     check_templates(config, findings);
     check_disabling_env(paths, config, findings);
     check_something_to_run(paths, config, findings);
+}
+
+/// A multi-repo project's config against the repositories it is made of:
+/// a `[repos] members` name that is not there, a process or `clone` path
+/// in none of them, and a repository under the folder pando does not read
+/// because it is a symlink. Each would otherwise surface as a refusal of
+/// `new` or `start`, or as nothing at all.
+fn check_repos(paths: &PandoPaths, config: &Config, findings: &mut Vec<Finding>) {
+    let project = &paths.project;
+    if !project.is_multi_repo() {
+        return;
+    }
+    let repos = project.repos.join(", ");
+    let config_file = paths.config_file().display().to_string();
+    let on_disk = crate::project::repos_in(&project.root);
+    for member in config.repos.members.iter().filter(|m| !on_disk.contains(m)) {
+        findings.push(Finding::problem(
+            Section::Config,
+            format!(
+                "`[repos] members` names {member:?}, which is not a git repository directly \
+                 under {} — it is left out",
+                project.root.display()
+            ),
+            format!("drop it from `[repos] members` in {config_file}"),
+        ));
+    }
+    for (name, process) in &config.processes {
+        let cwd = process.cwd.as_deref().unwrap_or_default().trim_matches('/');
+        let first = cwd.split('/').next().unwrap_or_default();
+        if cwd.is_empty() || cwd == "." || project.repos.iter().any(|r| r == first) {
+            continue;
+        }
+        findings.push(Finding::problem(
+            Section::Config,
+            format!(
+                "process {name:?} runs in {cwd:?}, which is in none of the repositories \
+                 ({repos}) — a set holds only their checkouts, so `start` finds no such \
+                 directory"
+            ),
+            format!(
+                "start its cwd with the repository it is in, as `{}/…`, in {config_file}",
+                project.example_repo()
+            ),
+        ));
+    }
+    for rel in config.project.clones() {
+        if project.repo_path(&project.root, rel).is_none() {
+            findings.push(Finding::problem(
+                Section::Config,
+                format!(
+                    "`project.clone` names {rel:?}, which is in none of the repositories \
+                     ({repos}) — `pando new` refuses it"
+                ),
+                format!(
+                    "start it with the repository it is in, as `{}/{rel}`, or drop it from \
+                     clone",
+                    project.example_repo()
+                ),
+            ));
+        }
+    }
+    let Ok(entries) = std::fs::read_dir(&project.root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let linked = entry.file_type().is_ok_and(|kind| kind.is_symlink());
+        if linked && entry.path().join(".git").is_dir() {
+            findings.push(Finding::note(
+                Section::Config,
+                format!(
+                    "{} is a symlink to a git repository, and pando does not follow one into \
+                     a project of several: it is not one of its repositories",
+                    entry.path().display()
+                ),
+            ));
+        }
+    }
 }
 
 /// What to do about a project with no process: the file to write it in,

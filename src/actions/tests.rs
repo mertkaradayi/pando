@@ -18921,36 +18921,125 @@ fn rm_of_a_set_never_takes_what_sits_beside_its_checkouts_unasked() {
     new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
     let set = fx.worktrees_dir().join("feat+x");
     std::fs::write(set.join("notes.md"), "mine\n").unwrap();
+
+    let err = rm(&fx.paths, "feat+x", false, false).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("holds notes.md beside its repositories' checkouts"),
+        "{err:#}"
+    );
+    assert_eq!(listed_in(&fx, "backend").len(), 2, "nothing was removed");
+
+    // Forced, what is no repository's goes with the set.
+    rm(&fx.paths, "feat+x", false, true).unwrap();
+    assert!(!set.exists());
+    assert!(fx.state().worktrees.is_empty());
+}
+
+#[test]
+fn rm_of_a_set_never_takes_a_git_checkout_beside_its_own_even_forced() {
+    let fx = multi_repo_fixture();
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    let set = fx.worktrees_dir().join("feat+x");
     // A repository cloned into the set by hand, with work of its own.
     let infra = set.join("infra");
     std::fs::create_dir_all(&infra).unwrap();
     git(&infra, &["init", "--quiet", "--initial-branch=main"]);
 
-    let err = rm(&fx.paths, "feat+x", false, false).unwrap_err();
+    for force in [false, true] {
+        let err = rm(&fx.paths, "feat+x", false, force).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("holds infra, a git checkout pando does not count"),
+            "{err:#}"
+        );
+        assert_eq!(listed_in(&fx, "backend").len(), 2, "nothing was removed");
+    }
+    std::fs::remove_dir_all(&infra).unwrap();
+    rm(&fx.paths, "feat+x", false, false).unwrap();
+    assert!(!set.exists());
+}
+
+#[test]
+fn ls_of_a_set_measures_a_repository_against_its_configured_base() {
+    let mut fx = multi_repo_fixture();
+    let backend = fx.root.join("backend");
+    git(&backend, &["branch", "develop"]);
+    git(&backend, &["checkout", "--quiet", "develop"]);
+    git(
+        &backend,
+        &["commit", "--quiet", "--allow-empty", "-m", "on develop"],
+    );
+    git(&backend, &["checkout", "--quiet", "main"]);
+    fx.config.repos.base = BTreeMap::from([("backend".to_string(), "develop".to_string())]);
+    fx.config.apply_to(&mut fx.paths.project);
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+
+    let found = ls_all(&fx.paths).unwrap();
+    let set = &found.worktrees[0];
+    assert_eq!(
+        set.repos[0].ahead_behind,
+        Some((0, 0)),
+        "forked from develop"
+    );
+    assert_eq!(set.ahead_behind, Some((0, 0)));
+}
+
+#[test]
+fn a_set_of_a_repository_the_project_gained_since_says_so_at_start() {
+    let mut fx = multi_repo_fixture();
+    with_dev(&mut fx, dev("true"));
+    fx.paths.project.repos = vec!["backend".into()];
+    new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap();
+    fx.paths.project.repos = vec!["backend".into(), "frontend".into()];
+
+    let err = start(&fx.paths, &fx.config, "feat+x", None, &noop).unwrap_err();
     assert!(
-        format!("{err:#}").contains("holds infra, notes.md beside its repositories' checkouts"),
+        format!("{err:#}").contains("has no checkout of frontend, which is in the project now"),
         "{err:#}"
     );
-    assert_eq!(listed_in(&fx, "backend").len(), 2, "nothing was removed");
+}
 
-    // Forced, what is no repository's goes; a checkout of its own stays,
-    // and so does the directory holding it.
-    let said = std::cell::RefCell::new(Vec::new());
-    super::rm(&fx.paths, "feat+x", false, true, &|line| {
-        said.borrow_mut().push(line.to_string())
-    })
-    .unwrap();
-    assert!(!set.join("notes.md").exists());
-    assert!(infra.join(".git").is_dir());
-    assert!(!set.join("backend").exists() && !set.join("frontend").exists());
+#[test]
+fn a_repository_with_no_commit_is_named_with_the_way_past_it() {
+    let mut fx = multi_repo_fixture();
+    let empty = fx.root.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    git(&empty, &["init", "--quiet", "--initial-branch=main"]);
+    fx.paths.project.repos.push("empty".into());
+
+    let err = new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap_err();
+    let text = format!("{err:#}");
     assert!(
-        said.borrow()
-            .iter()
-            .any(|line| line.contains("infra in it is not pando's to remove")),
-        "{:?}",
-        said.borrow()
+        text.contains("the repository empty has no commit yet") && text.contains("[repos] members"),
+        "{text}"
     );
-    assert!(fx.state().worktrees.is_empty());
+    assert!(!fx.worktrees_dir().join("feat+x").exists());
+}
+
+#[test]
+fn each_checkout_a_failed_set_unwinds_is_named_with_its_repository() {
+    let mut fx = multi_repo_fixture();
+    let third = fx.root.join("worker");
+    std::fs::create_dir_all(&third).unwrap();
+    git(&third, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        &third,
+        &["commit", "--quiet", "--allow-empty", "-m", "root"],
+    );
+    git(&third, &["checkout", "--quiet", "-b", "feat/x"]);
+    fx.paths.project.repos.push("worker".into());
+
+    let text = format!(
+        "{:#}",
+        new(&fx.paths, &fx.config, "feat/x", None, &noop).unwrap_err()
+    );
+    for repo in ["backend", "frontend"] {
+        assert!(
+            text.contains(&format!(
+                "the partial checkout of {repo} and the new branch feat/x"
+            )),
+            "{text}"
+        );
+    }
 }
 
 #[test]
