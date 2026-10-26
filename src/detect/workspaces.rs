@@ -318,7 +318,8 @@ pub fn workspace_apps(root: &Path, signals: &Signals) -> Vec<WorkspaceApp> {
                 );
             }
             apps.push(WorkspaceApp {
-                default_port: fixed.or_else(|| app_default_port(signals, &path, name, rule)),
+                default_port: fixed
+                    .or_else(|| app_default_port(signals, &path, name, rule, script)),
                 port: match rule {
                     _ if fixed.is_some() => PortMechanism::Ask,
                     Some(rule) if rule.port == PortMechanism::InCommand && flag.is_none() => {
@@ -419,16 +420,21 @@ fn usable_as_role(name: &str) -> bool {
 
 /// The port an app listens on by default: what the root env example says
 /// for it, else what its own env files say for a variable it takes its
-/// port from, else what its framework does.
+/// port from, else what the file its dev script runs falls back to, else
+/// what its framework does.
 ///
 /// Its own env files before its framework's default: a `node server.js`
 /// whose `.env` says `PORT=8787` listens on 8787, and a sibling told
-/// `http://127.0.0.1:8787` is being told where that app is.
+/// `http://127.0.0.1:8787` is being told where that app is. Its own code
+/// before the framework's default for the same reason: a `server.js`
+/// that says `process.env.PORT || 3001` listens on 3001 told nothing,
+/// whatever Node's convention is.
 fn app_default_port(
     signals: &Signals,
     dir: &Path,
     name: &str,
     rule: Option<&'static FrameworkRule>,
+    script: &str,
 ) -> Option<u16> {
     let wanted = app_port_var(name);
     let from_example = signals
@@ -445,9 +451,109 @@ fn app_default_port(
             .chain(framework_var)
             .find_map(|var| env_file_value(dir, var)?.trim().parse::<u16>().ok())
     };
+    let vars: Vec<&str> = std::iter::once(wanted.as_str())
+        .chain(framework_var)
+        .collect();
     from_example
         .or_else(from_own_files)
+        .or_else(|| code_default_port(dir, script, &vars))
         .or_else(|| rule.map(|r| r.default_port))
+}
+
+/// The extensions of a JavaScript or TypeScript file a script runs by
+/// name: `node server.js`, `tsx watch src/index.ts`.
+const SCRIPT_FILES: [&str; 6] = [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"];
+
+/// Larger than any entry file a person writes by hand. A bundle is not
+/// read for a port.
+const ENTRY_FILE_LIMIT: u64 = 256 * 1024;
+
+/// The port the code a dev script runs falls back to when none of `vars`
+/// is set: `process.env.PORT || 3001`, `env.PORT ?? "3001"`.
+///
+/// Deliberately narrow, because this is a guess read out of code. Only
+/// the files the script names, never what they import; only a fallback
+/// written right after one of `vars`, a number literal, quoted or not;
+/// and only when the files agree on one port. Anything else — a port
+/// from a config module, a computed one, two different fallbacks — is
+/// no answer, and the framework's default stands.
+pub(super) fn code_default_port(dir: &Path, script: &str, vars: &[&str]) -> Option<u16> {
+    let mut found: Vec<u16> = entry_files(dir, script)
+        .iter()
+        .filter(|path| {
+            std::fs::metadata(path)
+                .is_ok_and(|meta| meta.is_file() && meta.len() <= ENTRY_FILE_LIMIT)
+        })
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .flat_map(|text| {
+            vars.iter()
+                .flat_map(|var| fallback_ports(&text, var))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    found.sort_unstable();
+    found.dedup();
+    match found.as_slice() {
+        [port] => Some(*port),
+        _ => None,
+    }
+}
+
+/// The files in `dir` a script runs by name: each word of it that is a
+/// relative path, inside `dir`, to a JavaScript or TypeScript file.
+fn entry_files(dir: &Path, script: &str) -> Vec<std::path::PathBuf> {
+    script
+        .split(|c: char| c.is_whitespace() || matches!(c, '\'' | '"' | '=' | '&' | ';' | '|'))
+        .map(|word| word.trim_start_matches("./"))
+        .filter(|word| SCRIPT_FILES.iter().any(|ext| word.ends_with(ext)))
+        .filter(|word| {
+            Path::new(word)
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+        })
+        .map(|word| dir.join(word))
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+/// Every port `text` falls back to right after the variable `var`:
+/// `var`, as a whole word, then at most a closing bracket or quote or two
+/// — `env["PORT"]`, `Number(process.env.PORT)` — then `||` or `??`, then
+/// a number literal of two to five digits, quoted or not.
+pub(super) fn fallback_ports(text: &str, var: &str) -> Vec<u16> {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut out = Vec::new();
+    for (at, _) in text.match_indices(var) {
+        if text[..at].chars().next_back().is_some_and(word) {
+            continue;
+        }
+        let rest = &text[at + var.len()..];
+        if rest.chars().next().is_some_and(word) {
+            continue;
+        }
+        let rest = rest.trim_start_matches([')', ']', '\'', '"', '`', ' ']);
+        let Some(rest) = rest.strip_prefix("||").or_else(|| rest.strip_prefix("??")) else {
+            continue;
+        };
+        let rest = rest.trim_start_matches(' ');
+        let (quote, rest) = match rest.chars().next() {
+            Some(q @ ('\'' | '"' | '`')) => (Some(q), &rest[1..]),
+            _ => (None, rest),
+        };
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        let after = rest[digits..].chars().next();
+        let closed = match quote {
+            Some(quote) => after == Some(quote),
+            None => !after.is_some_and(|c| word(c) || c == '.'),
+        };
+        if (2..=5).contains(&digits)
+            && closed
+            && let Ok(port) = rest[..digits].parse::<u16>()
+        {
+            out.push(port);
+        }
+    }
+    out
 }
 
 /// The env variables an app reads its port from: a `<APP>_PORT` key the
@@ -555,6 +661,30 @@ fn sibling_port_vars(
         .collect()
 }
 
+/// What an app's own directory says about where the others listen: its
+/// local env files, `.env` and `.env.local`, which are what it really
+/// reads in the main checkout — often the only place a project writes it
+/// down — then its env example for the keys they lack.
+///
+/// A local file's value is taken only when it is a bare address on this
+/// machine, `http://localhost:3001` with a path at most: a reference
+/// becomes a template written into config, and a password or a token in
+/// a local file is never config's business. Nothing read here is printed.
+fn own_env(dir: &Path) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = super::signals::local_env(dir)
+        .into_iter()
+        .filter(|(_, value)| {
+            localhost_url_port(value).is_some() && !value.contains(['@', '?', '#'])
+        })
+        .collect();
+    for (key, value) in super::signals::env_example(dir) {
+        if !out.iter().any(|(held, _)| *held == key) {
+            out.push((key, value));
+        }
+    }
+    out
+}
+
 /// The port of a URL that points at this machine, if that is what this is.
 pub(super) fn localhost_url_port(value: &str) -> Option<u16> {
     let (_, after) = value.split_once("://")?;
@@ -578,7 +708,6 @@ pub(super) fn root_orchestrates(signals: &Signals) -> bool {
     let Some(dev) = signals.scripts.get("dev") else {
         return false;
     };
-    const SCRIPT_FILES: [&str; 6] = [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"];
     let runs_a_file = dev
         .split(|c: char| c.is_whitespace() || matches!(c, '&' | ';' | '|'))
         .any(|word| SCRIPT_FILES.iter().any(|ext| word.ends_with(ext)));
@@ -697,11 +826,11 @@ pub(super) fn processes_proposal(root: &Path, signals: &Signals) -> Option<Propo
             }
             env.insert(key.clone(), template.clone());
         }
-        // The app's own env example says where it expects the others, and
-        // says it to this app only: Expo inlines `EXPO_PUBLIC_*` from
+        // The app's own env files say where it expects the others, and
+        // say it to this app only: Expo inlines `EXPO_PUBLIC_*` from
         // Metro's own environment into the bundle, so the api's port has to
         // reach Metro as a variable. Over the root's, being nearer the app.
-        let own = super::signals::env_example(&root.join(&app.dir));
+        let own = own_env(&root.join(&app.dir));
         let own = own
             .iter()
             .map(|(key, value)| (key.as_str(), value.as_str()));
