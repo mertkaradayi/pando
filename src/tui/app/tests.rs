@@ -8883,7 +8883,7 @@ fn the_git_menu_of_a_set_moves_one_repositorys_checkout_and_tab_goes_to_the_next
 /// `test_app` over a multi-repo project of `backend` and `frontend`,
 /// whose main row is the folder's main checkouts, on `backend` and
 /// `frontend` respectively.
-fn multi_repo_app(backend: &str, frontend: &str) -> App {
+pub fn multi_repo_app(backend: &str, frontend: &str) -> App {
     let mut app = test_app(&["feat+x"]);
     app.paths.project.repos = vec!["backend".into(), "frontend".into()];
     let checkout = |repo: &str, branch: &str| Worktree {
@@ -8942,4 +8942,26 @@ fn a_set_on_different_branches_is_said_to_be_so_not_detached() {
     assert_eq!(main.branch_shown(), "backend develop · frontend main");
     let one = multi_repo_app("main", "main");
     assert_eq!(one.main.as_ref().unwrap().branch_shown(), "main");
+}
+
+// Each repository's own base is the untouched choice of a multi-repo
+// project's dialog, and a choice like any other: tab comes back to it.
+#[test]
+fn tab_in_a_sets_create_dialog_comes_back_to_each_repositorys_own_base() {
+    let mut app = multi_repo_app("main", "main");
+    app.default_base = Some("main".into());
+    open_create_with(&mut app, &[("develop", BranchSource::Local)]);
+    let base = |app: &App| match &app.modal {
+        Some(Modal::Create { base, .. }) => base.clone(),
+        other => panic!("expected the create modal, got {other:?}"),
+    };
+    assert_eq!(base(&app), None, "each repository's own to begin with");
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(base(&app).as_deref(), Some("main"));
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(base(&app).as_deref(), Some("develop"));
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(base(&app), None, "and round to each repository's own");
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(base(&app).as_deref(), Some("develop"));
 }

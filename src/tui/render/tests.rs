@@ -5435,3 +5435,47 @@ fn the_viewer_footer_sets_the_warning_count_apart_from_the_hints() {
     let painted = viewer_frame(&mut app, 120, 14);
     assert!(painted.contains("  1E 1W"), "{painted}");
 }
+
+// The dialog is sixty columns at most, too narrow for the whole sentence
+// about a set's bases: it is said shorter, never cut.
+#[test]
+fn a_sets_create_dialog_says_its_base_whole_and_marks_branches_some_repos_lack() {
+    let mut app = crate::tui::app::tests::multi_repo_app("main", "main");
+    let entry = |name: &str, every: bool| crate::worktree::BranchEntry {
+        name: name.into(),
+        source: crate::worktree::BranchSource::Local,
+        in_every_repo: every,
+    };
+    app.modal = Some(Modal::Create {
+        input: String::new(),
+        branches: BranchLoadState::Ready(vec![entry("develop", false), entry("release", true)]),
+        selected: 0,
+        base: None,
+    });
+    let rendered = text_of(&draw(&mut app, 160, 30));
+    assert!(
+        rendered.contains("new branches fork from each repository's own base"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("own base  tab"), "{rendered}");
+    let row = |name: &str| {
+        rendered
+            .lines()
+            .find(|l| l.contains(name))
+            .unwrap_or_else(|| panic!("no row for {name}: {rendered}"))
+            .to_string()
+    };
+    assert!(
+        row("develop").contains("local · not in every repository"),
+        "{rendered}"
+    );
+    assert!(!row("release").contains("not in every"), "{rendered}");
+
+    // Narrower, still whole.
+    let rendered = text_of(&draw(&mut app, 40, 30));
+    assert!(
+        rendered.contains("fork from each repo's own base"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("some repos"), "{rendered}");
+}
