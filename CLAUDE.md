@@ -288,6 +288,10 @@ checkouts. Proved on fixtures and an end-to-end test through the binary
 The same day a second review — an agent running the binary on folders
 of repositories, another reading the TUI, `status` and lifecycle code —
 fixed what they found (#20), and 0.11.0 was built and tagged with it.
+Then the first run and the UI were taught the shape (#21): agents ran
+the setup job on folders of repositories and drove the TUI in tmux,
+fixers in four worktrees fixed what they found, and 0.11.1 was built
+and tagged with it.
 
 What is left is not a phase. `plans/open-follow-ups.md` carries the known
 edges, each with who found it and where it belongs, and the rest of the

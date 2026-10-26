@@ -7,6 +7,8 @@ may change behaviour.
 
 ## Unreleased
 
+## 0.11.1 — 2026-10-26
+
 ### Added
 
 - `repos` in `pando init --answers`: `{"repos": {"members": [...],
