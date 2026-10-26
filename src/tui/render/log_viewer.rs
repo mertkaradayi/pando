@@ -125,7 +125,10 @@ pub(super) fn render_log_viewer(f: &mut Frame, area: Rect, app: &mut App) {
         (None, inner)
     };
     if let Some(tabs) = tab_area {
-        let strip = source_tabs(&sources, &view.source, tabs.width as usize);
+        // In a multi-repo project, a process's tab names the repository
+        // it runs in, while the strip has room for it.
+        let repos: Vec<Option<&str>> = sources.iter().map(|s| app.process_repo(s)).collect();
+        let strip = source_tabs(&sources, &repos, &view.source, tabs.width as usize);
         f.render_widget(Paragraph::new(strip), tabs);
     }
 
@@ -744,16 +747,28 @@ fn cursor_highlight_rows(rows: Vec<Line<'static>>, width: usize) -> Vec<Line<'st
         .collect()
 }
 
-/// The tab strip. When the labelled tabs do not fit, only the active one
-/// keeps its label so the rest do not slide off the edge.
-pub(super) fn source_tabs(sources: &[String], active: &str, width: usize) -> Line<'static> {
-    let tabs = |labelled: bool| -> Vec<Span<'static>> {
+/// The tab strip. `repos` names the repository each source runs in, where
+/// it is a process of a multi-repo project's: `2:api (backend)`. When that
+/// does not fit the repositories go first; when the labelled tabs still do
+/// not fit, only the active one keeps its label so the rest do not slide
+/// off the edge.
+pub(super) fn source_tabs(
+    sources: &[String],
+    repos: &[Option<&str>],
+    active: &str,
+    width: usize,
+) -> Line<'static> {
+    let tabs = |labelled: bool, with_repo: bool| -> Vec<Span<'static>> {
         sources
             .iter()
             .enumerate()
             .flat_map(|(i, source)| {
+                let repo = match repos.get(i).copied().flatten() {
+                    Some(repo) if with_repo => format!(" ({repo})"),
+                    _ => String::new(),
+                };
                 let label = if labelled || source == active {
-                    format!(" {}:{source} ", i + 1)
+                    format!(" {}:{source}{repo} ", i + 1)
                 } else {
                     format!(" {} ", i + 1)
                 };
@@ -769,12 +784,20 @@ pub(super) fn source_tabs(sources: &[String], active: &str, width: usize) -> Lin
             })
             .collect()
     };
-    let labelled = tabs(true);
-    let labelled_width: usize = labelled.iter().map(|span| text_width(&span.content)).sum();
-    if labelled_width <= width {
-        return Line::from(labelled);
+    let fits = |spans: &[Span]| {
+        spans
+            .iter()
+            .map(|span| text_width(&span.content))
+            .sum::<usize>()
+            <= width
+    };
+    for with_repo in [true, false] {
+        let labelled = tabs(true, with_repo);
+        if fits(&labelled) {
+            return Line::from(labelled);
+        }
     }
-    truncate_line(Line::from(tabs(false)), width)
+    truncate_line(Line::from(tabs(false, false)), width)
 }
 
 /// The viewer's one-row footer: hints or a confirmation on the left, the
@@ -875,8 +898,11 @@ fn viewer_footer(
         ));
     }
     if counts.warnings > 0 {
+        // Two cells from the hints, as the errors are, and one from the
+        // errors' count when it follows that.
+        let gap = if counts.errors > 0 { " " } else { "  " };
         tail.push(Span::styled(
-            format!(" {}W", counts.warnings),
+            format!("{gap}{}W", counts.warnings),
             Style::new().fg(yellow()),
         ));
     }
