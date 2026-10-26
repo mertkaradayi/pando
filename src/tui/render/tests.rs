@@ -5479,3 +5479,31 @@ fn a_sets_create_dialog_says_its_base_whole_and_marks_branches_some_repos_lack()
     );
     assert!(rendered.contains("some repos"), "{rendered}");
 }
+
+// A folder of repositories is welcomed as one: named for what it is, its
+// repositories by name, and each repository's branch where they differ.
+#[test]
+fn the_welcome_of_a_multi_repo_project_says_it_is_a_folder_of_repositories() {
+    let mut app = test_app(&[]);
+    app.paths.project.repos = vec!["backend".into(), "frontend".into()];
+    app.main = crate::tui::app::tests::multi_repo_app("develop", "main").main;
+    let rendered = text_of(&draw(&mut app, 160, 40));
+    assert!(
+        rendered.contains("acme-shop is a folder of 2 repositories: backend, frontend"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("a set of git worktrees"), "{rendered}");
+    assert!(
+        rendered.contains("on backend develop · frontend main"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("Your checkouts are never touched"),
+        "{rendered}"
+    );
+
+    let (_dir, mut app) = app_on_setup_screen(false);
+    app.paths.project.repos = vec!["backend".into(), "frontend".into()];
+    let text = text_of(&draw(&mut app, 120, 42));
+    assert!(text.contains("Your repos, every branch alive"), "{text}");
+}
