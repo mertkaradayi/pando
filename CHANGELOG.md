@@ -23,7 +23,8 @@ may change behaviour.
   is checked against that repository's own gitignore. `[repos] members`
   narrows which repositories are in the project, and `[repos.base]` sets
   one's base. `ls --json` adds `project.repos` and each entry's `repos`.
-  The git menu is not offered on a set yet.
+  The git menu opens on one repository's checkout of a set, against
+  that repository's base, and `tab` goes to the next.
 
 ## 0.10.3 — 2026-10-14
 

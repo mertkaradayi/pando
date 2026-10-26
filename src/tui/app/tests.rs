@@ -8827,3 +8827,49 @@ fn coming_back_to_the_pane_asks_again_at_most_every_few_seconds() {
     app.handle_event(focus());
     assert!(app.pr_fetch_again);
 }
+
+#[test]
+fn the_git_menu_of_a_set_moves_one_repositorys_checkout_and_tab_goes_to_the_next() {
+    let mut app = test_app(&["feat+x"]);
+    let checkout = |repo: &str| Worktree {
+        name: repo.to_string(),
+        path: PathBuf::from("/trees/feat+x").join(repo),
+        ..wt("feat+x")
+    };
+    app.worktrees[0] = Worktree::set(
+        "feat+x".into(),
+        PathBuf::from("/trees/feat+x"),
+        vec![checkout("backend"), checkout("frontend")],
+    );
+    let read_of = |repo: &str| GitRead {
+        checkout: PathBuf::from("/trees/feat+x").join(repo),
+        ..a_git_read(false)
+    };
+
+    open_git_menu(&mut app, "feat+x", read_of("backend"));
+    assert!(matches!(git_stage(&app), GitStage::Menu { .. }));
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(
+        *git_stage(&app),
+        GitStage::Reading,
+        "tab reads the next one"
+    );
+    assert!(app.handle_event(AppEvent::GitRead(Box::new((
+        "feat+x".to_string(),
+        read_of("frontend")
+    )))));
+    match git_stage(&app) {
+        GitStage::Menu { read, .. } => {
+            assert_eq!(read.checkout, PathBuf::from("/trees/feat+x/frontend"))
+        }
+        other => panic!("{other:?}"),
+    }
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(*git_stage(&app), GitStage::Reading);
+
+    // A worktree of one repository has no other checkout to go to.
+    let mut app = test_app(&["feat+one"]);
+    open_git_menu(&mut app, "feat+one", a_git_read(false));
+    press(&mut app, KeyCode::Tab);
+    assert!(matches!(git_stage(&app), GitStage::Menu { .. }));
+}

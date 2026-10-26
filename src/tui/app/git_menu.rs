@@ -9,6 +9,7 @@ use std::thread;
 
 use crate::actions;
 use crate::actions::git::{GitAction, GitRead, Ran};
+use crate::worktree::Worktree;
 
 use super::App;
 use super::background::AppEvent;
@@ -80,21 +81,24 @@ impl GitStage {
 impl App {
     /// `space g`: the git menu for the selected checkout. The read runs on a
     /// worker; the menu says so until it lands.
+    ///
+    /// A set is one checkout per repository, and git moves one at a time:
+    /// the menu opens on its first repository's, and `tab` goes to the
+    /// next one's.
     pub(super) fn open_git_menu(&mut self) {
         let Some(wt) = self.selected_worktree().cloned() else {
             return;
         };
         let label = self.label_of(&wt.name);
-        if wt.is_set() {
-            let repos: Vec<&str> = wt.repos.iter().map(|r| r.name.as_str()).collect();
-            self.set_error(format!(
-                "{label} is a checkout of each of {}: the git menu moves one repository's \
-                 checkout, and has no way yet to choose which — `!` opens a shell there",
-                repos.join(", ")
-            ));
-            return;
-        }
-        if wt.prunable {
+        let checkout = match wt.is_set() {
+            true => wt
+                .repos
+                .iter()
+                .find(|c| !c.prunable)
+                .unwrap_or(&wt.repos[0]),
+            false => &wt,
+        };
+        if checkout.prunable {
             self.set_error(format!(
                 "{label} has no working tree for git to move — its directory is gone"
             ));
@@ -104,24 +108,55 @@ impl App {
             name: wt.name.clone(),
             stage: GitStage::Reading,
         });
-        self.spawn_git_read(wt.name, wt.path, wt.branch);
+        let repo = wt.is_set().then(|| checkout.name.clone());
+        self.spawn_git_read(wt.name.clone(), repo, checkout);
     }
 
-    fn spawn_git_read(&self, name: String, path: std::path::PathBuf, branch: Option<String>) {
+    /// The checkout of the set `name` after (or, `back`, before) the one
+    /// `read` is of, skipping any whose directory is gone. `None` for a
+    /// worktree of one repository, and for a set with no other.
+    fn other_repo(&self, name: &str, read: &GitRead, back: bool) -> Option<Worktree> {
+        let set = self.worktrees.iter().find(|w| w.name == name)?;
+        let count = set.repos.len();
+        let at = set.repos.iter().position(|c| c.path == read.checkout)?;
+        (1..count)
+            .map(|step| match back {
+                true => (at + count - step) % count,
+                false => (at + step) % count,
+            })
+            .map(|i| &set.repos[i])
+            .find(|c| !c.prunable)
+            .cloned()
+    }
+
+    /// Reads `checkout` — the worktree `name` itself, or its checkout of
+    /// `repo` — against its base: the one recorded for it, else config's
+    /// for its repository.
+    fn spawn_git_read(&self, name: String, repo: Option<String>, checkout: &Worktree) {
         // Tests hand the read in as an event: no git runs for them.
         if cfg!(test) {
             return;
         }
-        let root = self.paths.root().to_path_buf();
+        let root = match &repo {
+            Some(repo) => self.paths.root().join(repo),
+            None => self.paths.root().to_path_buf(),
+        };
         let config = self.config.clone();
         let main = self.is_main(&name);
-        let recorded = self
-            .record_for(&name)
-            .and_then(|record| record.base.clone());
+        let recorded = self.record_for(&name).and_then(|record| match &repo {
+            Some(repo) => record.bases.get(repo).cloned(),
+            None => record.base.clone(),
+        });
+        let (path, branch) = (checkout.path.clone(), checkout.branch.clone());
         let tx = self.event_tx.clone();
         thread::spawn(move || {
-            let base =
-                actions::git::base_for(&root, &config, branch.as_deref(), recorded.as_deref());
+            let base = actions::git::base_for(
+                &root,
+                &config,
+                repo.as_deref(),
+                branch.as_deref(),
+                recorded.as_deref(),
+            );
             let read = actions::git::read(&path, main, base.as_deref());
             let _ = tx.send(AppEvent::GitRead(Box::new((name, read))));
         });
@@ -161,6 +196,16 @@ impl App {
                         read,
                         selected: (selected + rows - 1) % rows,
                     }),
+                    KeyCode::Tab | KeyCode::BackTab => {
+                        match self.other_repo(&name, &read, code == KeyCode::BackTab) {
+                            Some(checkout) => {
+                                let repo = Some(checkout.name.clone());
+                                self.spawn_git_read(name.clone(), repo, &checkout);
+                                Some(GitStage::Reading)
+                            }
+                            None => Some(GitStage::Menu { read, selected }),
+                        }
+                    }
                     KeyCode::Enter => self.choose_git_row(&name, read, selected),
                     KeyCode::Char(BY_HAND_KEY) => self.choose_git_row(&name, read, offers.len()),
                     KeyCode::Char(c) => match offers.iter().position(|o| o.action.key() == c) {
