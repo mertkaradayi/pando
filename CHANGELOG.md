@@ -7,6 +7,31 @@ may change behaviour.
 
 ## Unreleased
 
+### Added
+
+- `repos` in `pando init --answers`: `{"repos": {"members": [...],
+  "base": {"<repository>": "<branch>"}}}` writes a multi-repo project's
+  `[repos]`, checked against the folder first, so a base only one
+  repository has can be answered. A `base` answer some repositories lack
+  is refused naming them.
+- `signals` publishes `env_examples`: every env example read, whole,
+  under its path.
+
+### Fixed
+
+- A folder of repositories, or a repository whose apps sit in sibling
+  directories: one app's `PORT` is no longer proposed as the project's
+  `port_env`, an app's own references reach that app alone, and a key a
+  second app also declares is no longer lost.
+- An app is told where a sibling listens when the sibling's port is only
+  in its code (`process.env.PORT || 3001`) or the reference only in the
+  app's own gitignored `.env`.
+- An app directory with a `start` script and no dev script is offered,
+  running it, instead of being left out.
+- The worktree's URL goes to the app that serves pages rather than an
+  API that sorts first: the API's table says `page = false`.
+- A `page` in an answered process table is written.
+
 ## 0.11.0 — 2026-10-26
 
 ### Added
