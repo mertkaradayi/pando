@@ -923,7 +923,7 @@ fn refuse_unforced(shown: &str, target: &Worktree) -> Result<()> {
              or removed; move it out, or {}",
             strangers.join(", "),
             target.path.display(),
-            remedy::DISCARD_CHANGES
+            remedy::REMOVE_BESIDE
         );
     }
     Ok(())
