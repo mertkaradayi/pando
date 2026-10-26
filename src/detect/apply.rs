@@ -579,6 +579,11 @@ fn process_edits(candidate: &Candidate) -> Vec<Edit> {
         if let Some(ready) = &process.ready {
             push("ready", ready_value(ready));
         }
+        // Said either way when said at all: `page = true` over a device
+        // framework's default is as much an answer as `page = false`.
+        if let Some(page) = process.page {
+            push("page", page.into());
+        }
     }
     out
 }

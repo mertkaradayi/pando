@@ -4701,3 +4701,27 @@ fn an_app_directory_with_only_a_start_script_is_offered_running_it() {
     let processes = per_app_processes(&proposals_of(&project));
     assert!(!processes.contains_key("api"), "{processes:?}");
 }
+
+// A process table's `page` is part of the answer and is written with it:
+// `agent/json.md` lists it among the keys a table of one's own takes.
+#[test]
+fn a_process_tables_page_is_written() {
+    let candidate = Candidate {
+        value: "custom".to_string(),
+        processes: Some(BTreeMap::from([(
+            "metro".to_string(),
+            ProcessConfig {
+                cmd: "npx expo start".to_string(),
+                page: Some(true),
+                ..ProcessConfig::default()
+            },
+        )])),
+        ..Candidate::default()
+    };
+    let page: Vec<String> = edits(Slot::Processes, &candidate)
+        .into_iter()
+        .filter(|edit| edit.key == "page")
+        .map(|edit| format!("{} = {}", edit.table.join("."), edit.value))
+        .collect();
+    assert_eq!(page, ["processes.metro = true"]);
+}
