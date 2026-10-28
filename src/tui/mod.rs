@@ -38,6 +38,16 @@ const FS_DEBOUNCE: Duration = Duration::from_millis(500);
 /// starts at once.
 const INPUT_POLL: Duration = Duration::from_millis(50);
 
+/// What asks the terminal for the mouse: presses, releases and the wheel
+/// (1000), drags (1002), in SGR's coordinates (1006), which a column past
+/// 223 does not break. Not every move of the pointer (1003), which
+/// crossterm's `EnableMouseCapture` asks for as well: nothing here
+/// answers a hover, and over SSH or through tmux each move is a write.
+const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+
+/// What gives the mouse back, in the reverse order.
+const MOUSE_OFF: &str = "\x1b[?1006l\x1b[?1002l\x1b[?1000l";
+
 pub fn run(paths: PandoPaths, config: Config) -> Result<()> {
     // The terminal is the TUI's from here on: a hook that prompted on it
     // would draw over the frame and wait on keys pando reads. A hook
@@ -70,11 +80,23 @@ pub fn run(paths: PandoPaths, config: Config) -> Result<()> {
             return Err(anyhow::Error::new(e).context("could not open the terminal for the TUI"));
         }
     };
+    // ratatui's panic hook gives back raw mode and the screen, and not
+    // what is asked for below: after a panic the shell would print every
+    // click and every change of focus. This one runs first, then ratatui's.
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        set_mouse(false);
+        let _ = execute!(stdout(), DisableFocusChange);
+        restore(info);
+    }));
     // Focus reports bring a refresh when the pane is come back to: a pull
     // request merged in a browser or another pane shows then. A terminal
     // that sends none still has the periodic one.
     let _ = execute!(stdout(), EnableFocusChange);
     let result = main_loop(&mut terminal, &mut app, &worktrees_dir);
+    // Whatever the loop last told the terminal: one that ended in an
+    // error never said.
+    set_mouse(false);
     let _ = execute!(stdout(), DisableFocusChange);
     ratatui::restore();
     // `q` twice abandons what is in flight, and nothing waits for a hook
@@ -103,6 +125,7 @@ fn main_loop(
     let _watcher = spawn_fs_watcher(worktrees_dir, app.event_tx.clone());
 
     terminal.draw(|f| render::render(f, app))?;
+    let mut mouse = follow_mouse(false, app.wants_mouse());
     loop {
         let Ok(ev) = event_rx.recv() else {
             return Ok(());
@@ -120,7 +143,7 @@ fn main_loop(
         // A shell or editor `!` or `e` asked for. Run here because this is
         // where the terminal is.
         if let Some(request) = app.launch.take() {
-            match handoff::carry_out(request, terminal, &gate, &app.event_tx) {
+            match handoff::carry_out(request, terminal, &gate, &app.event_tx, mouse) {
                 Ok(Some(done)) => app.set_success(done),
                 Ok(None) => {}
                 Err(e) => app.set_error(e),
@@ -134,10 +157,34 @@ fn main_loop(
         if redraw {
             terminal.draw(|f| render::render(f, app))?;
         }
+        // The setup screen opening or closing is a frame like any other,
+        // so this is the one place the mouse is taken or given back.
+        mouse = follow_mouse(mouse, app.wants_mouse());
         if app.should_quit {
             return Ok(());
         }
     }
+}
+
+/// Tells the terminal to report the mouse, or to stop, when what the app
+/// wants is not what the terminal was last told. Returns what it is told
+/// now.
+fn follow_mouse(on: bool, wanted: bool) -> bool {
+    if on != wanted {
+        set_mouse(wanted);
+    }
+    wanted
+}
+
+/// Asks the terminal to report the mouse to pando, or to stop. Written as
+/// it is rather than as a crossterm command, the way the OSC 52 copy is:
+/// one write to the terminal pando owns, with nothing in it that depends
+/// on the OS.
+fn set_mouse(on: bool) {
+    use std::io::Write as _;
+    let mut out = stdout();
+    let _ = out.write_all(if on { MOUSE_ON } else { MOUSE_OFF }.as_bytes());
+    let _ = out.flush();
 }
 
 /// Follows the theme while pando runs: a theme switcher writing a new
@@ -351,6 +398,32 @@ mod tests {
         // Closed, so the thread's next send fails and it ends.
         drop(rx);
         waiting.store(false, Ordering::Release);
+    }
+
+    // Not every move of the pointer: nothing answers a hover, and each is a
+    // write over SSH. What is asked for is given back, every mode of it.
+    #[test]
+    fn the_mouse_is_asked_for_without_its_moves_and_given_back_whole() {
+        let modes = |sequence: &str, end: char| -> Vec<String> {
+            let mut modes: Vec<String> = sequence
+                .split("\x1b[?")
+                .filter(|mode| !mode.is_empty())
+                .map(|mode| {
+                    mode.strip_suffix(end)
+                        .unwrap_or_else(|| panic!("{sequence:?}"))
+                        .to_string()
+                })
+                .collect();
+            modes.sort();
+            modes
+        };
+        let on = modes(MOUSE_ON, 'h');
+        assert!(!on.contains(&"1003".to_string()), "{MOUSE_ON:?}");
+        assert!(
+            on.contains(&"1006".to_string()),
+            "SGR, or a click past column 223 is garbage"
+        );
+        assert_eq!(on, modes(MOUSE_OFF, 'l'));
     }
 
     #[test]

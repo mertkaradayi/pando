@@ -2205,6 +2205,29 @@ fn the_user_layer_carries_the_lists_order() {
     assert_eq!(loaded.config.ui.sort.as_deref(), Some("run"));
 }
 
+// The mouse is the TUI's unless the developer says otherwise, and saying
+// so is a person's setting, read from their own layer.
+#[test]
+fn the_tui_takes_the_mouse_unless_the_user_layer_says_not() {
+    let f = fixture();
+    assert!(load(&f.paths).unwrap().config.ui.mouse());
+    write_user(&f, "[ui]\nmouse = false\n");
+    let loaded = load(&f.paths).unwrap();
+    assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    assert!(!loaded.config.ui.mouse());
+    write_user(&f, "[ui]\nmouse = true\n");
+    assert!(load(&f.paths).unwrap().config.ui.mouse());
+}
+
+#[test]
+fn a_mouse_that_is_not_true_or_false_drops_the_layer() {
+    let f = fixture();
+    write_user(&f, "[ui]\nmouse = \"off\"\n");
+    let loaded = load(&f.paths).unwrap();
+    assert_eq!(loaded.config.ui.mouse, None);
+    assert!(!loaded.warnings.is_empty(), "a wrong type said nothing");
+}
+
 #[test]
 fn an_order_pando_does_not_know_drops_the_layer_with_the_spellings() {
     let f = fixture();

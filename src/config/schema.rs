@@ -670,6 +670,11 @@ pub struct UiSection {
     /// default) when nothing says. `,` in the TUI cycles it and saves it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<String>,
+    /// Whether the TUI takes the mouse: it does when nothing says. Taken,
+    /// the terminal's own selection wants a modifier held — shift in most
+    /// terminals, option in iTerm2 — so `false` leaves the mouse to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mouse: Option<bool>,
 }
 
 /// The spellings `[ui] appearance` takes.
@@ -682,6 +687,11 @@ pub const LIST_SORTS: [&str; 4] = ["pr", "newest", "run", "name"];
 impl UiSection {
     fn is_empty(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// Whether the TUI takes the mouse: unless `mouse = false` says not.
+    pub fn mouse(&self) -> bool {
+        self.mouse != Some(false)
     }
 
     /// What the theme module needs from it, with `~` expanded.
