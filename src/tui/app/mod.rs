@@ -38,8 +38,8 @@ pub use dialogs::{
 };
 pub use git_menu::{BY_HAND_KEY, GitStage};
 pub use keymap::{
-    INSPECT_LEGEND, KeyHelp, LEADER_KEYS, LIST_KEYS, LIST_LEGEND, LOG_KEYS, OVERLAY_KEYS,
-    SETUP_KEYS, SETUP_LEGEND,
+    INSPECT_LEGEND, KeyHelp, LEADER_KEYS, LIST_KEYS, LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE,
+    MOUSE_NOTE, MouseHelp, OVERLAY_KEYS, SETUP_KEYS, SETUP_LEGEND,
 };
 pub use launch::{
     Launch, LaunchEnv, LaunchRequest, is_terminal_editor, plan_editor, plan_shell, said_after,

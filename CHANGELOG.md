@@ -7,6 +7,23 @@ may change behaviour.
 
 ## Unreleased
 
+### Added
+
+- The TUI takes the mouse. A click selects a worktree, a dialog's
+  option or a line of the log viewer, and a second click is `⏎` on it;
+  a click on a key hint presses its key, `esc cancel` cancelling; a
+  click on a tab of the log viewer, or on a process the log preview
+  names, shows that log; the wheel scrolls what is under the pointer.
+  Help lists all of it. Hold shift to select text while pando has the
+  mouse (option in iTerm2); `[ui] mouse = false` in
+  `~/.pando/config.toml` leaves it to the terminal, and the setup
+  screen always does, so its prompt can be selected and pasted.
+
+### Fixed
+
+- A panic in the TUI no longer leaves the terminal reporting focus
+  changes, which the shell then printed as `^[[I` and `^[[O`.
+
 ## 0.11.1 — 2026-10-26
 
 ### Added

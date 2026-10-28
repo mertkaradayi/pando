@@ -1,8 +1,9 @@
 //! Which key does what, as data: the one table the help overlay prints and
 //! a test holds to the handlers, so help never lists a key nothing answers
-//! and no key is answered that help leaves out.
+//! and no key is answered that help leaves out. The mouse's gestures are a
+//! table of the same kind.
 
-use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 
 /// One row of help: what its key column says, every key code the row
 /// stands for, and what they do.
@@ -389,4 +390,69 @@ pub const INSPECT_LEGEND: &[(&str, &str)] = &[
     ("j k g G", "scroll the inspected block"),
     ("y", "copy the whole block"),
     ("q esc", "close it"),
+];
+
+/// One row of help's mouse section: what its gesture column says, every
+/// mouse event the gesture is made of, and what it does.
+pub struct MouseHelp {
+    pub gesture: &'static str,
+    /// What the contract test sends.
+    pub kinds: &'static [MouseEventKind],
+    pub action: &'static str,
+}
+
+const fn gesture(
+    gesture: &'static str,
+    kinds: &'static [MouseEventKind],
+    action: &'static str,
+) -> MouseHelp {
+    MouseHelp {
+        gesture,
+        kinds,
+        action,
+    }
+}
+
+const CLICK: &[MouseEventKind] = &[MouseEventKind::Down(MouseButton::Left)];
+
+const WHEEL: &[MouseEventKind] = &[MouseEventKind::ScrollUp, MouseEventKind::ScrollDown];
+
+/// What the mouse does on the list while pando has it, under its keys.
+pub const LIST_MOUSE: &[MouseHelp] = &[
+    gesture(
+        "click",
+        CLICK,
+        "select a worktree, or a dialog's option; a process the log preview names shows its log",
+    ),
+    gesture("click twice", CLICK, "⏎ on the worktree, or on the option"),
+    gesture(
+        "click a hint",
+        CLICK,
+        "press its key: `esc cancel` cancels, `? help` opens this",
+    ),
+    gesture(
+        "wheel",
+        WHEEL,
+        "move the list, or scroll the log preview under it",
+    ),
+];
+
+/// What the mouse does in the log viewer while pando has it.
+pub const LOG_MOUSE: &[MouseHelp] = &[
+    gesture(
+        "click",
+        CLICK,
+        "put the cursor on a line, or show a tab's source",
+    ),
+    gesture("click twice", CLICK, "inspect the line"),
+    gesture("click a hint", CLICK, "press its key"),
+    gesture("wheel", WHEEL, "move the cursor three lines"),
+];
+
+/// How the terminal's own selection still works while pando has the
+/// mouse, and how to give the mouse back to it: under the mouse's rows,
+/// a line apiece so a narrow help cuts neither.
+pub const MOUSE_NOTE: [&str; 2] = [
+    "shift-drag selects text (option-drag in iTerm2)",
+    "[ui] mouse = false leaves the mouse to the terminal",
 ];
