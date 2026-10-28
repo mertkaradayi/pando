@@ -21,6 +21,7 @@ mod launch;
 mod log_keys;
 mod log_view;
 mod merged;
+mod mouse;
 mod operations;
 mod pending;
 mod remedies;
@@ -496,6 +497,7 @@ impl App {
                 true
             }
             AppEvent::Input(Event::Resize(..)) => true,
+            AppEvent::Input(Event::Mouse(mouse)) => self.handle_mouse(mouse),
             AppEvent::Input(Event::FocusGained) => {
                 self.focus_gained();
                 false

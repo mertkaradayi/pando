@@ -71,12 +71,14 @@ impl InputGate {
 /// Runs `request`. Returns what to say once it is done — nothing for a
 /// hand-off, which the key already announced — or the error to show for a
 /// suspend that could not run; a handed-off launch reports its own failure
-/// as an event.
+/// as an event. `mouse` says whether the terminal reports the mouse now,
+/// so a suspend gives it back as it found it.
 pub fn carry_out(
     request: LaunchRequest,
     terminal: &mut ratatui::DefaultTerminal,
     gate: &Arc<InputGate>,
     tx: &Sender<AppEvent>,
+    mouse: bool,
 ) -> Result<Option<String>, String> {
     let said = said_after(&request);
     match request.launch {
@@ -91,7 +93,11 @@ pub fn carry_out(
         Launch::Suspend { program, args, cwd } => {
             gate.pause();
             let _ = disable_raw_mode();
-            // A shell given focus reports would print them as `^[[I`.
+            // A shell given focus reports would print them as `^[[I`, and
+            // one given the mouse every click as `^[[<0;12;5M`.
+            if mouse {
+                super::set_mouse(false);
+            }
             let _ = execute!(stdout(), DisableFocusChange, LeaveAlternateScreen);
             // Every frame hides the cursor, and leaving the alternate
             // screen does not bring it back; a shell does not either, so
@@ -104,6 +110,9 @@ pub fn carry_out(
                 .status();
             let _ = enable_raw_mode();
             let _ = execute!(stdout(), EnterAlternateScreen, EnableFocusChange);
+            if mouse {
+                super::set_mouse(true);
+            }
             let _ = terminal.clear();
             gate.resume();
             match ran {

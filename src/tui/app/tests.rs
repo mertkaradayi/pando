@@ -8985,3 +8985,134 @@ fn a_create_says_how_to_start_it_as_the_detail_pane_does() {
     let (message, _) = app.active_status().unwrap();
     assert_eq!(message, "created feat+x — s starts it · ⏎ picks a mode");
 }
+
+// ---- the mouse -----------------------------------------------------------
+
+/// What the terminal sends for the mouse, here a step of the wheel or a
+/// click, at the top left: where it is does not matter yet.
+fn mouse(app: &mut App, kind: ratatui::crossterm::event::MouseEventKind) -> bool {
+    use ratatui::crossterm::event::{Event, MouseEvent};
+    app.handle_event(AppEvent::Input(Event::Mouse(MouseEvent {
+        kind,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    })))
+}
+
+// Taking the mouse stops the terminal turning the wheel into arrows, so
+// the wheel is an arrow again here: a row a step on the list.
+#[test]
+fn the_wheel_moves_the_list_a_row_a_step() {
+    use ratatui::crossterm::event::MouseEventKind::{ScrollDown, ScrollUp};
+    let mut app = test_app(&["a", "b", "c"]);
+    assert!(mouse(&mut app, ScrollDown), "a step is a frame");
+    assert_eq!(app.list_state.selected(), Some(1));
+    mouse(&mut app, ScrollDown);
+    mouse(&mut app, ScrollDown);
+    assert_eq!(app.list_state.selected(), Some(2), "clamped at the end");
+    mouse(&mut app, ScrollUp);
+    assert_eq!(app.list_state.selected(), Some(1));
+}
+
+// Nothing answers a click yet, nor a move: neither costs a frame.
+#[test]
+fn a_click_and_a_drag_do_nothing_yet() {
+    use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+    let mut app = test_app(&["a", "b"]);
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+        MouseEventKind::Drag(MouseButton::Left),
+        MouseEventKind::Moved,
+    ] {
+        assert!(!mouse(&mut app, kind), "{kind:?}");
+    }
+    assert_eq!(app.list_state.selected(), Some(0));
+    assert!(app.modal.is_none());
+}
+
+#[test]
+fn the_wheel_scrolls_help_three_lines_a_step_and_leaves_it_open() {
+    use ratatui::crossterm::event::MouseEventKind::{ScrollDown, ScrollUp};
+    let mut app = test_app(&["a"]);
+    press(&mut app, KeyCode::Char('?'));
+    mouse(&mut app, ScrollDown);
+    assert_eq!(app.help_scroll, 3);
+    mouse(&mut app, ScrollUp);
+    assert_eq!(app.help_scroll, 0);
+    assert!(
+        matches!(app.modal, Some(Modal::Help)),
+        "an arrow is no dismissal"
+    );
+}
+
+// The viewer is driven by its cursor, so the wheel moves the cursor, three
+// lines a step; up leaves the live tail, as `k` does. While a search is
+// typed the wheel is nobody's.
+#[test]
+fn the_wheel_moves_the_viewers_cursor_and_up_leaves_the_live_tail() {
+    use ratatui::crossterm::event::MouseEventKind::{ScrollDown, ScrollUp};
+    let (_dir, mut app) = app_with_logs(&["feat+one"]);
+    let lines: Vec<String> = (0..20).map(|i| format!("line {i}")).collect();
+    write_log(&app, "feat+one", "dev", &lines);
+    open_viewer(&mut app, 80, 12);
+    assert!(viewer(&app).follow);
+
+    mouse(&mut app, ScrollUp);
+    assert!(!viewer(&app).follow, "up breaks follow");
+    assert_eq!(viewer(&app).cursor, 16);
+    mouse(&mut app, ScrollDown);
+    assert_eq!(viewer(&app).cursor, 19);
+    mouse(&mut app, ScrollDown);
+    assert_eq!(viewer(&app).cursor, 19, "clamped at the last line");
+
+    press(&mut app, KeyCode::Char('/'));
+    assert!(
+        !mouse(&mut app, ScrollUp),
+        "the search line has the keyboard"
+    );
+    assert_eq!(viewer(&app).cursor, 19);
+}
+
+// An arrow moves a picker's highlight, and closes the remove dialog, as any
+// key that is not its answer does: the wheel goes only where an arrow
+// moves something.
+#[test]
+fn the_wheel_moves_a_questions_highlight_and_never_closes_a_dialog() {
+    use ratatui::crossterm::event::MouseEventKind::ScrollDown;
+    let mut app = test_app(&["feat+one"]);
+    let _rx = open_question(&mut app, a_question());
+    mouse(&mut app, ScrollDown);
+    assert!(
+        matches!(app.modal, Some(Modal::Question { selected: 1, .. })),
+        "{:?}",
+        app.modal
+    );
+
+    let mut app = test_app(&["feat+one"]);
+    press(&mut app, KeyCode::Char('d'));
+    assert!(!mouse(&mut app, ScrollDown));
+    assert!(
+        matches!(app.modal, Some(Modal::Remove { .. })),
+        "a wheel step is no answer to the remove dialog"
+    );
+}
+
+// The setup screen's prompt is laid out to be selected with the mouse, so
+// the mouse is the terminal's there; and anywhere, when the developer says.
+#[test]
+fn the_mouse_is_the_terminals_on_the_setup_screen_and_when_the_config_says() {
+    use ratatui::crossterm::event::MouseEventKind::ScrollDown;
+    let (_dir, mut app) = app_on_setup_screen(true);
+    assert!(!app.wants_mouse());
+    assert!(!mouse(&mut app, ScrollDown), "one already on its way");
+    press(&mut app, KeyCode::Esc);
+    assert!(app.setup_screen.is_none(), "esc leaves the setup screen");
+    assert!(app.wants_mouse());
+
+    let mut app = test_app(&["a"]);
+    assert!(app.wants_mouse(), "taken when nothing says");
+    app.config.ui.mouse = Some(false);
+    assert!(!app.wants_mouse());
+}
