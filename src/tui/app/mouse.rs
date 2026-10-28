@@ -1,14 +1,13 @@
 //! The mouse: a click on a key hint presses its key, a click on a
-//! worktree or on a picker's option moves the cursor there and a second
-//! one is ⏎ on it, a click on a process the log preview names shows its
-//! log, and the wheel scrolls the preview under the pointer or moves the
-//! list.
+//! worktree, a picker's option or a line of the log viewer moves the
+//! cursor there and a second one is ⏎ on it, a click on a process the log
+//! preview names or on a viewer's tab shows that log, and the wheel
+//! scrolls the preview under the pointer or moves the list.
 //!
-//! The paint records where those are, in [`Hits`]. Where the mouse has
-//! nothing of its own yet — a modal, the log viewer — a step of the wheel
-//! is the arrow key a terminal sends for it when nobody has the mouse,
-//! sent only where an arrow moves something: an arrow closes the remove
-//! dialog.
+//! The paint records where those are, in [`Hits`]. Where the wheel has
+//! nothing of its own — a modal, the log viewer — a step of it is the
+//! arrow key a terminal sends for it when nobody has the mouse, sent only
+//! where an arrow moves something: an arrow closes the remove dialog.
 
 use std::time::{Duration, Instant};
 
@@ -37,6 +36,8 @@ pub enum Clicked {
     Row(String),
     /// An option of the open picker, by the index its highlight takes.
     Choice(usize),
+    /// A line of the log viewer, by its rank among the lines it shows.
+    Line(usize),
 }
 
 /// Where the last frame put what the mouse acts on. The paint fills it,
@@ -57,6 +58,11 @@ pub struct Hits {
     /// The open picker's options on screen, each with the index its
     /// highlight takes there.
     pub options: Vec<(Rect, usize)>,
+    /// The log viewer's body, and the rank of the line each of its rows
+    /// shows, top to bottom: a wrapped line is several rows.
+    pub viewer_lines: Option<(Rect, Vec<usize>)>,
+    /// The log viewer's tabs, each with the number it is labelled with.
+    pub viewer_tabs: Vec<(Rect, usize)>,
 }
 
 /// The keys a hint's key stands for, pressed in turn: `esc`, `⏎`, `tab`,
@@ -162,6 +168,9 @@ impl App {
             self.choose(index, last);
             return true;
         }
+        if self.viewer_has_the_mouse() {
+            return self.click_in_viewer(at, last);
+        }
         if !self.list_has_the_mouse() {
             return false;
         }
@@ -205,6 +214,48 @@ impl App {
         // acting on a worktree, so a second click there is only a click.
         if self.second_press(last, Clicked::Row(name)) && !self.typing_filter() {
             self.enter_selected();
+        }
+        true
+    }
+
+    /// Whether the log viewer's lines and tabs take a click: nothing over
+    /// them, and no query being typed, which has the keyboard.
+    fn viewer_has_the_mouse(&self) -> bool {
+        self.modal.is_none()
+            && self.inspect.is_none()
+            && self
+                .log_view()
+                .is_some_and(|view| view.search_mode != SearchMode::Typing)
+    }
+
+    /// A press in the log viewer: a tab shows its source, as its digit
+    /// does, and a line takes the cursor, leaving the live tail as `k`
+    /// does. A second press on the line is ⏎, which inspects it.
+    fn click_in_viewer(&mut self, at: Position, last: Option<(Instant, Clicked)>) -> bool {
+        let tab = self
+            .hits
+            .viewer_tabs
+            .iter()
+            .find(|(cells, _)| cells.contains(at))
+            .map(|(_, number)| *number);
+        if let Some(number) = tab {
+            self.jump_to_log_source(number);
+            return true;
+        }
+        let Some(rank) = self.hits.viewer_lines.as_ref().and_then(|(body, ranks)| {
+            body.contains(at)
+                .then(|| ranks.get(usize::from(at.y - body.y)))
+                .flatten()
+                .copied()
+        }) else {
+            return false;
+        };
+        if let Some(view) = self.log_view_mut() {
+            view.follow = false;
+            view.cursor = rank;
+        }
+        if self.second_press(last, Clicked::Line(rank)) {
+            self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         }
         true
     }

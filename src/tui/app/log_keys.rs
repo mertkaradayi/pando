@@ -156,8 +156,9 @@ impl App {
     /// Next (or previous) tab. The list is the one the last paint read off
     /// disk, so no key handler goes to the filesystem.
     /// The tab a digit names, counted from one as the tabs are labelled.
-    /// A digit past the last tab does nothing.
-    fn jump_to_log_source(&mut self, number: usize) {
+    /// A digit past the last tab does nothing. A click on a tab names it
+    /// the same way, past nine too.
+    pub(super) fn jump_to_log_source(&mut self, number: usize) {
         let Some(view) = self.log_view() else { return };
         let Some(source) = number
             .checked_sub(1)

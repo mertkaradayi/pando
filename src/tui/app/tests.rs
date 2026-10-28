@@ -9768,3 +9768,125 @@ fn a_chosen_base_is_no_hint() {
         app.hits.keys
     );
 }
+
+/// Twenty short lines but the sixth, which is long enough to wrap: what a
+/// viewer at 80 columns shows on several rows.
+fn a_log_with_a_long_line(app: &App) {
+    let lines: Vec<String> = (0..20)
+        .map(|i| match i {
+            5 => format!("line 5 {}", "x".repeat(150)),
+            _ => format!("line {i}"),
+        })
+        .collect();
+    write_log(app, "feat+one", "dev", &lines);
+}
+
+// A click on a line puts the cursor on it, off the live tail as `k`
+// takes it; a wrapped line is that line on every one of its rows.
+#[test]
+fn a_click_on_a_line_puts_the_viewers_cursor_on_it_whichever_row_of_it() {
+    let (_dir, mut app) = app_with_logs(&["feat+one"]);
+    a_log_with_a_long_line(&app);
+    open_viewer(&mut app, 80, 30);
+    let rows = frame(&mut app, 80, 30);
+    let (x, y) = on_frame(&rows, "line 5 xxx");
+    assert!(click_at(&mut app, (x, y + 1)), "the long line's second row");
+    assert!(!viewer(&app).follow, "off the live tail");
+    assert_eq!(viewer(&app).cursor, 5);
+    let at = on_frame(&rows, "line 12");
+    click_at(&mut app, at);
+    assert_eq!(viewer(&app).cursor, 12);
+}
+
+// With wrap off only the cursor's line shows whole, so moving the cursor
+// onto the long line pushes every row under it down: the next frame's
+// rows are the lines they show.
+#[test]
+fn the_row_under_the_cursors_whole_line_is_the_next_line() {
+    let (_dir, mut app) = app_with_logs(&["feat+one"]);
+    a_log_with_a_long_line(&app);
+    open_viewer(&mut app, 80, 30);
+    press(&mut app, KeyCode::Char('w'));
+    let rows = frame(&mut app, 80, 30);
+    let at = on_frame(&rows, "line 5 xxx");
+    click_at(&mut app, at);
+    assert_eq!(viewer(&app).cursor, 5);
+    let rows = frame(&mut app, 80, 30);
+    let (_, five) = on_frame(&rows, "line 5 xxx");
+    let (x, six) = on_frame(&rows, "line 6");
+    assert!(six > five + 1, "line 5 is whole now:\n{}", rows.join("\n"));
+    click_at(&mut app, (x, six));
+    assert_eq!(viewer(&app).cursor, 6);
+}
+
+// Two presses on a line are ⏎ on it: the inspect overlay, which then has
+// the keys, so the viewer's lines and hints under it take no click.
+#[test]
+fn two_clicks_on_a_line_inspect_it() {
+    let (_dir, mut app) = app_with_logs(&["feat+one"]);
+    a_log_with_a_long_line(&app);
+    open_viewer(&mut app, 80, 30);
+    let rows = frame(&mut app, 80, 30);
+    let line = on_frame(&rows, "line 12");
+    click_at(&mut app, line);
+    assert!(app.inspect.is_none(), "one click only moves the cursor");
+    click_at(&mut app, line);
+    assert!(app.inspect.is_some(), "a second inspects it");
+    frame(&mut app, 80, 30);
+    assert!(app.hits.keys.is_empty(), "{:?}", app.hits.keys);
+    assert!(!click_at(&mut app, on_frame(&rows, "line 3")));
+    assert_eq!(viewer(&app).cursor, 12);
+}
+
+// A tab shows its source, as its digit does; on a screen too narrow for
+// their names, the tabs that are only a number are tabs all the same.
+#[test]
+fn a_click_on_a_tab_shows_its_source_named_or_numbered() {
+    for width in [80, 16] {
+        let (_dir, mut app) = app_with_logs(&["feat+one"]);
+        write_log(&app, "feat+one", "dev", &["up"]);
+        write_log(&app, "feat+one", "install", &["installed"]);
+        open_viewer(&mut app, width, 20);
+        let rows = frame(&mut app, width, 20);
+        let (rect, _) = *app
+            .hits
+            .viewer_tabs
+            .iter()
+            .find(|(_, number)| *number == 2)
+            .unwrap_or_else(|| panic!("no second tab at {width}: {:?}", app.hits.viewer_tabs));
+        assert!(
+            text_in(&rows, rect).contains('2'),
+            "{}",
+            text_in(&rows, rect)
+        );
+        assert!(click_at(&mut app, (rect.x + 1, rect.y)), "{width}");
+        assert_eq!(viewer(&app).source, "install", "{width}");
+    }
+}
+
+#[test]
+fn a_click_on_the_viewers_footer_hint_presses_its_key() {
+    let (_dir, mut app) = app_with_logs(&["feat+one"]);
+    write_log(&app, "feat+one", "dev", &["up"]);
+    open_viewer(&mut app, 100, 20);
+    let rows = frame(&mut app, 100, 20);
+    let at = on_frame(&rows, "q back");
+    click_at(&mut app, at);
+    assert!(app.log_view().is_none(), "q goes back to the list");
+}
+
+// While a query is typed every key is the query's: the footer's `/` is
+// not a hint to press, and a click on a line moves nothing.
+#[test]
+fn while_a_search_is_typed_the_viewer_takes_no_click() {
+    let (_dir, mut app) = app_with_logs(&["feat+one"]);
+    a_log_with_a_long_line(&app);
+    open_viewer(&mut app, 80, 30);
+    press(&mut app, KeyCode::Char('/'));
+    type_str(&mut app, "line");
+    let rows = frame(&mut app, 80, 30);
+    assert!(app.hits.keys.is_empty(), "{:?}", app.hits.keys);
+    assert!(!click_at(&mut app, on_frame(&rows, "line 12")));
+    assert!(viewer(&app).follow, "the cursor stayed on the live tail");
+    assert_eq!(viewer(&app).search.query, "line", "and nothing was typed");
+}
