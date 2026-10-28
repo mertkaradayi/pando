@@ -9503,3 +9503,268 @@ fn every_hint_the_footer_and_the_dialogs_draw_is_a_key_a_click_presses() {
     let _rx = open_question(&mut app, a_question());
     every_hint_presses_a_key(&mut app, "a question");
 }
+
+/// The text the frame shows in `rect`, a row of it to a line.
+fn text_in(rows: &[String], rect: ratatui::layout::Rect) -> String {
+    (rect.y..rect.y + rect.height)
+        .map(|y| {
+            rows[usize::from(y)]
+                .chars()
+                .skip(usize::from(rect.x))
+                .take(usize::from(rect.width))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A cell inside the open picker's option `index`, as the last frame
+/// recorded it.
+fn option_cell(app: &App, index: usize) -> (u16, u16) {
+    let (rect, _) = app
+        .hits
+        .options
+        .iter()
+        .find(|(_, i)| *i == index)
+        .unwrap_or_else(|| panic!("option {index} is not on screen: {:?}", app.hits.options));
+    (rect.x + 2, rect.y)
+}
+
+fn branch(name: &str) -> BranchEntry {
+    BranchEntry {
+        name: name.into(),
+        source: BranchSource::Local,
+        in_every_repo: true,
+    }
+}
+
+// The mode chooser from the first run by hand. Each mode's row is that
+// mode's; a click on one moves the highlight there, and a second click is
+// ⏎ on it: the same start the keyboard asks for.
+#[test]
+fn a_click_on_a_mode_highlights_it_and_a_second_is_enter_on_it() {
+    let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+    press(&mut app, KeyCode::Enter);
+    let rows = frame(&mut app, 120, 24);
+    let words = ["shared", "namespaced", "isolated"];
+    assert_eq!(
+        app.hits.options.len(),
+        words.len(),
+        "{:?}",
+        app.hits.options
+    );
+    for ((rect, index), word) in app.hits.options.iter().zip(words) {
+        let shown = text_in(&rows, *rect);
+        assert!(shown.contains(word), "option {index} shows {shown:?}");
+    }
+    let isolated = option_cell(&app, 2);
+    assert!(click_at(&mut app, isolated));
+    assert!(
+        matches!(app.modal, Some(Modal::Mode { selected: 2, .. })),
+        "{:?}",
+        app.modal
+    );
+    assert!(app.pending.is_empty(), "one click only moves the highlight");
+    click_at(&mut app, isolated);
+    assert!(app.modal.is_none(), "{:?}", app.modal);
+
+    let mut keys = test_app(&["feat+alpha", "feat+bravo"]);
+    for key in [KeyCode::Enter, KeyCode::Down, KeyCode::Down, KeyCode::Enter] {
+        press(&mut keys, key);
+    }
+    let asked = |app: &App| -> Vec<(String, PendingKind)> {
+        app.pending
+            .iter()
+            .map(|p| (p.name.clone(), p.kind))
+            .collect()
+    };
+    assert!(!asked(&keys).is_empty(), "the keys asked for a start");
+    assert_eq!(asked(&app), asked(&keys));
+}
+
+#[test]
+fn a_click_on_an_answer_highlights_it_and_a_second_gives_it() {
+    let mut app = test_app(&["feat+one"]);
+    let rx = open_question(&mut app, a_question());
+    let rows = frame(&mut app, 120, 30);
+    let (rect, _) = app.hits.options[1];
+    assert!(
+        text_in(&rows, rect).contains("pnpm dev:web"),
+        "{}",
+        text_in(&rows, rect)
+    );
+    let at = option_cell(&app, 1);
+    click_at(&mut app, at);
+    assert!(matches!(
+        app.modal,
+        Some(Modal::Question { selected: 1, .. })
+    ));
+    assert!(rx.try_recv().is_err(), "nothing answered yet");
+    let at = option_cell(&app, 1);
+    click_at(&mut app, at);
+    assert!(matches!(rx.try_recv(), Ok(Ok(actions::Answer::Choice(1)))));
+}
+
+// A set question takes what is ticked: a press ticks, a second unticks,
+// and neither answers it.
+#[test]
+fn a_click_on_a_set_questions_option_ticks_it() {
+    let mut app = test_app(&["feat+one"]);
+    let mut question = a_question();
+    question.multi = true;
+    let rx = open_question(&mut app, question);
+    frame(&mut app, 120, 30);
+    let at = option_cell(&app, 1);
+    click_at(&mut app, at);
+    assert_eq!(app.question_checked, vec![1]);
+    let at = option_cell(&app, 1);
+    click_at(&mut app, at);
+    assert!(app.question_checked.is_empty(), "a second press unticks it");
+    assert!(rx.try_recv().is_err(), "and nothing is answered");
+}
+
+// While an answer is typed the arrows move nothing, so a click on an
+// option does nothing either, and two are no ⏎ to send what is half typed.
+#[test]
+fn while_an_answer_is_typed_its_options_take_no_click() {
+    let mut app = test_app(&["feat+one"]);
+    let rx = open_question(&mut app, a_question());
+    frame(&mut app, 120, 30);
+    let at = option_cell(&app, 1);
+    press(&mut app, KeyCode::Char('c'));
+    type_str(&mut app, "pnp");
+    frame(&mut app, 120, 30);
+    assert!(app.hits.options.is_empty(), "{:?}", app.hits.options);
+    click_at(&mut app, at);
+    click_at(&mut app, at);
+    assert!(rx.try_recv().is_err(), "nothing was sent");
+}
+
+// Moving through the themes tries each on; a click gets there by the
+// same steps.
+#[test]
+fn a_click_on_a_theme_moves_the_picker_to_it() {
+    let mut app = test_app(&["feat+one"]);
+    press(&mut app, KeyCode::Char('T'));
+    let rows = frame(&mut app, 120, 40);
+    let Some(Modal::Theme { selected: from, .. }) = app.modal else {
+        panic!("{:?}", app.modal);
+    };
+    let (rect, index) = *app
+        .hits
+        .options
+        .iter()
+        .find(|(_, i)| *i != from)
+        .expect("another theme on screen");
+    let name = app.theme.themes[index].name.clone();
+    assert!(
+        text_in(&rows, rect).contains(&name),
+        "{}",
+        text_in(&rows, rect)
+    );
+    click_at(&mut app, (rect.x + 2, rect.y));
+    assert!(
+        matches!(app.modal, Some(Modal::Theme { selected, .. }) if selected == index),
+        "{:?}",
+        app.modal
+    );
+    press(&mut app, KeyCode::Esc);
+}
+
+#[test]
+fn a_click_on_a_branch_moves_the_new_worktree_pickers_highlight() {
+    let mut app = test_app(&["feat+one"]);
+    press(&mut app, KeyCode::Char('n'));
+    app.handle_event(AppEvent::BranchesReady(vec![
+        branch("main"),
+        branch("fix/two"),
+        branch("feat/three"),
+    ]));
+    let rows = frame(&mut app, 120, 30);
+    let (rect, index) = *app.hits.options.last().expect("branches on screen");
+    let Some(Modal::Create { branches, .. }) = &app.modal else {
+        panic!("{:?}", app.modal);
+    };
+    let label = match &create_rows("", branches.as_slice())[index] {
+        CreateRow::NewBranch(name) => name.clone(),
+        CreateRow::Existing(entry) => entry.name.clone(),
+    };
+    assert!(
+        text_in(&rows, rect).contains(&label),
+        "{}",
+        text_in(&rows, rect)
+    );
+    click_at(&mut app, (rect.x + 2, rect.y));
+    assert!(
+        matches!(&app.modal, Some(Modal::Create { selected, .. }) if *selected == index),
+        "{:?}",
+        app.modal
+    );
+}
+
+#[test]
+fn a_click_on_a_pull_request_moves_the_pickers_highlight() {
+    let mut app = app_with_prs(&["feat+one"]);
+    press(&mut app, KeyCode::Char('p'));
+    let rows = frame(&mut app, 120, 30);
+    let (rect, index) = *app.hits.options.last().expect("pull requests on screen");
+    let number = format!("#{}", pr_rows(&app.pr_list, "")[index].number);
+    assert!(
+        text_in(&rows, rect).contains(&number),
+        "{}",
+        text_in(&rows, rect)
+    );
+    click_at(&mut app, (rect.x + 2, rect.y));
+    assert!(
+        matches!(&app.modal, Some(Modal::PullRequests { selected, .. }) if *selected == index),
+        "{:?}",
+        app.modal
+    );
+}
+
+// The git menu's rows are its options, the way to do it by hand last; a
+// second click is ⏎, which previews rather than runs.
+#[test]
+fn a_click_on_a_git_menu_row_highlights_it_and_a_second_previews_it() {
+    let mut app = test_app(&["feat+one"]);
+    open_git_menu(&mut app, "feat+one", a_git_read(false));
+    frame(&mut app, 120, 40);
+    assert!(app.hits.options.len() >= 2, "{:?}", app.hits.options);
+    let at = option_cell(&app, 0);
+    click_at(&mut app, at);
+    assert!(matches!(
+        git_stage(&app),
+        GitStage::Menu { selected: 0, .. }
+    ));
+    let at = option_cell(&app, 0);
+    click_at(&mut app, at);
+    assert!(
+        matches!(git_stage(&app), GitStage::Preview { .. }),
+        "{:?}",
+        git_stage(&app)
+    );
+}
+
+// A base the new worktree picker was told is drawn as a key is, orange
+// and bold, with nothing after it to say what pressing it would do: it
+// is no hint.
+#[test]
+fn a_chosen_base_is_no_hint() {
+    let mut app = test_app(&["feat+one"]);
+    press(&mut app, KeyCode::Char('n'));
+    app.handle_event(AppEvent::BranchesReady(vec![branch("develop")]));
+    press(&mut app, KeyCode::Tab);
+    let Some(Modal::Create {
+        base: Some(base), ..
+    }) = &app.modal
+    else {
+        panic!("tab chose no base: {:?}", app.modal);
+    };
+    let base = base.clone();
+    every_hint_presses_a_key(&mut app, "the new worktree picker with a base");
+    assert!(
+        app.hits.keys.iter().all(|(_, key)| *key != base),
+        "{:?}",
+        app.hits.keys
+    );
+}

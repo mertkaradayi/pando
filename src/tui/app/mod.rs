@@ -46,7 +46,7 @@ pub use launch::{
 };
 pub use log_view::{LOG_VIEWER_CAPACITY, LineInspect, LogFilter, LogView, SearchMode, SearchState};
 pub use merged::{ALL_SOURCE, MergedTail, SOURCE_SEPARATOR, ViewTail, strip_source};
-pub use mouse::Hits;
+pub use mouse::{Clicked, Hits};
 pub use pending::{AwaitingReady, PendingAction, PendingKind, PendingOutcome, SPINNER_FRAMES};
 pub use remedies::as_tui_remedy;
 pub use setup::{SetupLine, SetupScreen, SetupWatch, Trying, has_settings};
@@ -349,9 +349,9 @@ pub struct App {
     /// Where the last frame put what the mouse acts on. Written by the
     /// paint, read by the mouse.
     pub hits: Hits,
-    /// The last press on a worktree's row, and which worktree, while the
-    /// next press could still make it a double click.
-    pub last_click: Option<(Instant, String)>,
+    /// The last press on a worktree or on a picker's option, and which,
+    /// while the next press could still make it a double click.
+    pub last_click: Option<(Instant, Clicked)>,
     pub event_tx: Sender<AppEvent>,
     pub event_rx: Option<Receiver<AppEvent>>,
     /// How `!` and `e` leave pando: inside tmux or not, which shell, which
