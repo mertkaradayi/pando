@@ -330,8 +330,27 @@ pub(super) fn render_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let mut lines = fit_detail_rows(rows, meta_budget);
     if show_tail {
         lines.push(Line::raw(""));
-        lines.push(tail_header(app, &name, width));
+        let header_y = inner.y + lines.len() as u16;
+        let (header, named) = tail_header(app, &name, width);
+        lines.push(header);
         lines.extend(tail_lines(app, &name, tail_rows, width));
+        // The header with the lines under it, for the wheel, and each
+        // process the header names, for a click: whatever of it the
+        // header's cut left on screen.
+        app.hits.preview = Some(Rect::new(
+            inner.x,
+            header_y,
+            inner.width,
+            tail_rows as u16 + 1,
+        ));
+        app.hits.preview_processes = named
+            .into_iter()
+            .filter(|(at, _, _)| *at < width)
+            .map(|(at, cells, process)| {
+                let cells = cells.min(width - at) as u16;
+                (Rect::new(inner.x + at as u16, header_y, cells, 1), process)
+            })
+            .collect();
     }
     // What the paint decided, so PgUp/PgDn move by a screenful of what is
     // really there rather than a guess.
@@ -1079,11 +1098,13 @@ fn silent_port_rows<'a>(app: &App, name: &str, width: usize) -> Vec<Line<'a>> {
     .collect()
 }
 
-fn tail_header<'a>(app: &App, name: &str, width: usize) -> Line<'a> {
+/// The preview's header, and each process it names: the first cell from
+/// the pane's inner edge, how many cells, and the process.
+fn tail_header<'a>(app: &App, name: &str, width: usize) -> (Line<'a>, Vec<(usize, usize, String)>) {
     let target = app.tail_target();
     if target.is_none() {
         // Nothing runs, so there is nothing live to count.
-        return Line::from(vec![
+        let line = Line::from(vec![
             Span::styled(
                 " log",
                 Style::new().fg(text_dim()).add_modifier(Modifier::BOLD),
@@ -1096,6 +1117,7 @@ fn tail_header<'a>(app: &App, name: &str, width: usize) -> Line<'a> {
                 Style::new().fg(text_muted()),
             ),
         ]);
+        return (line, Vec::new());
     }
     let count = target
         .as_ref()
@@ -1117,6 +1139,7 @@ fn tail_header<'a>(app: &App, name: &str, width: usize) -> Line<'a> {
     )];
     // Every process by name, the one on screen marked, so what `tab`
     // moves and what `P` would restart can be seen rather than guessed.
+    let mut named = Vec::new();
     if processes.len() > 1 {
         let shown = target.as_ref().map(|(_, process, _)| process.as_str());
         spans.push(Span::raw("  "));
@@ -1124,6 +1147,7 @@ fn tail_header<'a>(app: &App, name: &str, width: usize) -> Line<'a> {
             if i > 0 {
                 spans.push(Span::styled(" │ ", Style::new().fg(text_muted())));
             }
+            let at: usize = spans.iter().map(|s| text_width(&s.content)).sum();
             spans.push(if Some(process.as_str()) == shown {
                 Span::styled(
                     format!("▸{process}"),
@@ -1135,13 +1159,15 @@ fn tail_header<'a>(app: &App, name: &str, width: usize) -> Line<'a> {
             } else {
                 Span::styled(process.clone(), Style::new().fg(text_muted()))
             });
+            let cells = spans.last().map_or(0, |s| text_width(&s.content));
+            named.push((at, cells, process.clone()));
         }
     }
     spans.push(Span::styled(
         format!("  {count} {unit}{hint}"),
         Style::new().fg(text_muted()),
     ));
-    truncate_line(Line::from(spans), width)
+    (truncate_line(Line::from(spans), width), named)
 }
 
 /// The last lines of the dev log, coloured by level.
