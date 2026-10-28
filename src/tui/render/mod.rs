@@ -118,6 +118,7 @@ fn paint_modal(f: &mut Frame, app: &mut App) {
     if let Some(bottom) = painted.scroll_bottom {
         app.help_scroll_max = bottom;
     }
+    app.hits.options = painted.options;
     app.hits.keys = painted
         .content
         .map(|content| hints::key_hints(f.buffer_mut(), content))

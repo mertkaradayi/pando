@@ -1,7 +1,8 @@
 //! The mouse: a click on a key hint presses its key, a click on a
-//! worktree selects it and a second one acts on it, a click on a process
-//! the log preview names shows its log, and the wheel scrolls the preview
-//! under the pointer or moves the list.
+//! worktree or on a picker's option moves the cursor there and a second
+//! one is ⏎ on it, a click on a process the log preview names shows its
+//! log, and the wheel scrolls the preview under the pointer or moves the
+//! list.
 //!
 //! The paint records where those are, in [`Hits`]. Where the mouse has
 //! nothing of its own yet — a modal, the log viewer — a step of the wheel
@@ -24,9 +25,19 @@ use super::{App, GitStage, Modal, SearchMode, View};
 /// a list moves one row a step, as an arrow moves it.
 const WHEEL_LINES: usize = 3;
 
-/// How soon a second press on the same worktree has to follow the first
-/// to be a double click: what desktops take when nobody has set it.
+/// How soon a second press on the same thing has to follow the first to
+/// be a double click: what desktops take when nobody has set it.
 pub(super) const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+
+/// What a press landed on, so a second press can tell whether it is on
+/// the same thing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Clicked {
+    /// A worktree's row in the list.
+    Row(String),
+    /// An option of the open picker, by the index its highlight takes.
+    Choice(usize),
+}
 
 /// Where the last frame put what the mouse acts on. The paint fills it,
 /// from empty every frame, so nothing that frame did not draw can be
@@ -43,6 +54,9 @@ pub struct Hits {
     /// Each key hint on top — an open modal's, or the footer's when none
     /// is — with its key as the hint writes it.
     pub keys: Vec<(Rect, String)>,
+    /// The open picker's options on screen, each with the index its
+    /// highlight takes there.
+    pub options: Vec<(Rect, usize)>,
 }
 
 /// The keys a hint's key stands for, pressed in turn: `esc`, `⏎`, `tab`,
@@ -119,8 +133,8 @@ impl App {
         true
     }
 
-    /// A left press. Anything but a worktree's row ends a double click
-    /// begun on one.
+    /// A left press. A press on anything but what the last one landed on
+    /// ends a double click begun there.
     fn click(&mut self, at: Position) -> bool {
         let last = self.last_click.take();
         // A hint says what its key does where it is drawn, so a click on
@@ -136,6 +150,16 @@ impl App {
             for code in keys {
                 self.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
             }
+            return true;
+        }
+        let choice = self
+            .hits
+            .options
+            .iter()
+            .find(|(rows, _)| rows.contains(at))
+            .map(|(_, index)| *index);
+        if let Some(index) = choice {
+            self.choose(index, last);
             return true;
         }
         if !self.list_has_the_mouse() {
@@ -177,18 +201,77 @@ impl App {
             self.tail_index = 0;
             self.select_index(row);
         }
-        let now = Instant::now();
-        let double = last.is_some_and(|(when, before)| {
-            before == name && now.saturating_duration_since(when) <= DOUBLE_CLICK
-        });
         // While the filter is being typed, ⏎ keeps the filter rather than
         // acting on a worktree, so a second click there is only a click.
-        if double && !self.typing_filter() {
+        if self.second_press(last, Clicked::Row(name)) && !self.typing_filter() {
             self.enter_selected();
-        } else {
-            self.last_click = Some((now, name));
         }
         true
+    }
+
+    /// A press on a picker's option. The highlight goes there by the
+    /// picker's own arrows, so what moving does — the theme picker trying
+    /// each theme on — happens as it does from the keyboard. A second
+    /// press is ⏎; in a set question a press ticks the option instead, as
+    /// space does, and ⏎ is its hint's.
+    fn choose(&mut self, index: usize, last: Option<(Instant, Clicked)>) {
+        let Some((from, set)) = self.highlight() else {
+            return;
+        };
+        let code = if index < from {
+            KeyCode::Up
+        } else {
+            KeyCode::Down
+        };
+        for _ in 0..index.abs_diff(from) {
+            self.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+        }
+        // Not there after all — the picker changed under the frame — so
+        // nothing is chosen.
+        if self.highlight().map(|(at, _)| at) != Some(index) {
+            return;
+        }
+        if set {
+            self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        } else if self.second_press(last, Clicked::Choice(index)) {
+            self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        }
+    }
+
+    /// Where the open picker's highlight is, and whether it is a set
+    /// question's, where a press ticks rather than chooses. `None` with no
+    /// picker open, or while a question's answer is typed.
+    fn highlight(&self) -> Option<(usize, bool)> {
+        match self.modal.as_ref()? {
+            Modal::Create { selected, .. }
+            | Modal::PullRequests { selected, .. }
+            | Modal::Theme { selected, .. }
+            | Modal::Mode { selected, .. }
+            | Modal::Git {
+                stage: GitStage::Menu { selected, .. },
+                ..
+            } => Some((*selected, false)),
+            Modal::Question {
+                question,
+                selected,
+                custom: None,
+                ..
+            } => Some((*selected, question.multi)),
+            _ => None,
+        }
+    }
+
+    /// Whether a press on `target` now is the second of a double click
+    /// after `last`. One that is not is remembered as a first.
+    fn second_press(&mut self, last: Option<(Instant, Clicked)>, target: Clicked) -> bool {
+        let now = Instant::now();
+        let double = last.is_some_and(|(when, before)| {
+            before == target && now.saturating_duration_since(when) <= DOUBLE_CLICK
+        });
+        if !double {
+            self.last_click = Some((now, target));
+        }
+        double
     }
 
     /// What any key but its own takes back: the leader, and a first press

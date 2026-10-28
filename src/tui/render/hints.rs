@@ -4,6 +4,8 @@
 //! every dialog draw one — and the words after it: `esc cancel`, `⏎ starts
 //! it`. Reading them off the frame rather than out of each dialog's layout
 //! keeps one rule for every place a hint is drawn, however it is laid out.
+//! A key with no words after it is no hint: a base the create picker was
+//! told is drawn the same way, and says what it is rather than a key.
 
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
@@ -51,7 +53,7 @@ pub(super) fn key_hints(buf: &Buffer, area: Rect) -> Vec<(Rect, String)> {
                 end -= 1;
             }
             let key = key.trim();
-            if !key.is_empty() {
+            if !key.is_empty() && end > x {
                 hints.push((Rect::new(start, y, end - start, 1), key.to_string()));
             }
             x = end;

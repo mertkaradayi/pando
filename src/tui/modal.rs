@@ -47,19 +47,36 @@ fn max_content_width(area: Rect) -> usize {
     ((area.width as usize * 9) / 10).saturating_sub(6).max(20)
 }
 
+/// The rows a picker's options are on, each with the index its highlight
+/// takes there. Only what is on screen.
+pub type Options = Vec<(Rect, usize)>;
+
 /// What painting a modal leaves for the keys and the mouse.
 pub struct Painted {
     /// Where its content went, whose keys a click presses. `None` for help
     /// and messages, whose keys are a list to read rather than buttons.
     pub content: Option<Rect>,
+    /// A picker's options, for a click to move its highlight to.
+    pub options: Options,
     /// For help and messages, the furthest they can scroll on this
     /// screen, which the scroll keys clamp to.
     pub scroll_bottom: Option<usize>,
 }
 
+/// A dialog that lists nothing to choose between.
+fn no_options(content: Rect) -> (Rect, Options) {
+    (content, Vec::new())
+}
+
+/// Where `line` of a paragraph painted from the top of `area` is, when it
+/// is on screen.
+fn line_rect(area: Rect, line: usize) -> Option<Rect> {
+    (line < area.height as usize).then(|| Rect::new(area.x, area.y + line as u16, area.width, 1))
+}
+
 /// Paints `modal`.
 pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Painted {
-    let content = match modal {
+    let painted = match modal {
         Modal::Create {
             input,
             branches,
@@ -70,19 +87,21 @@ pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Pain
             render_pull_requests(f, area, input, *selected, app)
         }
         Modal::Remove { name, .. } => {
-            render_remove(f, area, &app.label_of(name), &app.remove_blockers(name))
+            render_remove(f, area, &app.label_of(name), &app.remove_blockers(name)).map(no_options)
         }
-        Modal::Unshare { name, url } => render_unshare(f, area, &app.label_of(name), url),
-        Modal::StopAll { names } => render_stop_all(f, area, names, app),
+        Modal::Unshare { name, url } => {
+            render_unshare(f, area, &app.label_of(name), url).map(no_options)
+        }
+        Modal::StopAll { names } => render_stop_all(f, area, names, app).map(no_options),
         Modal::Share { name } => {
-            render_share(f, area, &app.label_of(name), app.url_of(name).as_deref())
+            render_share(f, area, &app.label_of(name), app.url_of(name).as_deref()).map(no_options)
         }
         Modal::Mode { name, selected } => render_mode_chooser(f, area, app, name, *selected),
         Modal::SwitchMode { name, to } => {
             let processes: Vec<String> =
                 app.processes_of(name).into_iter().map(|(p, _)| p).collect();
             let from = app.record_for(name).map(|r| r.mode()).unwrap_or_default();
-            render_switch_mode(f, area, &app.label_of(name), &processes, from, *to)
+            render_switch_mode(f, area, &app.label_of(name), &processes, from, *to).map(no_options)
         }
         Modal::Question {
             question,
@@ -109,20 +128,24 @@ pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Pain
             let bottom = render_help(f, area, app.help_scroll, keys, legend_title, legend);
             return Painted {
                 content: None,
+                options: Vec::new(),
                 scroll_bottom: Some(bottom),
             };
         }
         Modal::Messages => {
             return Painted {
                 content: None,
+                options: Vec::new(),
                 scroll_bottom: Some(render_messages(f, area, app)),
             };
         }
         Modal::Git { name, stage } => render_git(f, area, app, name, stage),
         Modal::Theme { selected, .. } => render_theme_picker(f, area, app, *selected),
     };
+    let (content, options) = painted.unzip();
     Painted {
         content,
+        options: options.unwrap_or_default(),
         scroll_bottom: None,
     }
 }
@@ -224,7 +247,7 @@ fn render_question(
     selected: usize,
     custom: Option<&str>,
     checked: &[usize],
-) -> Option<Rect> {
+) -> Option<(Rect, Options)> {
     // "type the variable names" for ports, "a shell line" for the prelude:
     // what a typed answer is, as the CLI's prompt says it.
     let type_it = format!("type the {}", question.slot.custom_noun());
@@ -408,7 +431,28 @@ fn render_question(
     }
     footer_lines.push(footer_line);
     f.render_widget(Paragraph::new(footer_lines), footer_area);
-    Some(inner)
+    // Each option's rows that the scroll left on screen. None while a
+    // command is typed: the arrows move nothing then.
+    let options = match custom {
+        Some(_) => Vec::new(),
+        None => spans_of
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &(start, end))| {
+                let (top, bottom) = (start.max(offset), end.min(offset + visible));
+                (top < bottom).then(|| {
+                    let rows = Rect::new(
+                        body_area.x,
+                        body_area.y + (top - offset) as u16,
+                        body_area.width,
+                        (bottom - top) as u16,
+                    );
+                    (rows, i)
+                })
+            })
+            .collect(),
+    };
+    Some((inner, options))
 }
 
 fn render_create(
@@ -419,7 +463,7 @@ fn render_create(
     selected: usize,
     base: Option<&str>,
     app: &App,
-) -> Option<Rect> {
+) -> Option<(Rect, Options)> {
     let width = 60.min(max_content_width(area));
     // The prompt, the base, a gap, the list, a gap, the keys.
     let height = 3 + CREATE_LIST_ROWS + 2;
@@ -523,7 +567,7 @@ fn render_create(
             )),
             list_area,
         );
-        return Some(inner);
+        return Some(no_options(inner));
     }
     let rows = create_rows(input, branches.as_slice());
     if rows.is_empty() {
@@ -534,7 +578,7 @@ fn render_create(
             )),
             list_area,
         );
-        return Some(inner);
+        return Some(no_options(inner));
     }
 
     let visible = list_area.height as usize;
@@ -600,7 +644,10 @@ fn render_create(
         })
         .collect();
     f.render_widget(Paragraph::new(lines), list_area);
-    Some(inner)
+    let options = (start..rows.len())
+        .filter_map(|i| line_rect(list_area, i - start).map(|row| (row, i)))
+        .collect();
+    Some((inner, options))
 }
 
 /// An existing branch's tag in the create picker: where it is, and for a
@@ -634,7 +681,7 @@ fn render_pull_requests(
     input: &str,
     selected: usize,
     app: &App,
-) -> Option<Rect> {
+) -> Option<(Rect, Options)> {
     let width = 76.min(max_content_width(area));
     // The filter, a gap, the list, a gap, the branch, the keys.
     let height = 2 + CREATE_LIST_ROWS + 3;
@@ -690,7 +737,7 @@ fn render_pull_requests(
             .map(|line| Line::styled(line, Style::new().fg(color)))
             .collect();
         f.render_widget(Paragraph::new(lines), list_area);
-        return Some(inner);
+        return Some(no_options(inner));
     }
 
     let selected = selected.min(rows.len() - 1);
@@ -770,7 +817,10 @@ fn render_pull_requests(
         Paragraph::new(super::render::truncate_line(branch_line, width)),
         branch_row,
     );
-    Some(inner)
+    let options = (start..rows.len())
+        .filter_map(|i| line_rect(list_area, i - start).map(|row| (row, i)))
+        .collect();
+    Some((inner, options))
 }
 
 /// Confirming that a public URL goes away.
@@ -901,7 +951,7 @@ fn render_mode_chooser(
     app: &App,
     name: &str,
     selected: usize,
-) -> Option<Rect> {
+) -> Option<(Rect, Options)> {
     let cap = max_content_width(area);
     let record = app.record_for(name);
     let running = app.is_up(name);
@@ -992,13 +1042,22 @@ fn render_mode_chooser(
     let width = widest(&lines).min(cap);
     let inner = popup(f, area, "mode", None, width, lines.len())?;
     f.render_widget(Paragraph::new(lines), inner);
-    Some(inner)
+    // The question and a blank row, then a mode a row.
+    let options = (0..ServiceMode::ALL.len())
+        .filter_map(|i| line_rect(inner, 2 + i).map(|row| (row, i)))
+        .collect();
+    Some((inner, options))
 }
 
 /// `T`: every theme with a swatch of its accents in their own colours,
 /// so they can be compared without trying each, and the screen behind in
 /// the one under the cursor.
-fn render_theme_picker(f: &mut Frame, area: Rect, app: &App, selected: usize) -> Option<Rect> {
+fn render_theme_picker(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    selected: usize,
+) -> Option<(Rect, Options)> {
     let themes = &app.theme.themes;
     let appearance = app.theme.appearance;
     let cap = max_content_width(area);
@@ -1090,7 +1149,10 @@ fn render_theme_picker(f: &mut Frame, area: Rect, app: &App, selected: usize) ->
     let width = widest(&lines).min(cap);
     let inner = popup(f, area, "theme", None, width, lines.len())?;
     f.render_widget(Paragraph::new(lines), inner);
-    Some(inner)
+    let options = (first..themes.len().min(first + rows))
+        .filter_map(|i| line_rect(inner, i - first).map(|row| (row, i)))
+        .collect();
+    Some((inner, options))
 }
 
 /// A dialog's keys, each with what it does, as many to a row as `width`
@@ -1519,7 +1581,13 @@ fn git_header(read: &GitRead) -> Vec<Line<'static>> {
 
 /// `space g`: the git menu, at whichever stage it is — the same box throughout,
 /// its title saying what it is about.
-fn render_git(f: &mut Frame, area: Rect, app: &App, name: &str, stage: &GitStage) -> Option<Rect> {
+fn render_git(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    name: &str,
+    stage: &GitStage,
+) -> Option<(Rect, Options)> {
     let cap = max_content_width(area);
     let label = app.label_of(name);
     let dim = Style::new().fg(text_dim());
@@ -1537,6 +1605,9 @@ fn render_git(f: &mut Frame, area: Rect, app: &App, name: &str, stage: &GitStage
         }
         Line::from(spans)
     };
+    // The menu's first row, and how many rows it has: the only stage with
+    // anything to choose between.
+    let mut menu: Option<(usize, usize)> = None;
     let title = match stage {
         GitStage::Reading => {
             lines.push(Line::styled("reading git…", muted));
@@ -1569,6 +1640,7 @@ fn render_git(f: &mut Frame, area: Rect, app: &App, name: &str, stage: &GitStage
                     "a shell in it, to do it yourself".to_string(),
                     false,
                 )]);
+            menu = Some((lines.len(), offers.len() + 1));
             for (i, (key, word, what, refused)) in rows.enumerate() {
                 let here = i == *selected;
                 let cursor = Span::styled(if here { "▸ " } else { "  " }, Style::new().fg(blue()));
@@ -1724,5 +1796,12 @@ fn render_git(f: &mut Frame, area: Rect, app: &App, name: &str, stage: &GitStage
     let width = widest(&lines).min(cap);
     let inner = popup(f, area, &title, None, width, lines.len())?;
     f.render_widget(Paragraph::new(lines), inner);
-    Some(inner)
+    let options = menu
+        .map(|(first, rows)| {
+            (0..rows)
+                .filter_map(|i| line_rect(inner, first + i).map(|row| (row, i)))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some((inner, options))
 }
