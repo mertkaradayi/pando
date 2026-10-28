@@ -124,11 +124,13 @@ pub(super) fn render_log_viewer(f: &mut Frame, area: Rect, app: &mut App) {
     } else {
         (None, inner)
     };
+    let mut tab_cells = Vec::new();
     if let Some(tabs) = tab_area {
         // In a multi-repo project, a process's tab names the repository
         // it runs in, while the strip has room for it.
         let repos: Vec<Option<&str>> = sources.iter().map(|s| app.process_repo(s)).collect();
         let strip = source_tabs(&sources, &repos, &view.source, tabs.width as usize);
+        tab_cells = numbered_tabs(&strip, tabs);
         f.render_widget(Paragraph::new(strip), tabs);
     }
 
@@ -159,8 +161,12 @@ pub(super) fn render_log_viewer(f: &mut Frame, area: Rect, app: &mut App) {
         .scroll
         .min(visible_count.saturating_sub(body_height.max(1)));
 
-    let (rendered, scroll_out) = viewer_rows(view, &visible, cursor, scroll, body_height, width);
+    let (rendered, scroll_out, ranks) =
+        viewer_rows(view, &visible, cursor, scroll, body_height, width);
     f.render_widget(Paragraph::new(rendered), body_area);
+    // Its keys belong to the query while one is typed: a `/` clicked
+    // there would be typed into it.
+    let typing = view.search_mode == SearchMode::Typing;
 
     if !view.missing && visible_count > body_height && body_height > 0 {
         let mut state = ScrollbarState::new(visible_count)
@@ -194,6 +200,11 @@ pub(super) fn render_log_viewer(f: &mut Frame, area: Rect, app: &mut App) {
         footer_area.width as usize,
     );
     f.render_widget(Paragraph::new(footer), footer_area);
+    app.hits.viewer_lines = Some((body_area, ranks));
+    app.hits.viewer_tabs = tab_cells;
+    if !typing {
+        app.hits.keys = super::hints::key_hints(f.buffer_mut(), footer_area);
+    }
 
     // What the paint decided, so the next key press moves by what is on
     // screen and `G`'s usize::MAX lands on a real line.
@@ -211,6 +222,29 @@ pub(super) fn render_log_viewer(f: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
+/// Where each tab of the strip is, and the number it is labelled with:
+/// every tab's label starts with its number, and the gaps between them
+/// have none. A tab the strip's cut left without its number is not one.
+fn numbered_tabs(strip: &Line, area: Rect) -> Vec<(Rect, usize)> {
+    let mut x = area.x;
+    let mut tabs = Vec::new();
+    for span in &strip.spans {
+        let cells = text_width(&span.content) as u16;
+        let digits: String = span
+            .content
+            .trim_start()
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(number) = digits.parse() {
+            let cells = cells.min(area.right().saturating_sub(x));
+            tabs.push((Rect::new(x, area.y, cells, 1), number));
+        }
+        x = x.saturating_add(cells);
+    }
+    tabs
+}
+
 /// Counters the footer shows about the whole buffer, not the viewport.
 struct ViewerCounts {
     visible: usize,
@@ -219,7 +253,9 @@ struct ViewerCounts {
     warnings: usize,
 }
 
-/// The rows to paint and the viewport top they imply.
+/// The rows to paint, the viewport top they imply, and the rank of the
+/// line each row shows, for a click to find: a wrapped line is several
+/// rows, and the cursor's is always whole. A placeholder row shows none.
 ///
 /// Two passes, because a wrapped line is several rows: walk forward from
 /// the scroll position while the cursor still fits, and fall back to
@@ -232,7 +268,7 @@ fn viewer_rows(
     scroll: usize,
     body_height: usize,
     width: usize,
-) -> (Vec<Line<'static>>, usize) {
+) -> (Vec<Line<'static>>, usize, Vec<usize>) {
     if view.missing {
         return (
             vec![Line::styled(
@@ -240,6 +276,7 @@ fn viewer_rows(
                 Style::new().fg(text_muted()),
             )],
             scroll,
+            Vec::new(),
         );
     }
     let lines = view.tail.lines();
@@ -280,6 +317,8 @@ fn viewer_rows(
     };
 
     let mut rows: Vec<Line<'static>> = Vec::new();
+    // Beside `rows`, through every step below: the rank each one shows.
+    let mut ranks: Vec<usize> = Vec::new();
     let mut scroll_out = scroll;
     let mut cursor_fits = false;
     if !view.follow {
@@ -290,6 +329,7 @@ fn viewer_rows(
             if rank == cursor && rows.len() + built.len() <= body_height {
                 cursor_fits = true;
             }
+            ranks.extend(std::iter::repeat_n(rank, built.len()));
             rows.extend(built);
             if rows.len() >= body_height {
                 break;
@@ -307,6 +347,7 @@ fn viewer_rows(
     if let Some(own) = tall_cursor {
         rows = own;
         rows.truncate(body_height);
+        ranks = vec![cursor; rows.len()];
         scroll_out = cursor;
     } else if view.follow || !cursor_fits || rows.len() < body_height {
         // Anchor the bottom of the window: on the tail while following, on
@@ -317,11 +358,15 @@ fn viewer_rows(
             last_rank
         };
         rows.clear();
+        ranks.clear();
         let mut top = anchor;
         for (rank, at) in visible.iter().copied().enumerate().take(anchor + 1).rev() {
             let mut built = build(rank, at);
+            let mut own = vec![rank; built.len()];
             built.append(&mut rows);
             rows = built;
+            own.append(&mut ranks);
+            ranks = own;
             top = rank;
             if rows.len() >= body_height {
                 break;
@@ -330,14 +375,17 @@ fn viewer_rows(
         scroll_out = top;
         let start = rows.len().saturating_sub(body_height);
         rows = rows.split_off(start);
+        ranks = ranks.split_off(start);
     } else {
         rows.truncate(body_height);
+        ranks.truncate(body_height);
     }
 
     // Nothing but blank lines is no output, and a lone gutter mark on an
     // empty row reads as a broken paint.
     if !view.collapsed() && lines.iter().all(|line| line.plain.trim().is_empty()) {
         rows.clear();
+        ranks.clear();
     }
     // An empty body looks the same whether there is no output, the filter
     // hid everything, or the paint is broken. Say which.
@@ -371,7 +419,7 @@ fn viewer_rows(
             Style::new().fg(text_muted()),
         ));
     }
-    (rows, scroll_out)
+    (rows, scroll_out, ranks)
 }
 
 /// Pretty-printed JSON needs room to nest before wrapping stops helping.

@@ -68,6 +68,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.log_view().is_some() {
         render_log_viewer(f, f.area(), app);
         if app.inspect.is_some() {
+            // The overlay answers every key, so the viewer's hints under
+            // it are not what a press would reach.
+            app.hits.keys.clear();
             render_inspect(f, f.area(), app);
         }
         paint_modal(f, app);
