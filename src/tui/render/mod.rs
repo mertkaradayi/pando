@@ -19,7 +19,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 
-use super::app::App;
+use super::app::{App, Hits};
 
 use chrome::{header_height, render_footer, render_header};
 use detail::render_detail;
@@ -59,6 +59,9 @@ pub fn body_layout(body: Rect) -> [Rect; 2] {
 }
 
 pub fn render(f: &mut Frame, app: &mut App) {
+    // Each part records where it put what the mouse acts on, so nothing
+    // this frame does not draw can be clicked.
+    app.hits = Hits::default();
     // The viewer takes the whole screen: the header and footer it would
     // share with the list are the two rows a long stack trace needs most.
     if app.log_view().is_some() {
@@ -72,7 +75,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // So does the setup screen, which has a header and a footer of its
     // own, and is up whatever git lists.
     if app.setup_screen.is_some() {
-        app.list_area = None;
         render_setup(f, f.area(), app);
         paint_modal(f, app);
         return;
@@ -92,7 +94,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
     // an empty box beside a pane about nothing. A main checkout pando has
     // never run is no row of its own yet: see `App::main_row_shown`.
     if !app.main_row_shown() {
-        app.list_area = None;
         render_welcome(f, body, app);
     } else {
         let [list_area, detail_area] = body_layout(body);

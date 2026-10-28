@@ -8988,16 +8988,88 @@ fn a_create_says_how_to_start_it_as_the_detail_pane_does() {
 
 // ---- the mouse -----------------------------------------------------------
 
-/// What the terminal sends for the mouse, here a step of the wheel or a
-/// click, at the top left: where it is does not matter yet.
-fn mouse(app: &mut App, kind: ratatui::crossterm::event::MouseEventKind) -> bool {
+/// What the terminal sends for the mouse at a cell.
+fn mouse_at(
+    app: &mut App,
+    kind: ratatui::crossterm::event::MouseEventKind,
+    column: u16,
+    row: u16,
+) -> bool {
     use ratatui::crossterm::event::{Event, MouseEvent};
     app.handle_event(AppEvent::Input(Event::Mouse(MouseEvent {
         kind,
-        column: 0,
-        row: 0,
+        column,
+        row,
         modifiers: KeyModifiers::NONE,
     })))
+}
+
+/// The mouse at the top left, where nothing is clickable: for what
+/// happens wherever the pointer is.
+fn mouse(app: &mut App, kind: ratatui::crossterm::event::MouseEventKind) -> bool {
+    mouse_at(app, kind, 0, 0)
+}
+
+fn click_at(app: &mut App, (column, row): (u16, u16)) -> bool {
+    use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+    mouse_at(app, MouseEventKind::Down(MouseButton::Left), column, row)
+}
+
+/// Draws a frame, as the event loop does before it reads an event, and
+/// gives back its rows as text.
+fn frame(app: &mut App, width: u16, height: u16) -> Vec<String> {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|f| crate::tui::render::render(f, app))
+        .unwrap();
+    let buf = terminal.backend().buffer();
+    (0..height)
+        .map(|y| {
+            (0..width)
+                .map(|x| buf.cell((x, y)).map_or(" ", |c| c.symbol()))
+                .collect()
+        })
+        .collect()
+}
+
+/// The cell `text` starts on, the first time the frame shows it.
+fn on_frame(rows: &[String], text: &str) -> (u16, u16) {
+    rows.iter()
+        .enumerate()
+        .find_map(|(y, row)| {
+            row.find(text)
+                .map(|at| (row[..at].chars().count() as u16, y as u16))
+        })
+        .unwrap_or_else(|| panic!("{text:?} is not on the frame:\n{}", rows.join("\n")))
+}
+
+/// The cell `text` starts on among the list's rows, where the frame says
+/// it drew them: a label is in the detail pane's title and in a status
+/// line too. Rows recorded a row off would put the click on the
+/// worktree beside the one shown, which the tests would see.
+fn on_list(app: &App, rows: &[String], text: &str) -> (u16, u16) {
+    let (area, _) = app.hits.list.as_ref().expect("the frame drew the list");
+    (area.y..area.y + area.height)
+        .find_map(|y| {
+            let cells: String = rows[usize::from(y)]
+                .chars()
+                .skip(usize::from(area.x))
+                .take(usize::from(area.width))
+                .collect();
+            cells
+                .find(text)
+                .map(|at| (area.x + cells[..at].chars().count() as u16, y))
+        })
+        .unwrap_or_else(|| panic!("{text:?} is not on the list:\n{}", rows.join("\n")))
+}
+
+fn selected_name(app: &App) -> String {
+    app.selected_worktree()
+        .expect("a row is selected")
+        .name
+        .clone()
 }
 
 // Taking the mouse stops the terminal turning the wheel into arrows, so
@@ -9015,15 +9087,17 @@ fn the_wheel_moves_the_list_a_row_a_step() {
     assert_eq!(app.list_state.selected(), Some(1));
 }
 
-// Nothing answers a click yet, nor a move: neither costs a frame.
+// A release, a drag and a move answer nothing, nor does a press where no
+// frame has put anything: none of them costs a frame.
 #[test]
-fn a_click_and_a_drag_do_nothing_yet() {
+fn a_release_a_drag_a_move_and_a_click_on_nothing_do_nothing() {
     use ratatui::crossterm::event::{MouseButton, MouseEventKind};
     let mut app = test_app(&["a", "b"]);
     for kind in [
         MouseEventKind::Down(MouseButton::Left),
         MouseEventKind::Up(MouseButton::Left),
         MouseEventKind::Drag(MouseButton::Left),
+        MouseEventKind::Down(MouseButton::Right),
         MouseEventKind::Moved,
     ] {
         assert!(!mouse(&mut app, kind), "{kind:?}");
@@ -9077,7 +9151,7 @@ fn the_wheel_moves_the_viewers_cursor_and_up_leaves_the_live_tail() {
 
 // An arrow moves a picker's highlight, and closes the remove dialog, as any
 // key that is not its answer does: the wheel goes only where an arrow
-// moves something.
+// moves something. A click on a modal is not an answer either.
 #[test]
 fn the_wheel_moves_a_questions_highlight_and_never_closes_a_dialog() {
     use ratatui::crossterm::event::MouseEventKind::ScrollDown;
@@ -9090,13 +9164,17 @@ fn the_wheel_moves_a_questions_highlight_and_never_closes_a_dialog() {
         app.modal
     );
 
-    let mut app = test_app(&["feat+one"]);
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let rows = frame(&mut app, 120, 24);
+    let row = on_list(&app, &rows, "feat/two");
     press(&mut app, KeyCode::Char('d'));
     assert!(!mouse(&mut app, ScrollDown));
+    assert!(!click_at(&mut app, row), "the row under the dialog");
     assert!(
         matches!(app.modal, Some(Modal::Remove { .. })),
-        "a wheel step is no answer to the remove dialog"
+        "neither is an answer to the remove dialog"
     );
+    assert_eq!(selected_name(&app), "feat+one");
 }
 
 // The setup screen's prompt is laid out to be selected with the mouse, so
@@ -9115,4 +9193,202 @@ fn the_mouse_is_the_terminals_on_the_setup_screen_and_when_the_config_says() {
     assert!(app.wants_mouse(), "taken when nothing says");
     app.config.ui.mouse = Some(false);
     assert!(!app.wants_mouse());
+}
+
+// Side by side, stacked in a narrow split, and so short the list's header
+// and rule give way: the row clicked is the worktree it shows.
+#[test]
+fn a_click_selects_the_worktree_it_lands_on_wide_narrow_or_short() {
+    for (width, height) in [(120, 24), (60, 30), (100, 6)] {
+        let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+        for name in ["feat+bravo", "feat+alpha"] {
+            let rows = frame(&mut app, width, height);
+            let row = on_list(&app, &rows, &name.replace('+', "/"));
+            assert!(click_at(&mut app, row), "{width}x{height}");
+            assert_eq!(selected_name(&app), name, "{width}x{height}");
+        }
+    }
+}
+
+// The filter's line pushes the rows down, and a long list scrolled to its
+// end starts its rows further on.
+#[test]
+fn a_click_lands_on_its_row_under_a_kept_filter_and_in_a_scrolled_list() {
+    let mut app = test_app(&["feat+alpha", "fix+bravo", "feat+charlie"]);
+    press(&mut app, KeyCode::Char('/'));
+    type_str(&mut app, "feat");
+    press(&mut app, KeyCode::Enter);
+    let rows = frame(&mut app, 120, 24);
+    let row = on_list(&app, &rows, "feat/charlie");
+    click_at(&mut app, row);
+    assert_eq!(selected_name(&app), "feat+charlie");
+
+    let names: Vec<String> = (0..20).map(|i| format!("feat+w{i:02}")).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut app = test_app(&names);
+    press(&mut app, KeyCode::Char('G'));
+    let last = selected_name(&app);
+    let rows = frame(&mut app, 120, 12);
+    assert!(
+        app.list_state.offset() > 0,
+        "scrolled:\n{}",
+        rows.join("\n")
+    );
+    // The row two above the last, whichever worktree the order put there.
+    let above = app.worktrees[app.filtered_indices[app.filtered_indices.len() - 3]]
+        .name
+        .clone();
+    let row = on_list(&app, &rows, &above.replace('+', "/"));
+    click_at(&mut app, row);
+    assert_eq!(selected_name(&app), above);
+    assert_ne!(above, last);
+}
+
+#[test]
+fn a_click_on_the_lists_header_or_below_its_rows_selects_nothing() {
+    let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+    let rows = frame(&mut app, 120, 24);
+    let before = selected_name(&app);
+    let (_, last_row) = [
+        on_list(&app, &rows, "feat/alpha"),
+        on_list(&app, &rows, "feat/bravo"),
+    ]
+    .into_iter()
+    .max_by_key(|(_, y)| *y)
+    .unwrap();
+    let header = on_frame(&rows, "branch");
+    assert!(!click_at(&mut app, header), "the header");
+    assert!(
+        !click_at(&mut app, (header.0, last_row + 1)),
+        "below the rows"
+    );
+    assert_eq!(selected_name(&app), before);
+}
+
+// Two presses on one worktree in quick succession are ⏎ on it: here, the
+// mode chooser a worktree's ⏎ opens.
+#[test]
+fn two_quick_clicks_on_a_worktree_are_enter_on_it() {
+    let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+    let rows = frame(&mut app, 120, 24);
+    let row = on_list(&app, &rows, "feat/bravo");
+    click_at(&mut app, row);
+    assert!(app.modal.is_none(), "one click only selects");
+    click_at(&mut app, row);
+    assert!(
+        matches!(&app.modal, Some(Modal::Mode { name, .. }) if name == "feat+bravo"),
+        "{:?}",
+        app.modal
+    );
+}
+
+// A second press too late, or on another worktree, or after a press on
+// nothing, is a click of its own.
+#[test]
+fn a_slow_second_click_or_one_on_another_worktree_is_only_a_click() {
+    let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+    let rows = frame(&mut app, 120, 24);
+    let alpha = on_list(&app, &rows, "feat/alpha");
+    let bravo = on_list(&app, &rows, "feat/bravo");
+
+    click_at(&mut app, bravo);
+    if let Some((when, _)) = app.last_click.as_mut() {
+        *when = when.checked_sub(super::mouse::DOUBLE_CLICK * 2).unwrap();
+    }
+    click_at(&mut app, bravo);
+    assert!(app.modal.is_none(), "too late");
+
+    click_at(&mut app, alpha);
+    click_at(&mut app, bravo);
+    assert!(app.modal.is_none(), "another worktree");
+
+    click_at(&mut app, (0, 0));
+    click_at(&mut app, bravo);
+    assert!(app.modal.is_none(), "a press on nothing between");
+    assert_eq!(selected_name(&app), "feat+bravo");
+}
+
+// `x` on a running worktree waits for a second `x`. A click on another row
+// takes that back, as any other key does, so the second `x` is a first
+// one on the new row; and it takes back the leader.
+#[test]
+fn a_click_takes_back_a_key_waiting_for_its_second_press() {
+    let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+    with_process(&mut app, "feat+alpha", running_phase());
+    let rows = frame(&mut app, 120, 24);
+    let at = on_list(&app, &rows, "feat/alpha");
+    click_at(&mut app, at);
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.armed.is_some(), "x on a running worktree asks again");
+    let rows = frame(&mut app, 120, 24);
+    let at = on_list(&app, &rows, "feat/bravo");
+    click_at(&mut app, at);
+    assert!(app.armed.is_none());
+
+    press(&mut app, KeyCode::Char(' '));
+    assert!(app.leader);
+    let rows = frame(&mut app, 120, 24);
+    let at = on_list(&app, &rows, "feat/alpha");
+    click_at(&mut app, at);
+    assert!(!app.leader);
+}
+
+// Over the log preview the wheel scrolls the preview, three lines a step,
+// and leaves the list where it is; over the list it moves the cursor, as
+// before, and the next row's preview starts at its end.
+#[test]
+fn the_wheel_scrolls_the_preview_under_it_and_moves_the_list_elsewhere() {
+    use ratatui::crossterm::event::MouseEventKind::{ScrollDown, ScrollUp};
+    let (_dir, mut app) = app_with_logs(&["feat+one", "feat+two"]);
+    let lines: Vec<String> = (0..40).map(|i| format!("line {i}")).collect();
+    write_log(&app, "feat+one", "dev", &lines);
+    tail_the_log(&mut app, "feat+one", "dev");
+    app.handle_event(AppEvent::Tick);
+    let rows = frame(&mut app, 120, 30);
+    let (x, y) = on_frame(&rows, "line 39");
+
+    mouse_at(&mut app, ScrollUp, x, y);
+    assert_eq!(app.tail_scroll, 3);
+    assert_eq!(selected_name(&app), "feat+one", "the list stays put");
+    mouse_at(&mut app, ScrollDown, x, y);
+    assert_eq!(app.tail_scroll, 0, "down is newer");
+
+    mouse_at(&mut app, ScrollUp, x, y);
+    let (x, y) = on_list(&app, &rows, "feat/one");
+    mouse_at(&mut app, ScrollDown, x, y);
+    assert_eq!(selected_name(&app), "feat+two");
+    assert_eq!(app.tail_scroll, 0);
+}
+
+// The preview's header names every process when there are two or more,
+// the one shown marked: a click on another shows its log, as `tab` would.
+#[test]
+fn a_click_on_a_process_the_preview_names_shows_its_log() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    with_process(&mut app, "feat+one", running_phase());
+    with_second_process(&mut app, "feat+one", "api", running_phase());
+    let rows = frame(&mut app, 120, 30);
+    let header = rows
+        .iter()
+        .position(|row| row.contains(" log  "))
+        .unwrap_or_else(|| panic!("no preview header:\n{}", rows.join("\n")));
+    let other = if rows[header].contains("▸api") {
+        "dev"
+    } else {
+        "api"
+    };
+    let column = rows[header][..rows[header].rfind(other).unwrap()]
+        .chars()
+        .count() as u16;
+
+    assert!(click_at(&mut app, (column, header as u16)));
+    let shown = app.tail_target().map(|(_, process, _)| process);
+    assert_eq!(shown.as_deref(), Some(other));
+    let rows = frame(&mut app, 120, 30);
+    assert!(
+        rows[header].contains(&format!("▸{other}")),
+        "{}",
+        rows[header]
+    );
+    assert_eq!(selected_name(&app), "feat+one");
 }

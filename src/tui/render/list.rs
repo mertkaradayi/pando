@@ -345,7 +345,6 @@ pub(super) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     } else {
         (None, inner)
     };
-    app.list_area = Some(list_area);
 
     if let Some(fa) = filter_area {
         let cursor = if app.mode == Mode::Filter { "▏" } else { "" };
@@ -518,6 +517,9 @@ pub(super) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     let labels: Vec<String> = rows.iter().map(|row| row.label.clone()).collect();
     let distinct = distinct_offsets(&labels);
 
+    // The header and its rule sit above the rows when the pane is tall
+    // enough for them, so the rows start wherever they ended.
+    let first_row = lines.len();
     for (i, (row, &differs_at)) in rows.iter().zip(&distinct).enumerate().skip(offset) {
         if lines.len() + 1 > height {
             break;
@@ -574,6 +576,20 @@ pub(super) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         }
         lines.push(line);
     }
+    // Each row by the worktree it shows, so a click lands on that one
+    // even if the list has changed since this frame.
+    let shown = lines.len() - first_row;
+    let names = app.filtered_indices[offset..offset + shown]
+        .iter()
+        .map(|&idx| app.worktrees[idx].name.clone())
+        .collect();
+    let rows_area = Rect::new(
+        list_area.x,
+        list_area.y + first_row as u16,
+        list_area.width,
+        shown as u16,
+    );
+    app.hits.list = Some((rows_area, names));
     f.render_widget(Paragraph::new(lines), list_area);
 }
 

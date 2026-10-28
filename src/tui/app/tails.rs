@@ -108,6 +108,27 @@ impl App {
         self.set_status(format!("log: {}", processes[self.tail_index].0));
     }
 
+    /// Moves the tail to `process` of the selected worktree, as `tab` would
+    /// get to it: a click on its name in the preview's header.
+    pub(super) fn show_tail_of(&mut self, process: &str) {
+        let Some(name) = self.selected_worktree().map(|w| w.name.clone()) else {
+            return;
+        };
+        let Some(index) = self
+            .processes_of(&name)
+            .iter()
+            .position(|(p, _)| p == process)
+        else {
+            return;
+        };
+        let shown = self.tail_target().map(|(_, shown, _)| shown);
+        if shown.as_deref() != Some(process) {
+            self.tail_index = index;
+            self.tail_scroll = 0;
+        }
+        self.set_status(format!("log: {process}"));
+    }
+
     pub(super) fn scroll_tail(&mut self, delta: isize) {
         let lines = self
             .tail_target()
