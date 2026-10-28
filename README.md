@@ -372,6 +372,12 @@ T        colour themes, previewed live
 m ?      what pando said in full, and every key
 ```
 
+The mouse works as well: click a worktree, a dialog's option or a line
+of the log viewer, and click it again for `⏎`; click a key hint such as
+`esc cancel` to press it; the wheel scrolls whatever is under it. While
+pando has the mouse, hold shift to select text (option in iTerm2), or
+set `[ui] mouse = false` to leave the mouse to the terminal.
+
 <details>
 <summary><b>More on the TUI</b>: the chooser, confirmations, the list, pull requests, the log viewer</summary>
 
@@ -639,6 +645,7 @@ theme = "catppuccin"
 # appearance = "dark"            # or "light"; "auto" follows the system
 # theme_from = "~/.config/theme-switcher/current"
 # sort = "run"                   # the list's order: "pr", "newest", "run" or "name"
+# mouse = false                  # leave the mouse to the terminal
 ```
 
 `theme_from` names a file whose first line is a theme's name, such as

@@ -14,8 +14,8 @@ use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 use super::app::{
     App, BY_HAND_KEY, BranchLoadState, CreateRow, GitStage, INSPECT_LEGEND, KeyHelp, LIST_KEYS,
-    LIST_LEGEND, LOG_KEYS, Modal, RemoveBlocker, SETUP_KEYS, SETUP_LEGEND, SPINNER_FRAMES,
-    StatusKind, compact_age, create_rows, pr_rows,
+    LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE, Modal, MouseHelp, RemoveBlocker,
+    SETUP_KEYS, SETUP_LEGEND, SPINNER_FRAMES, StatusKind, compact_age, create_rows, pr_rows,
 };
 use super::render::{centered_box, chunk_cells, text_width, truncate, truncate_middle, wrap_text};
 use crate::actions;
@@ -125,7 +125,12 @@ pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Pain
                 } else {
                     (LIST_KEYS, "in the list", LIST_LEGEND)
                 };
-            let bottom = render_help(f, area, app.help_scroll, keys, legend_title, legend);
+            let mouse: &[MouseHelp] = match (app.wants_mouse(), app.log_view().is_some()) {
+                (false, _) => &[],
+                (true, true) => LOG_MOUSE,
+                (true, false) => LIST_MOUSE,
+            };
+            let bottom = render_help(f, area, app.help_scroll, keys, mouse, legend_title, legend);
             return Painted {
                 content: None,
                 options: Vec::new(),
@@ -1387,6 +1392,7 @@ fn render_help(
     area: Rect,
     scroll: usize,
     keys: &[KeyHelp],
+    mouse: &[MouseHelp],
     legend_title: &str,
     legend: &[(&str, &str)],
 ) -> usize {
@@ -1395,6 +1401,7 @@ fn render_help(
     let key_width = keys
         .iter()
         .map(|k| text_width(k.keys))
+        .chain(mouse.iter().map(|m| text_width(m.gesture)))
         .chain(legend.iter().map(|(mark, _)| text_width(mark)))
         .max()
         .unwrap_or(0)
@@ -1410,11 +1417,20 @@ fn render_help(
         .iter()
         .map(|k| row(k.keys, k.action, key_style))
         .collect();
+    let title = Style::new().fg(text_muted()).add_modifier(Modifier::BOLD);
+    // Only while pando has the mouse: `mouse` is empty otherwise.
+    if !mouse.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled("with the mouse", title));
+        lines.extend(mouse.iter().map(|m| row(m.gesture, m.action, key_style)));
+        lines.extend(
+            MOUSE_NOTE
+                .iter()
+                .map(|note| Line::styled(*note, Style::new().fg(text_muted()))),
+        );
+    }
     lines.push(Line::raw(""));
-    lines.push(Line::styled(
-        legend_title.to_string(),
-        Style::new().fg(text_muted()).add_modifier(Modifier::BOLD),
-    ));
+    lines.push(Line::styled(legend_title.to_string(), title));
     for (mark, what) in legend {
         lines.push(row(mark, what, Style::new().fg(blue())));
     }

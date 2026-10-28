@@ -9890,3 +9890,109 @@ fn while_a_search_is_typed_the_viewer_takes_no_click() {
     assert!(viewer(&app).follow, "the cursor stayed on the live tail");
     assert_eq!(viewer(&app).search.query, "line", "and nothing was typed");
 }
+
+/// Every mouse event a terminal sends: each button pressed, a release, a
+/// drag, a move, and the wheel four ways.
+fn every_mouse_event() -> Vec<ratatui::crossterm::event::MouseEventKind> {
+    use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+    let buttons = [MouseButton::Left, MouseButton::Right, MouseButton::Middle];
+    buttons
+        .into_iter()
+        .flat_map(|b| {
+            [
+                MouseEventKind::Down(b),
+                MouseEventKind::Up(b),
+                MouseEventKind::Drag(b),
+            ]
+        })
+        .chain([
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollLeft,
+            MouseEventKind::ScrollRight,
+        ])
+        .collect()
+}
+
+/// Sends `kind` at `at` on a fresh app from `fresh`, and holds whether it
+/// did something to whether `table` lists it.
+fn mouse_matches_help(
+    table: &[MouseHelp],
+    what: &str,
+    fresh: impl Fn() -> (Option<tempfile::TempDir>, App, (u16, u16)),
+) {
+    let documented: Vec<_> = table.iter().flat_map(|g| g.kinds.iter().copied()).collect();
+    for kind in every_mouse_event() {
+        let (_dir, mut app, (x, y)) = fresh();
+        let answered = mouse_at(&mut app, kind, x, y);
+        assert_eq!(
+            answered,
+            documented.contains(&kind),
+            "{what}: {kind:?} {} something, and help {} it",
+            if answered { "does" } else { "does not do" },
+            if documented.contains(&kind) {
+                "lists"
+            } else {
+                "does not list"
+            }
+        );
+    }
+}
+
+// The mouse's part of help is held to the handler as the keys' is: on a
+// worktree's row, the events that did something are exactly the ones
+// help lists.
+#[test]
+fn help_lists_exactly_the_mouse_events_the_list_answers() {
+    mouse_matches_help(LIST_MOUSE, "the list", || {
+        let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+        let rows = frame(&mut app, 120, 24);
+        let at = on_list(&app, &rows, "feat/bravo");
+        (None, app, at)
+    });
+}
+
+#[test]
+fn help_lists_exactly_the_mouse_events_the_viewer_answers() {
+    mouse_matches_help(LOG_MOUSE, "the viewer", || {
+        let (dir, mut app) = app_with_logs(&["feat+one"]);
+        let lines: Vec<String> = (0..20).map(|i| format!("line {i}")).collect();
+        write_log(&app, "feat+one", "dev", &lines);
+        open_viewer(&mut app, 80, 30);
+        let rows = frame(&mut app, 80, 30);
+        let at = on_frame(&rows, "line 12");
+        (Some(dir), app, at)
+    });
+}
+
+// Help says what the mouse does, and how to select text and give the
+// mouse back, while pando has it; with `[ui] mouse = false` it has not,
+// and help says nothing of it.
+#[test]
+fn help_has_the_mouse_only_while_pando_has_it() {
+    for (mouse, viewer) in [(true, false), (true, true), (false, false)] {
+        let (_dir, mut app) = app_with_logs(&["feat+one"]);
+        write_log(&app, "feat+one", "dev", &["up"]);
+        if !mouse {
+            app.config.ui.mouse = Some(false);
+        }
+        if viewer {
+            open_viewer(&mut app, 140, 90);
+        }
+        press(&mut app, KeyCode::Char('?'));
+        let text = frame(&mut app, 140, 90).join("\n");
+        let table = if viewer { LOG_MOUSE } else { LIST_MOUSE };
+        let shown = std::iter::once("with the mouse")
+            .chain(table.iter().map(|g| g.gesture))
+            .chain(MOUSE_NOTE);
+        for line in shown {
+            assert_eq!(
+                text.contains(line),
+                mouse,
+                "{line:?} with the mouse {}, viewer {viewer}:\n{text}",
+                if mouse { "on" } else { "off" }
+            );
+        }
+    }
+}
