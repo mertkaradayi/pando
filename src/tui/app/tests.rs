@@ -9392,3 +9392,114 @@ fn a_click_on_a_process_the_preview_names_shows_its_log() {
     );
     assert_eq!(selected_name(&app), "feat+one");
 }
+
+/// Where `text` starts on the frame's last row, the footer's.
+fn in_footer(rows: &[String], text: &str) -> (u16, u16) {
+    let y = rows.len() - 1;
+    let at = rows[y]
+        .find(text)
+        .unwrap_or_else(|| panic!("{text:?} is not in the footer: {}", rows[y]));
+    (rows[y][..at].chars().count() as u16, y as u16)
+}
+
+#[test]
+fn a_hints_key_is_the_keys_it_names() {
+    use super::mouse::keys_of;
+    assert_eq!(keys_of("esc"), Some(vec![KeyCode::Esc]));
+    assert_eq!(keys_of("⏎"), Some(vec![KeyCode::Enter]));
+    assert_eq!(keys_of("tab"), Some(vec![KeyCode::Tab]));
+    assert_eq!(keys_of("y"), Some(vec![KeyCode::Char('y')]));
+    assert_eq!(
+        keys_of("space g"),
+        Some(vec![KeyCode::Char(' '), KeyCode::Char('g')]),
+        "the leader, then its key"
+    );
+    assert_eq!(keys_of("↑↓"), None, "a choice of keys is no one key");
+    assert_eq!(keys_of("j/k"), None);
+}
+
+// `esc cancel` in the mode chooser was the first thing clicked in a real
+// run, and nothing happened. A hint is its key, and the words after the
+// key take the click as well as the key does.
+#[test]
+fn a_click_on_a_dialogs_hint_presses_its_key() {
+    for (target, offset) in [("the key", 0), ("its words", 4)] {
+        let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.modal, Some(Modal::Mode { .. })));
+        let rows = frame(&mut app, 120, 24);
+        let (x, y) = on_frame(&rows, "esc cancel");
+        assert!(click_at(&mut app, (x + offset, y)), "{target}");
+        assert!(app.modal.is_none(), "a click on {target} cancels");
+    }
+}
+
+#[test]
+fn a_click_on_a_footer_hint_presses_its_key() {
+    let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+    let rows = frame(&mut app, 160, 24);
+    click_at(&mut app, in_footer(&rows, "? help"));
+    assert!(matches!(app.modal, Some(Modal::Help)), "{:?}", app.modal);
+}
+
+// The footer still shows under a dialog, and its keys are not what the
+// dialog answers: `q` there would be the dialog's `q`.
+#[test]
+fn under_a_dialog_the_footers_hints_take_no_click() {
+    let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+    press(&mut app, KeyCode::Enter);
+    let rows = frame(&mut app, 160, 24);
+    assert!(!click_at(&mut app, in_footer(&rows, "? help")));
+    assert!(matches!(app.modal, Some(Modal::Mode { .. })));
+    assert!(!app.should_quit);
+}
+
+// Help lists every key in the key style, to read: none of them is a
+// button, or a click meant to scroll would close it.
+#[test]
+fn the_keys_help_lists_are_no_buttons() {
+    let mut app = test_app(&["feat+alpha"]);
+    press(&mut app, KeyCode::Char('?'));
+    frame(&mut app, 120, 40);
+    assert!(app.hits.keys.is_empty(), "{:?}", app.hits.keys);
+}
+
+/// Paints `app` and holds every hint read off the frame to a key a click
+/// can press, or to a choice of keys, which it cannot.
+fn every_hint_presses_a_key(app: &mut App, what: &str) {
+    frame(app, 160, 40);
+    assert!(
+        !app.hits.keys.is_empty(),
+        "{what}: no hint read off the frame"
+    );
+    for (_, key) in &app.hits.keys {
+        assert!(
+            super::mouse::keys_of(key).is_some() || ["↑↓", "j/k"].contains(&key.as_str()),
+            "{what}: {key:?} is drawn as a key, and no click can press it"
+        );
+    }
+}
+
+// A hint drawn in the key style is a button by that alone, so a new one
+// whose key no click can press is caught here rather than by a person
+// clicking it and getting nothing.
+#[test]
+fn every_hint_the_footer_and_the_dialogs_draw_is_a_key_a_click_presses() {
+    let mut app = test_app(&["feat+alpha", "feat+bravo"]);
+    every_hint_presses_a_key(&mut app, "the footer");
+    for (key, what) in [
+        (KeyCode::Enter, "the mode chooser"),
+        (KeyCode::Char('d'), "the remove dialog"),
+        (KeyCode::Char('n'), "the new worktree picker"),
+        (KeyCode::Char('p'), "the pull request picker"),
+        (KeyCode::Char('T'), "the theme picker"),
+    ] {
+        press(&mut app, key);
+        assert!(app.modal.is_some(), "{what} did not open");
+        every_hint_presses_a_key(&mut app, what);
+        press(&mut app, KeyCode::Esc);
+        assert!(app.modal.is_none(), "{what} did not close");
+    }
+    let _rx = open_question(&mut app, a_question());
+    every_hint_presses_a_key(&mut app, "a question");
+}

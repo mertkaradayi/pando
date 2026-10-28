@@ -47,10 +47,19 @@ fn max_content_width(area: Rect) -> usize {
     ((area.width as usize * 9) / 10).saturating_sub(6).max(20)
 }
 
-/// Paints `modal`. Returns, for help and messages, the furthest they can
-/// scroll on this screen, which the scroll keys clamp to.
-pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Option<usize> {
-    match modal {
+/// What painting a modal leaves for the keys and the mouse.
+pub struct Painted {
+    /// Where its content went, whose keys a click presses. `None` for help
+    /// and messages, whose keys are a list to read rather than buttons.
+    pub content: Option<Rect>,
+    /// For help and messages, the furthest they can scroll on this
+    /// screen, which the scroll keys clamp to.
+    pub scroll_bottom: Option<usize>,
+}
+
+/// Paints `modal`.
+pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Painted {
+    let content = match modal {
         Modal::Create {
             input,
             branches,
@@ -97,20 +106,25 @@ pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Opti
                 } else {
                     (LIST_KEYS, "in the list", LIST_LEGEND)
                 };
-            return Some(render_help(
-                f,
-                area,
-                app.help_scroll,
-                keys,
-                legend_title,
-                legend,
-            ));
+            let bottom = render_help(f, area, app.help_scroll, keys, legend_title, legend);
+            return Painted {
+                content: None,
+                scroll_bottom: Some(bottom),
+            };
         }
-        Modal::Messages => return Some(render_messages(f, area, app)),
+        Modal::Messages => {
+            return Painted {
+                content: None,
+                scroll_bottom: Some(render_messages(f, area, app)),
+            };
+        }
         Modal::Git { name, stage } => render_git(f, area, app, name, stage),
         Modal::Theme { selected, .. } => render_theme_picker(f, area, app, *selected),
+    };
+    Painted {
+        content,
+        scroll_bottom: None,
     }
-    None
 }
 
 /// Draws a popup whose content is `width` × `height`, with a margin inside
@@ -210,7 +224,7 @@ fn render_question(
     selected: usize,
     custom: Option<&str>,
     checked: &[usize],
-) {
+) -> Option<Rect> {
     // "type the variable names" for ports, "a shell line" for the prelude:
     // what a typed answer is, as the CLI's prompt says it.
     let type_it = format!("type the {}", question.slot.custom_noun());
@@ -365,9 +379,7 @@ fn render_question(
         true => "free a slot",
         false => "pando needs an answer",
     };
-    let Some(inner) = popup(f, area, title, None, width, height) else {
-        return;
-    };
+    let inner = popup(f, area, title, None, width, height)?;
     let [body_area, footer_area] =
         Layout::vertical([Constraint::Fill(1), Constraint::Length(2)]).areas(inner);
     let visible = body_area.height as usize;
@@ -396,6 +408,7 @@ fn render_question(
     }
     footer_lines.push(footer_line);
     f.render_widget(Paragraph::new(footer_lines), footer_area);
+    Some(inner)
 }
 
 fn render_create(
@@ -406,13 +419,11 @@ fn render_create(
     selected: usize,
     base: Option<&str>,
     app: &App,
-) {
+) -> Option<Rect> {
     let width = 60.min(max_content_width(area));
     // The prompt, the base, a gap, the list, a gap, the keys.
     let height = 3 + CREATE_LIST_ROWS + 2;
-    let Some(inner) = popup(f, area, "new worktree", None, width, height) else {
-        return;
-    };
+    let inner = popup(f, area, "new worktree", None, width, height)?;
     let [prompt, hint, _, list_area, _, keys] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -512,7 +523,7 @@ fn render_create(
             )),
             list_area,
         );
-        return;
+        return Some(inner);
     }
     let rows = create_rows(input, branches.as_slice());
     if rows.is_empty() {
@@ -523,7 +534,7 @@ fn render_create(
             )),
             list_area,
         );
-        return;
+        return Some(inner);
     }
 
     let visible = list_area.height as usize;
@@ -589,6 +600,7 @@ fn render_create(
         })
         .collect();
     f.render_widget(Paragraph::new(lines), list_area);
+    Some(inner)
 }
 
 /// An existing branch's tag in the create picker: where it is, and for a
@@ -616,13 +628,17 @@ fn partial_tag(
 /// The open pull requests, one a row: number, title, and what enter does
 /// with it. The selected one's branch sits under the list, since that is
 /// what the worktree will check out.
-fn render_pull_requests(f: &mut Frame, area: Rect, input: &str, selected: usize, app: &App) {
+fn render_pull_requests(
+    f: &mut Frame,
+    area: Rect,
+    input: &str,
+    selected: usize,
+    app: &App,
+) -> Option<Rect> {
     let width = 76.min(max_content_width(area));
     // The filter, a gap, the list, a gap, the branch, the keys.
     let height = 2 + CREATE_LIST_ROWS + 3;
-    let Some(inner) = popup(f, area, "open pull requests", None, width, height) else {
-        return;
-    };
+    let inner = popup(f, area, "open pull requests", None, width, height)?;
     let [prompt, _, list_area, _, branch_row, keys] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -674,7 +690,7 @@ fn render_pull_requests(f: &mut Frame, area: Rect, input: &str, selected: usize,
             .map(|line| Line::styled(line, Style::new().fg(color)))
             .collect();
         f.render_widget(Paragraph::new(lines), list_area);
-        return;
+        return Some(inner);
     }
 
     let selected = selected.min(rows.len() - 1);
@@ -754,6 +770,7 @@ fn render_pull_requests(f: &mut Frame, area: Rect, input: &str, selected: usize,
         Paragraph::new(super::render::truncate_line(branch_line, width)),
         branch_row,
     );
+    Some(inner)
 }
 
 /// Confirming that a public URL goes away.
@@ -761,7 +778,7 @@ fn render_pull_requests(f: &mut Frame, area: Rect, input: &str, selected: usize,
 /// The URL is shown in full, wrapped if it has to be, because the thing
 /// being taken away is exactly the thing somebody may have open in another
 /// window.
-fn render_unshare(f: &mut Frame, area: Rect, label: &str, url: &str) {
+fn render_unshare(f: &mut Frame, area: Rect, label: &str, url: &str) -> Option<Rect> {
     let width = (text_width(url).max(40)).min(max_content_width(area));
     let mut lines = vec![Line::styled(
         truncate(&format!("stop sharing {label}?"), width),
@@ -782,15 +799,14 @@ fn render_unshare(f: &mut Frame, area: Rect, label: &str, url: &str) {
         hint_span(" keep it"),
     ]));
     let width = widest(&lines).min(width);
-    let Some(inner) = popup(f, area, "stop sharing", None, width, lines.len()) else {
-        return;
-    };
+    let inner = popup(f, area, "stop sharing", None, width, lines.len())?;
     f.render_widget(Paragraph::new(lines), inner);
+    Some(inner)
 }
 
 /// Confirming `t`: the local address that is about to be reachable from
 /// anywhere, before it is.
-fn render_share(f: &mut Frame, area: Rect, label: &str, url: Option<&str>) {
+fn render_share(f: &mut Frame, area: Rect, label: &str, url: Option<&str>) -> Option<Rect> {
     let width = (url.map(text_width).unwrap_or(0).max(40)).min(max_content_width(area));
     let mut lines = vec![Line::styled(
         truncate(&format!("share {label} publicly?"), width),
@@ -813,10 +829,9 @@ fn render_share(f: &mut Frame, area: Rect, label: &str, url: Option<&str>) {
         hint_span(" cancel"),
     ]));
     let width = widest(&lines).min(width);
-    let Some(inner) = popup(f, area, "share", None, width, lines.len()) else {
-        return;
-    };
+    let inner = popup(f, area, "share", None, width, lines.len())?;
     f.render_widget(Paragraph::new(lines), inner);
+    Some(inner)
 }
 
 /// Confirming a mode key on a worktree running in another mode: which
@@ -828,7 +843,7 @@ fn render_switch_mode(
     processes: &[String],
     from: ServiceMode,
     to: ServiceMode,
-) {
+) -> Option<Rect> {
     let cap = max_content_width(area);
     let how = to.word();
     let now = match from {
@@ -872,16 +887,21 @@ fn render_switch_mode(
     ];
     let width = widest(&lines).min(cap);
     let title = format!("restart {how}");
-    let Some(inner) = popup(f, area, &title, None, width, lines.len()) else {
-        return;
-    };
+    let inner = popup(f, area, &title, None, width, lines.len())?;
     f.render_widget(Paragraph::new(lines), inner);
+    Some(inner)
 }
 
 /// ⏎: shared, namespaced, isolated — one row each, in the colour each
 /// mode is painted in wherever it is shown, with what it means and, beside
 /// the mode it runs in or last ran in, `running` or `last used`.
-fn render_mode_chooser(f: &mut Frame, area: Rect, app: &App, name: &str, selected: usize) {
+fn render_mode_chooser(
+    f: &mut Frame,
+    area: Rect,
+    app: &App,
+    name: &str,
+    selected: usize,
+) -> Option<Rect> {
     let cap = max_content_width(area);
     let record = app.record_for(name);
     let running = app.is_up(name);
@@ -970,16 +990,15 @@ fn render_mode_chooser(f: &mut Frame, area: Rect, app: &App, name: &str, selecte
         hint_span(" cancel"),
     ]));
     let width = widest(&lines).min(cap);
-    let Some(inner) = popup(f, area, "mode", None, width, lines.len()) else {
-        return;
-    };
+    let inner = popup(f, area, "mode", None, width, lines.len())?;
     f.render_widget(Paragraph::new(lines), inner);
+    Some(inner)
 }
 
 /// `T`: every theme with a swatch of its accents in their own colours,
 /// so they can be compared without trying each, and the screen behind in
 /// the one under the cursor.
-fn render_theme_picker(f: &mut Frame, area: Rect, app: &App, selected: usize) {
+fn render_theme_picker(f: &mut Frame, area: Rect, app: &App, selected: usize) -> Option<Rect> {
     let themes = &app.theme.themes;
     let appearance = app.theme.appearance;
     let cap = max_content_width(area);
@@ -1069,10 +1088,9 @@ fn render_theme_picker(f: &mut Frame, area: Rect, app: &App, selected: usize) {
         hint_span(" put back"),
     ]));
     let width = widest(&lines).min(cap);
-    let Some(inner) = popup(f, area, "theme", None, width, lines.len()) else {
-        return;
-    };
+    let inner = popup(f, area, "theme", None, width, lines.len())?;
     f.render_widget(Paragraph::new(lines), inner);
+    Some(inner)
 }
 
 /// A dialog's keys, each with what it does, as many to a row as `width`
@@ -1130,7 +1148,7 @@ fn paint_over_keys(
 }
 
 /// Confirming `X`: what is up, one row apiece, before any of it goes down.
-fn render_stop_all(f: &mut Frame, area: Rect, names: &[String], app: &App) {
+fn render_stop_all(f: &mut Frame, area: Rect, names: &[String], app: &App) -> Option<Rect> {
     let cap = max_content_width(area);
     // Past this many names the rest are counted, and sooner in a short
     // tmux split: the names get only the rows the rest leave them.
@@ -1184,17 +1202,21 @@ fn render_stop_all(f: &mut Frame, area: Rect, names: &[String], app: &App) {
     lines.extend(warning);
     let width = widest(&lines).max(widest(&keys)).min(cap);
     let height = lines.len() + 1 + keys.len();
-    let Some(inner) = popup(f, area, "stop everything", None, width, height) else {
-        return;
-    };
+    let inner = popup(f, area, "stop everything", None, width, height)?;
     paint_over_keys(f, inner, lines, keys);
+    Some(inner)
 }
 
 /// What removing takes with it and what would stop it, all of it before
 /// the key is pressed: running, uncommitted changes, not pando's, locked.
 /// A pane too short for all of it keeps what refuses the removal, what it
 /// destroys and the keys.
-fn render_remove(f: &mut Frame, area: Rect, label: &str, blockers: &[RemoveBlocker]) {
+fn render_remove(
+    f: &mut Frame,
+    area: Rect,
+    label: &str,
+    blockers: &[RemoveBlocker],
+) -> Option<Rect> {
     let cap = max_content_width(area);
     // Each block with how soon it goes in a pane too short for all of
     // them, the highest first: the caption, then whether it runs, then
@@ -1291,10 +1313,9 @@ fn render_remove(f: &mut Frame, area: Rect, label: &str, blockers: &[RemoveBlock
     }
     let width = widest(&lines).max(widest(&keys)).min(cap);
     let height = lines.len() + 1 + keys.len();
-    let Some(inner) = popup(f, area, "remove worktree", None, width, height) else {
-        return;
-    };
+    let inner = popup(f, area, "remove worktree", None, width, height)?;
     paint_over_keys(f, inner, lines, keys);
+    Some(inner)
 }
 
 /// Every key of the view it was opened from, then what the marks mean.
@@ -1498,7 +1519,7 @@ fn git_header(read: &GitRead) -> Vec<Line<'static>> {
 
 /// `space g`: the git menu, at whichever stage it is — the same box throughout,
 /// its title saying what it is about.
-fn render_git(f: &mut Frame, area: Rect, app: &App, name: &str, stage: &GitStage) {
+fn render_git(f: &mut Frame, area: Rect, app: &App, name: &str, stage: &GitStage) -> Option<Rect> {
     let cap = max_content_width(area);
     let label = app.label_of(name);
     let dim = Style::new().fg(text_dim());
@@ -1701,8 +1722,7 @@ fn render_git(f: &mut Frame, area: Rect, app: &App, name: &str, stage: &GitStage
         }
     };
     let width = widest(&lines).min(cap);
-    let Some(inner) = popup(f, area, &title, None, width, lines.len()) else {
-        return;
-    };
+    let inner = popup(f, area, &title, None, width, lines.len())?;
     f.render_widget(Paragraph::new(lines), inner);
+    Some(inner)
 }

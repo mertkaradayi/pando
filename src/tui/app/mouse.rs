@@ -1,6 +1,7 @@
-//! The mouse: a click on a worktree selects it and a second one acts on
-//! it, a click on a process the log preview names shows its log, and the
-//! wheel scrolls the preview under the pointer or moves the list.
+//! The mouse: a click on a key hint presses its key, a click on a
+//! worktree selects it and a second one acts on it, a click on a process
+//! the log preview names shows its log, and the wheel scrolls the preview
+//! under the pointer or moves the list.
 //!
 //! The paint records where those are, in [`Hits`]. Where the mouse has
 //! nothing of its own yet — a modal, the log viewer — a step of the wheel
@@ -39,6 +40,32 @@ pub struct Hits {
     pub preview: Option<Rect>,
     /// Each process the preview's header names, and where.
     pub preview_processes: Vec<(Rect, String)>,
+    /// Each key hint on top — an open modal's, or the footer's when none
+    /// is — with its key as the hint writes it.
+    pub keys: Vec<(Rect, String)>,
+}
+
+/// The keys a hint's key stands for, pressed in turn: `esc`, `⏎`, `tab`,
+/// one character, or the leader and the key after it (`space g`). `None`
+/// for a hint that names a choice of keys rather than one, such as `↑↓`
+/// or `j/k`.
+pub(super) fn keys_of(hint: &str) -> Option<Vec<KeyCode>> {
+    let one = |key: &str| match key {
+        "esc" => Some(KeyCode::Esc),
+        "⏎" => Some(KeyCode::Enter),
+        "tab" => Some(KeyCode::Tab),
+        "space" => Some(KeyCode::Char(' ')),
+        _ => {
+            let mut chars = key.chars();
+            let c = chars.next()?;
+            chars.next().is_none().then_some(KeyCode::Char(c))
+        }
+    };
+    match hint.split_once(' ') {
+        Some(("space", then)) => Some(vec![KeyCode::Char(' '), one(then)?]),
+        Some(_) => None,
+        None => Some(vec![one(hint)?]),
+    }
 }
 
 impl App {
@@ -96,6 +123,21 @@ impl App {
     /// begun on one.
     fn click(&mut self, at: Position) -> bool {
         let last = self.last_click.take();
+        // A hint says what its key does where it is drawn, so a click on
+        // it is that key, pressed: `esc cancel` cancels. Nothing is taken
+        // back first — `x` twice and `space g` are a key's own business.
+        let keys = self
+            .hits
+            .keys
+            .iter()
+            .find(|(cells, _)| cells.contains(at))
+            .and_then(|(_, key)| keys_of(key));
+        if let Some(keys) = keys {
+            for code in keys {
+                self.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+            }
+            return true;
+        }
         if !self.list_has_the_mouse() {
             return false;
         }

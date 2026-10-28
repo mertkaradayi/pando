@@ -10,6 +10,7 @@
 
 mod chrome;
 mod detail;
+mod hints;
 mod list;
 mod log_viewer;
 mod setup;
@@ -101,19 +102,26 @@ pub fn render(f: &mut Frame, app: &mut App) {
         render_detail(f, detail_area, app);
     }
     render_footer(f, footer, app);
+    app.hits.keys = hints::key_hints(f.buffer_mut(), footer);
 
     paint_modal(f, app);
 }
 
 /// The open modal, on top of whatever is under it, keeping how far help
-/// or messages can scroll for the keys that scroll them.
+/// or messages can scroll for the keys that scroll them. Only its own
+/// hints take a click: what is under it is not what the keys answer.
 fn paint_modal(f: &mut Frame, app: &mut App) {
     let Some(modal) = &app.modal else {
         return;
     };
-    if let Some(bottom) = super::modal::render_modal(f, f.area(), modal, app) {
+    let painted = super::modal::render_modal(f, f.area(), modal, app);
+    if let Some(bottom) = painted.scroll_bottom {
         app.help_scroll_max = bottom;
     }
+    app.hits.keys = painted
+        .content
+        .map(|content| hints::key_hints(f.buffer_mut(), content))
+        .unwrap_or_default();
 }
 
 /// A centred popup of exactly `width` × `height`, clamped to the area.
