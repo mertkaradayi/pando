@@ -148,7 +148,12 @@ fn run(cli: Cli) -> Result<()> {
     // in the working tree is worth refusing even on a read-only command.
     actions::guard_write_locations(&paths, &loaded.config)?;
     match cli.command {
-        Some(command) => dispatch(command, &paths, &loaded.config),
+        Some(command) => {
+            // A command that waits for another pando's lock says so, once,
+            // rather than looking hung. The TUI's stderr is its screen.
+            pando::state::announce_lock_waits(|line| to_stderr(&format!("pando: {line}\n")));
+            dispatch(command, &paths, &loaded.config)
+        }
         // The TUI draws on stdout. Into a pipe it drew for nobody, and
         // waited for keys nobody would press.
         None if !std::io::stdout().is_terminal() => Err(pando::cli::UsageError(

@@ -51,6 +51,13 @@ may change behaviour.
 
 - A panic in the TUI no longer leaves the terminal reporting focus
   changes, which the shell then printed as `^[[I` and `^[[O`.
+- `ls`, `status`, `open`, `start --wait` and the TUI no longer wait for
+  another pando's lock: while a `rm` or a `stop` held it — a `docker
+  compose down` can take minutes — they printed nothing, and `pando`
+  opened onto nothing, until it let go. They now answer from the state
+  as it stands. A command that does have to wait says `waiting for
+  another pando to finish` after a second, rather than looking hung,
+  and the socket scan behind every read no longer holds the lock.
 
 ## 0.11.1 — 2026-10-26
 
