@@ -28,6 +28,20 @@ const WHEEL_LINES: usize = 3;
 /// be a double click: what desktops take when nobody has set it.
 pub(super) const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
+/// What a press on a picker's option does, once the highlight is on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Press {
+    /// A second press soon after is ⏎ on it.
+    Choose,
+    /// It ticks the option, as space does: a set question, which ⏎ takes
+    /// whole.
+    Tick,
+    /// Nothing more. The question that frees a slot empties a worktree's,
+    /// every key in it, and a double click is how people select: only ⏎,
+    /// beside its red warning, answers it, from the keyboard or its hint.
+    Highlight,
+}
+
 /// What a press landed on, so a second press can tell whether it is on
 /// the same thing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,11 +276,10 @@ impl App {
 
     /// A press on a picker's option. The highlight goes there by the
     /// picker's own arrows, so what moving does — the theme picker trying
-    /// each theme on — happens as it does from the keyboard. A second
-    /// press is ⏎; in a set question a press ticks the option instead, as
-    /// space does, and ⏎ is its hint's.
+    /// each theme on — happens as it does from the keyboard. What the
+    /// press does then is the picker's [`Press`].
     fn choose(&mut self, index: usize, last: Option<(Instant, Clicked)>) {
-        let Some((from, set)) = self.highlight() else {
+        let Some((from, press)) = self.highlight() else {
             return;
         };
         let code = if index < from {
@@ -282,17 +295,21 @@ impl App {
         if self.highlight().map(|(at, _)| at) != Some(index) {
             return;
         }
-        if set {
-            self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
-        } else if self.second_press(last, Clicked::Choice(index)) {
-            self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        match press {
+            Press::Tick => {
+                self.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+            }
+            Press::Choose if self.second_press(last, Clicked::Choice(index)) => {
+                self.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            }
+            Press::Choose | Press::Highlight => {}
         }
     }
 
-    /// Where the open picker's highlight is, and whether it is a set
-    /// question's, where a press ticks rather than chooses. `None` with no
-    /// picker open, or while a question's answer is typed.
-    fn highlight(&self) -> Option<(usize, bool)> {
+    /// Where the open picker's highlight is, and what a press on an
+    /// option does once it is there. `None` with no picker open, or while
+    /// a question's answer is typed.
+    fn highlight(&self) -> Option<(usize, Press)> {
         match self.modal.as_ref()? {
             Modal::Create { selected, .. }
             | Modal::PullRequests { selected, .. }
@@ -301,13 +318,22 @@ impl App {
             | Modal::Git {
                 stage: GitStage::Menu { selected, .. },
                 ..
-            } => Some((*selected, false)),
+            } => Some((*selected, Press::Choose)),
             Modal::Question {
                 question,
                 selected,
                 custom: None,
                 ..
-            } => Some((*selected, question.multi)),
+            } => {
+                let press = if question.slot.takes_a_person() {
+                    Press::Highlight
+                } else if question.multi {
+                    Press::Tick
+                } else {
+                    Press::Choose
+                };
+                Some((*selected, press))
+            }
             _ => None,
         }
     }

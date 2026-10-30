@@ -9605,6 +9605,49 @@ fn a_click_on_an_answer_highlights_it_and_a_second_gives_it() {
     assert!(matches!(rx.try_recv(), Ok(Ok(actions::Answer::Choice(1)))));
 }
 
+// The question that frees a slot empties the chosen worktree's, every key
+// in it deleted, and from the keyboard that takes ⏎ beside a warning in
+// red. A double click is how people select, so there it only moves the
+// highlight; a click on the red hint is ⏎, and answers.
+#[test]
+fn a_double_click_never_answers_the_question_that_frees_a_slot() {
+    let mut app = test_app(&["feat+one"]);
+    let rx = open_question(
+        &mut app,
+        actions::Question {
+            slot: crate::detect::Slot::FreeSlot,
+            prompt: "Which stopped worktree gives up its slot?".into(),
+            options: vec![
+                ("feat+old".into(), "slot 1".into()),
+                ("feat+older".into(), "slot 2".into()),
+            ],
+            preselect: Some(0),
+            allow_custom: false,
+            allow_none: true,
+            multi: false,
+            checked: Vec::new(),
+            details: Vec::new(),
+            answer_file: None,
+            snippet: String::new(),
+        },
+    );
+    frame(&mut app, 120, 30);
+    let at = option_cell(&app, 1);
+    click_at(&mut app, at);
+    click_at(&mut app, at);
+    assert!(
+        matches!(app.modal, Some(Modal::Question { selected: 1, .. })),
+        "the highlight moved: {:?}",
+        app.modal
+    );
+    assert!(rx.try_recv().is_err(), "and nothing was freed");
+
+    let rows = frame(&mut app, 120, 30);
+    let warning = on_frame(&rows, "⏎ empty its slot");
+    click_at(&mut app, warning);
+    assert!(matches!(rx.try_recv(), Ok(Ok(actions::Answer::Choice(1)))));
+}
+
 // A set question takes what is ticked: a press ticks, a second unticks,
 // and neither answers it.
 #[test]
