@@ -7055,6 +7055,63 @@ fn the_gated_refresh_reads_a_quiet_state_as_is_and_advances_a_death() {
     ));
 }
 
+// The first frame is drawn from one read made before the terminal opens.
+// It took the state lock, so while a `rm` or a stop held it — a `docker
+// compose down` can take minutes — `pando` opened onto nothing at all.
+#[test]
+fn the_first_frames_read_never_waits_for_the_state_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("acme-shop");
+    crate::testutil::init_repo(&root);
+    let paths = PandoPaths::new(
+        dir.path().join("pando-home"),
+        crate::project::ProjectRef::from_root(&root).unwrap(),
+    );
+    paths.ensure_home().unwrap();
+    // A process whose pid is gone, so the read has to advance rather than
+    // take the file as it stands.
+    let mut store = State::new();
+    let mut record = WorktreeRecord::new("/trees/feat+a", true);
+    let gone = ProcessRecord {
+        pid: i32::MAX as u32 - 1,
+        pgid: Group::from_raw(i32::MAX - 11),
+        started_at: Utc::now(),
+        log_path: dir.path().join("dev.log"),
+        ready_port: None,
+        ready_timeout_s: None,
+        observed_ports: Vec::new(),
+        swept: false,
+        phase: running_phase(),
+    };
+    record.processes.insert("dev".to_string(), gone);
+    store.worktrees.insert("feat+a".to_string(), record);
+    crate::state::save(&paths.state_file(), &store).unwrap();
+
+    let _held = crate::state::lock(&paths.lock_file()).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reading = paths.clone();
+    let began = Instant::now();
+    std::thread::spawn(move || {
+        let _ = tx.send(background::snapshot(&reading, None, false).map(|s| s.state));
+    });
+    let state = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first frame waited for the state lock")
+        .unwrap();
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        began.elapsed()
+    );
+    assert!(
+        matches!(
+            state.worktrees["feat+a"].processes["dev"].phase,
+            Phase::Failed { .. }
+        ),
+        "and what it shows is advanced all the same"
+    );
+}
+
 // The answer arrives from a worker; a repeat of the same answer is not a
 // reason to repaint.
 #[test]

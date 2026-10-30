@@ -351,6 +351,58 @@ fn ls_lists_the_worktrees_once_beyond_what_every_command_does() {
     }
 }
 
+// A `rm` or a stop holds the state lock for as long as a `docker compose
+// down` takes. Every `ls` and `status` waited all that time with nothing
+// on screen, and a mutation waited as long in silence.
+#[test]
+fn reads_answer_while_another_pando_holds_the_lock_and_a_mutation_says_it_waits() {
+    use std::time::{Duration, Instant};
+    let e = env();
+    let out = e.pando(&["new", "feat/one"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    let lock = common::paths_for(&e.home, &e.root).lock_file();
+    // Held by a thread of its own that lets go when told, or after a while
+    // regardless, so a read that still waits fails here rather than hangs.
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (taken, held) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _lock = pando::state::lock(&lock).unwrap();
+        taken.send(()).unwrap();
+        let _ = released.recv_timeout(Duration::from_secs(30));
+    });
+    held.recv().unwrap();
+
+    for args in [
+        &["ls"][..],
+        &["ls", "--json"],
+        &["status"],
+        &["status", "feat+one"],
+        &["status", "--json"],
+    ] {
+        let began = Instant::now();
+        let out = e.pando(args);
+        let took = began.elapsed();
+        assert_eq!(code(&out), EXIT_OK, "{args:?}: {}", stderr(&out));
+        assert!(stdout(&out).contains("feat"), "{args:?}: {}", stdout(&out));
+        assert!(took < Duration::from_secs(10), "{args:?} waited {took:?}");
+    }
+
+    let out = std::thread::scope(|scope| {
+        let stopping = scope.spawn(|| e.pando(&["stop", "feat+one"]));
+        std::thread::sleep(pando::state::LOCK_WAIT_NOTICE_AFTER + Duration::from_millis(1500));
+        release.send(()).unwrap();
+        stopping.join().unwrap()
+    });
+    holder.join().unwrap();
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    let said = stderr(&out);
+    assert_eq!(
+        said.matches("waiting for another pando to finish").count(),
+        1,
+        "{said}"
+    );
+}
+
 // A verb that takes a name finds the worktree and names it for its
 // messages from one listing: resolving, naming and `path`'s own lookup
 // each listed the worktrees again, for answers the first one had.

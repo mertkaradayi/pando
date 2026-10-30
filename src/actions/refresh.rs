@@ -41,34 +41,35 @@ pub fn refresh(paths: &PandoPaths) -> Refreshed {
         return Refreshed::default();
     }
     if let Err(e) = paths.ensure_home() {
-        return Refreshed {
-            state: state::State::new(),
-            warning: Some(format!("{e:#}")),
-            unreadable: true,
-            notices: Vec::new(),
-        };
+        return unreadable(e);
     }
-    let _lock = match state::lock(&paths.lock_file()) {
-        Ok(lock) => lock,
-        Err(e) => {
-            return Refreshed {
-                state: state::State::new(),
-                warning: Some(format!("{e:#}")),
-                unreadable: true,
-                notices: Vec::new(),
-            };
-        }
+    // One scan of every live group, used for both questions this pass
+    // answers: whether a starting process has opened its port yet, and what
+    // every group is really listening on.
+    //
+    // Read and scanned before the lock is asked for. The scan is the slow
+    // half — a `ps` and an `lsof` per live group, up to seconds on a busy
+    // machine — and every mutation waits for whoever holds the lock.
+    let seen = match state::load(&paths.state_file()) {
+        Ok(store) => store,
+        Err(e) => return unreadable(e),
     };
+    let mut scans = scan_groups(&seen);
+    // Never waited for: a `rm` or a stop holds it for as long as a
+    // `docker compose down` takes, and `ls`, `status` and the TUI's first
+    // frame waited all that time with nothing on screen. While someone
+    // holds it, the answer is the same advance on the copy just read,
+    // written nowhere — the holder's next save is the one that counts,
+    // and the next read that finds the lock free saves this one's work.
+    let _lock = match state::try_lock(&paths.lock_file()) {
+        Ok(Some(lock)) => lock,
+        Ok(None) => return advanced(seen, &scans),
+        Err(e) => return unreadable(e),
+    };
+    // Read again under the lock: a mutation may have saved since.
     let mut store = match state::load(&paths.state_file()) {
         Ok(store) => store,
-        Err(e) => {
-            return Refreshed {
-                state: state::State::new(),
-                warning: Some(format!("{e:#}")),
-                unreadable: true,
-                notices: Vec::new(),
-            };
-        }
+        Err(e) => return unreadable(e),
     };
 
     // Before anything advances or reconciles: both of those drop a share
@@ -76,12 +77,8 @@ pub fn refresh(paths: &PandoPaths) -> Refreshed {
     // Signalling is not spawning — a read path must not start a process,
     // but a tunnel nothing can reach again is exactly what it must not
     // leave behind either.
-    let notices = sweep_dead_shares(&mut store);
+    let mut notices = sweep_dead_shares(&mut store);
 
-    // One scan of every live group, used for both questions this pass
-    // answers: whether a starting process has opened its port yet, and what
-    // every group is really listening on.
-    let mut notices = notices;
     // A native service is pando's own child, so a crashed one is a
     // database that is gone: forgotten here rather than reported as up
     // until the next mutation. Its socket directory goes with it, the one
@@ -95,7 +92,14 @@ pub fn refresh(paths: &PandoPaths) -> Refreshed {
         ));
     }
 
-    let scans = scan_groups(&store);
+    // A group a start recorded between the two reads was not in the first
+    // scan; only those are scanned under the lock.
+    let unscanned: Vec<proc::Group> = live_groups(&store)
+        .filter(|group| !scans.contains_key(group))
+        .collect();
+    if !unscanned.is_empty() {
+        scans.extend(crate::platform::process::ports_by_group(&unscanned));
+    }
     let mut changed = !notices.is_empty();
     changed |= advance_with(&mut store, &scans);
     changed |= capture_observed_ports(&mut store, &scans);
@@ -120,6 +124,16 @@ pub fn refresh(paths: &PandoPaths) -> Refreshed {
     }
 }
 
+/// What a read says when there is no state to read: why, and nothing else.
+fn unreadable(e: anyhow::Error) -> Refreshed {
+    Refreshed {
+        state: state::State::new(),
+        warning: Some(format!("{e:#}")),
+        unreadable: true,
+        notices: Vec::new(),
+    }
+}
+
 /// State as of right now, with nothing written and nothing signalled.
 ///
 /// [`refresh`] is the read path every other command uses, and it takes the
@@ -131,23 +145,22 @@ pub fn inspect(paths: &PandoPaths) -> Refreshed {
     if !paths.state_file().exists() {
         return Refreshed::default();
     }
-    let mut store = match state::load(&paths.state_file()) {
+    let store = match state::load(&paths.state_file()) {
         Ok(store) => store,
-        Err(e) => {
-            return Refreshed {
-                state: state::State::new(),
-                warning: Some(format!("{e:#}")),
-                unreadable: true,
-                notices: Vec::new(),
-            };
-        }
+        Err(e) => return unreadable(e),
     };
+    let scans = scan_groups(&store);
+    advanced(store, &scans)
+}
+
+/// The advance on a copy: [`inspect`]'s whole answer, and [`refresh`]'s
+/// while another pando holds the lock.
+fn advanced(mut store: state::State, scans: &BTreeMap<proc::Group, Option<Vec<u16>>>) -> Refreshed {
     // The same forgetting the read path does, on the copy: a report that
     // listed a database whose server is gone would contradict `status`.
     state::forget_dead_native_services(&mut store, proc::is_alive, proc::group_alive);
-    let scans = scan_groups(&store);
-    advance_with(&mut store, &scans);
-    capture_observed_ports(&mut store, &scans);
+    advance_with(&mut store, scans);
+    capture_observed_ports(&mut store, scans);
     Refreshed {
         state: store,
         warning: None,
@@ -209,14 +222,18 @@ fn failed_processes(store: &state::State) -> Vec<(String, String)> {
 /// not run — no `lsof`, denied, or timed out — which is a different answer
 /// from "listening on nothing".
 pub(super) fn scan_groups(store: &state::State) -> BTreeMap<proc::Group, Option<Vec<u16>>> {
-    let pgids: Vec<proc::Group> = store
+    let pgids: Vec<proc::Group> = live_groups(store).collect();
+    crate::platform::process::ports_by_group(&pgids)
+}
+
+/// The groups [`scan_groups`] scans: every process `Starting` or `Running`.
+fn live_groups(store: &state::State) -> impl Iterator<Item = proc::Group> + '_ {
+    store
         .worktrees
         .values()
         .flat_map(|record| record.processes.values())
         .filter(|p| matches!(p.phase, Phase::Starting { .. } | Phase::Running { .. }))
         .map(|p| p.pgid)
-        .collect();
-    crate::platform::process::ports_by_group(&pgids)
 }
 
 /// Whether the process group has opened `port` yet.

@@ -2,7 +2,10 @@
 //!
 //! Two rules are inherited from the origin tool unchanged: every mutation
 //! holds the flock, and every read path reconciles before trusting what is
-//! in the map. State is v2 from the first commit — there is no v1 to migrate.
+//! in the map. A read path never waits for the flock: [`save`] replaces
+//! the file whole, so a read without it sees one save or the next, never
+//! half of one. State is v2 from the first commit — there is no v1 to
+//! migrate.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -1054,8 +1057,66 @@ pub struct StateLock {
     _file: std::fs::File,
 }
 
+/// How long [`lock`] waits in silence before it says what it is waiting
+/// for: longer than a read or a quick mutation holds a lock, short enough
+/// that nobody wonders whether pando hung.
+pub const LOCK_WAIT_NOTICE_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// What [`lock`] says when it has to wait, set once by a front end that
+/// has somewhere to say it. The CLI sets it; the TUI does not, since its
+/// stderr is the screen and its rows already show what is pending.
+static LOCK_WAIT_NOTICE: std::sync::OnceLock<fn(&str)> = std::sync::OnceLock::new();
+
+/// Has every [`lock`] that waits longer than [`LOCK_WAIT_NOTICE_AFTER`]
+/// say so through `say`, once. The first call wins.
+pub fn announce_lock_waits(say: fn(&str)) {
+    let _ = LOCK_WAIT_NOTICE.set(say);
+}
+
+/// Takes the lock, waiting for whoever holds it — a `rm` or a `stop` can
+/// hold the state lock for as long as a `docker compose down` takes.
+/// Where a front end asked ([`announce_lock_waits`]), a wait that lasts is
+/// said once rather than looking like a hang.
 pub fn lock(lock_path: &Path) -> Result<StateLock> {
+    match LOCK_WAIT_NOTICE.get() {
+        Some(say) => lock_announced(lock_path, LOCK_WAIT_NOTICE_AFTER, &|line| say(line)),
+        None => {
+            let file = open_lock_file(lock_path)?;
+            crate::platform::files::lock_exclusive(&file)
+                .with_context(|| format!("flock on {}", lock_path.display()))?;
+            Ok(StateLock { _file: file })
+        }
+    }
+}
+
+/// [`lock`], saying through `say` once it has waited `after`.
+///
+/// Asked again every few milliseconds until then, so the line is never
+/// printed for a lock that came free in time and no thread is needed to
+/// print it; after it, the wait is the plain blocking one.
+pub(crate) fn lock_announced(
+    lock_path: &Path,
+    after: std::time::Duration,
+    say: &dyn Fn(&str),
+) -> Result<StateLock> {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(20);
     let file = open_lock_file(lock_path)?;
+    let began = std::time::Instant::now();
+    loop {
+        if crate::platform::files::try_lock_exclusive(&file)
+            .with_context(|| format!("flock (try) on {}", lock_path.display()))?
+        {
+            return Ok(StateLock { _file: file });
+        }
+        if began.elapsed() >= after {
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    say(&format!(
+        "waiting for another pando to finish — it holds {}",
+        lock_path.display()
+    ));
     crate::platform::files::lock_exclusive(&file)
         .with_context(|| format!("flock on {}", lock_path.display()))?;
     Ok(StateLock { _file: file })
@@ -2238,5 +2299,51 @@ mod tests {
         assert!(procs["gone"].swept, "nothing left to signal");
         assert!(procs["starting"].swept, "nothing left to signal");
         assert!(!procs["lingering"].swept, "its group still has a member");
+    }
+
+    // A mutation that has to wait for another pando's lock says so once,
+    // after a moment, rather than looking hung; a lock that is free, or
+    // comes free in time, says nothing.
+    #[test]
+    fn a_lock_that_waits_says_so_once_and_one_that_does_not_says_nothing() {
+        use std::cell::RefCell;
+        use std::time::{Duration, Instant};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.lock");
+
+        let said = RefCell::new(Vec::<String>::new());
+        let say = |line: &str| said.borrow_mut().push(line.to_string());
+        drop(lock_announced(&path, Duration::from_millis(100), &say).unwrap());
+        assert!(said.borrow().is_empty(), "a free lock: {:?}", said.borrow());
+
+        let held = lock(&path).unwrap();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let holder = std::thread::spawn(move || {
+            let _ = released.recv();
+            std::thread::sleep(Duration::from_millis(300));
+            drop(held);
+        });
+        let began = Instant::now();
+        release.send(()).unwrap();
+        let taken = lock_announced(&path, Duration::from_millis(100), &say).unwrap();
+        holder.join().unwrap();
+        assert!(began.elapsed() >= Duration::from_millis(300), "it waited");
+        assert_eq!(said.borrow().len(), 1, "{:?}", said.borrow());
+        assert!(
+            said.borrow()[0].starts_with("waiting for another pando to finish"),
+            "{:?}",
+            said.borrow()
+        );
+        assert!(said.borrow()[0].contains("state.lock"));
+        assert!(
+            try_lock(&path).unwrap().is_none(),
+            "and it holds the lock it waited for"
+        );
+        drop(taken);
+        // Not at once under a full run: a fork another test makes between
+        // here and its exec holds a copy of the lock's file a moment longer.
+        assert!(crate::testutil::wait_until(Duration::from_secs(5), || {
+            try_lock(&path).unwrap().is_some()
+        }));
     }
 }

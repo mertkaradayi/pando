@@ -7965,6 +7965,61 @@ fn refresh_on_a_project_that_never_started_anything_writes_nothing() {
     );
 }
 
+// A `rm` or a stop holds the state lock for as long as a `docker compose
+// down` takes, and every `ls`, `status` and TUI frame waited all that time
+// for it. A read that finds the lock held answers from the file as it
+// stands, advanced on a copy and written nowhere.
+#[test]
+fn refresh_answers_at_once_while_another_pando_holds_the_lock() {
+    let fx = fixture();
+    let mut store = state::State::new();
+    let mut record = WorktreeRecord::new("/trees/feat+one", true);
+    // A process whose pid is long gone: the advance calls it failed.
+    record
+        .processes
+        .insert("dev".to_string(), fake_record(4_000_011));
+    store.worktrees.insert("feat+one".to_string(), record);
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let held = state::lock(&fx.paths.lock_file()).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let paths = fx.paths.clone();
+    let began = Instant::now();
+    std::thread::spawn(move || {
+        let _ = tx.send(refresh(&paths));
+    });
+    let refreshed = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("refresh waited for a lock another pando holds");
+    let took = began.elapsed();
+    assert!(took < Duration::from_secs(2), "took {took:?}");
+    assert!(refreshed.warning.is_none(), "{:?}", refreshed.warning);
+    assert!(
+        matches!(
+            refreshed.state.worktrees["feat+one"].processes["dev"].phase,
+            Phase::Failed { .. }
+        ),
+        "the copy is advanced all the same"
+    );
+    assert!(
+        matches!(
+            fx.state().worktrees["feat+one"].processes["dev"].phase,
+            Phase::Running { .. }
+        ),
+        "and nothing is written without the lock"
+    );
+
+    drop(held);
+    refresh(&fx.paths);
+    assert!(
+        matches!(
+            fx.state().worktrees["feat+one"].processes["dev"].phase,
+            Phase::Failed { .. }
+        ),
+        "the next read that finds it free saves the advance"
+    );
+}
+
 #[test]
 fn refresh_moves_a_starting_process_to_running_once_its_port_binds() {
     if !python3_available() {
