@@ -275,6 +275,12 @@ fn start_checked(
         restarting,
         skip_after_services,
     } = preflight;
+    // A start cancelled before it began — while its question was open —
+    // has nothing to undo. The safe points after this one are marked
+    // "a cancelled start": each fails through the undo any failure there
+    // runs, so a cancel leaves what a failure would, and the caller that
+    // cancelled stops whatever that is. See `crate::cancel`.
+    crate::cancel::check()?;
     // Before anything is read of the tree, or made for it: a worktree an
     // `rm` is removing is going, and its directory may be half gone.
     refuse_while_removed_now(paths, name, name, STARTED_NOTHING)?;
@@ -888,6 +894,9 @@ fn start_checked(
     // The main checkout runs none of them, nor a probe: each is a command
     // run in the repository, and Invariant 1 has no exception for it. It
     // is the developer's own checkout, installed and migrated by them.
+    // A cancelled start: before the hooks, which can take minutes and run
+    // to their end once begun.
+    crate::cancel::check().map_err(undo)?;
     let not_own = ready.as_ref().and_then(Ready::not_own_data);
     let hook_ctx = HookContext {
         name,
@@ -917,10 +926,16 @@ fn start_checked(
         .map_err(undo)?;
     }
 
+    // A cancelled start: after the install, before the services come up.
+    // Their readiness waits look again on every round.
+    crate::cancel::check().map_err(undo)?;
     let mut fresh = Fresh(false);
     if isolate {
         fresh = bring_up_services(paths, config, name, &canonical, &assignment.ports, progress)
             .map_err(undo)?;
+        // A cancelled start: the services are up, and the hooks that run
+        // against them have not begun.
+        crate::cancel::check().map_err(undo)?;
     }
 
     // The database the hooks after this point run against has changed, and
@@ -970,6 +985,9 @@ fn start_checked(
         run_probes(paths, config, &hook_ctx, progress).map_err(undo)?;
     }
 
+    // A cancelled start: the last safe point, after the hooks and the
+    // probes and before the second lock. Past it the start spawns.
+    crate::cancel::check().map_err(undo)?;
     let _lock = state::lock(&paths.lock_file()).map_err(undo)?;
     // The undo takes this same lock, and a second `flock` from this process
     // on a second descriptor waits for the first one: undoing with it held

@@ -3,7 +3,7 @@
 //! The dependency direction is inner to outer, with no upward imports:
 //!
 //! ```text
-//! platform → catalog · paths · term · remedy · theme · art · version → compose → project · config · ports · process · runtime · state
+//! platform → catalog · paths · term · remedy · theme · art · version · cancel → compose → project · config · ports · process · runtime · state
 //!       · env_command · template · recipes
 //!       → detect · hooks · worktree · cache · log_tail · observe · services
 //!         · native · namespace · decisions · setup
@@ -41,6 +41,7 @@
 //! | a `doctor` section | [`doctor::Section`], its report type in `doctor/report.rs`, a file under `doctor/`, its renderer in `doctor/render.rs`, and `agent/json.md`, which a test holds to the enum |
 //! | a way out of an error that a CLI flag would name | a row in [`remedy`]: errors say what to do, the CLI rewrites it to the flag |
 //! | a colour theme | a TOML file in `theme/builtin/` and a row in [`theme::BUILT_IN`]; a colour for a new meaning is a role in `theme/palette.rs` and a row in the `theme` module's table |
+//! | a point where cancelled work may stop | a [`cancel::check`] there, where the undo a failure runs leaves nothing half done |
 //! | a TUI key or panel | `tui/app/` for state and keys, with the key's row in `tui/app/keymap.rs` (help prints it, a test holds it to the handler); `tui/render/` for drawing |
 //!
 //! Tables in `catalog` are data: a fact lives in one row, and every module
@@ -50,6 +51,7 @@
 pub mod actions;
 pub mod art;
 pub mod cache;
+pub mod cancel;
 pub mod catalog;
 pub mod cli;
 pub mod compose;
