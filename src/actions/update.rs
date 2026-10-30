@@ -227,7 +227,7 @@ impl Install {
         match self {
             Install::Development { label } => Err(Refusal(format!(
                 "this pando is a development build of {label} — update that branch and build it \
-                 again, or go back to the released pando"
+                 again, or go back to the released pando: `pando-dev use release`"
             ))),
             Install::Checkout { root } => Err(Refusal(format!(
                 "this pando was built in the checkout at {} — update it there: `git pull`, then \

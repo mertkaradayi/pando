@@ -18519,7 +18519,11 @@ mod update {
                 label: "feat/update@abc1234".into()
             }
         );
-        assert!(install.updater(Some(&v("9.9.9"))).is_err());
+        // Only `scripts/dev` labels a build, and it is what goes back.
+        let Err(Refusal(why)) = install.updater(Some(&v("9.9.9"))) else {
+            panic!("a development build is not pando's to replace");
+        };
+        assert!(why.contains("`pando-dev use release`"), "{why}");
     }
 
     #[test]

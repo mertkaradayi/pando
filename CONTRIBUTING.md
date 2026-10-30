@@ -115,9 +115,10 @@ Then use the branch as your pando, on your own projects, with your own
 ```bash
 pando-dev use my-feature           # `pando` on your PATH is that branch's build now
 cd ~/code/some-project && pando    # …so this is the branch, on a real project
-pando-dev use main                 # back to the main checkout's build
+pando-dev use release              # back to the release you installed (Homebrew's, say)
+pando-dev use main                 # or to the main checkout's build, which is not the release
 pando-dev ls                       # every worktree, and which one `pando` runs (▸)
-pando-dev which                    # just that: `main`, or the branch and its label
+pando-dev which                    # just that: `release`, `main`, or the branch and its label
 ```
 
 A branch's build says so: `pando --version` adds `(my-feature@1a2b3c4)`
@@ -133,7 +134,7 @@ Two more, for when a real project is the wrong place to try something:
 ```bash
 pando-dev try my-feature           # its TUI in a throwaway fixture repository
 pando-dev run my-feature status    # its CLI once, without switching `pando`
-pando-dev rm my-feature            # the worktree goes; the branch stays
+pando-dev rm my-feature            # the worktree goes, and `pando` is the release again if it ran it; the branch stays
 ```
 
 `try` builds a fixture with that branch's own recipe and gives it a

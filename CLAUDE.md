@@ -320,8 +320,9 @@ never run against a real repository.
 
 The maintainer tries a branch before it is merged, as their real pando
 on their own projects: `pando-dev use <branch>` makes `pando` on PATH
-that branch's build, `pando-dev use main` puts the main checkout's
-back, and `pando-dev which` says which runs now. A branch's build names
+that branch's build, `pando-dev use release` puts the release back
+(`pando-dev use main` is the main checkout's build, not the release),
+and `pando-dev which` says which runs now. A branch's build names
 itself — `pando --version` adds `(<branch>@<sha>)` and the TUI's header
 shows `⎇ <branch>@<sha>` — so a session that sees that knows the pando
 it is running is not a release. When a branch is ready, say so and

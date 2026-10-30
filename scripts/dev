@@ -6,9 +6,10 @@
 # own build there. Nothing here pushes, merges or releases anything.
 #
 #   scripts/dev new <name> [<from>]      a branch and a worktree for it, from main
-#   scripts/dev use <name>               `pando` everywhere is that branch's build; `use main` goes back
+#   scripts/dev use <name>               `pando` everywhere is that branch's build
+#   scripts/dev use release              `pando` is the release you installed again
 #   scripts/dev ls                       every worktree, and which build `pando` runs
-#   scripts/dev which                    what `pando` runs: `main`, or a branch and its label
+#   scripts/dev which                    what `pando` runs: `release`, `main`, or a branch and its label
 #   scripts/dev path <name>              a worktree's path
 #   scripts/dev build [<name>]           cargo build --release in that worktree
 #   scripts/dev run <name> [<args>...]   build it, then run that pando once, here, with the args
@@ -22,7 +23,9 @@
 # `use` is how a branch is lived with: after `pando-dev use my-feature`,
 # `pando` in any project is that build, on your real worktrees and your own
 # ~/.pando, and its header says `⎇ my-feature@<sha>` so it never passes for
-# the released one.
+# the released one. `use release` takes the link away, so `pando` is the
+# release again, from Homebrew or wherever it was installed; `use main` is
+# the main checkout's own build, which is not the release.
 #
 # `try` builds the fixture from that branch's own recipe
 # (scripts/fixture-repo.sh <fixture> --with-origin --listener, `plain` by
@@ -170,15 +173,23 @@ cmd_ls() {
       "$(label "$path")" "$built"
   done < <(git -C "$main" worktree list --porcelain)
   if [[ -n $target ]]; then
-    printf '\n▸ is what `pando` runs (%s)\n' "$link"
+    printf '\n▸ is what `pando` runs (%s); `pando-dev use release` goes back to the release\n' "$link"
+  elif [[ -e $link ]]; then
+    printf '\n%s is not a symlink pando-dev manages\n' "$link"
   else
-    printf '\n%s is not a symlink pando-dev manages; `pando-dev use main` makes it one\n' "$link"
+    printf '\n`pando` is %s, no build of a worktree; `pando-dev use <name>` tries one\n' \
+      "$(command -v pando || echo nothing)"
   fi
 }
 
-# The worktree `pando` on PATH runs, as a name `use` takes, and its label.
+# The worktree `pando` on PATH runs, as a name `use` takes, and its label:
+# `release` when no worktree's build is linked.
 cmd_which() {
   local target path
+  if [[ ! -e $link && ! -L $link ]]; then
+    echo "release"
+    return
+  fi
   [[ -L $link ]] || die "$link is not a symlink pando-dev manages"
   target=$(readlink "$link")
   path=${target%/target/release/pando}
@@ -210,6 +221,10 @@ cmd_run() {
 
 cmd_use() {
   local wt bin
+  if [[ ${1:-} == release ]]; then
+    release
+    return
+  fi
   wt=$(resolve "${1:?usage: pando-dev use <name>}")
   bin=$wt/target/release/pando
   if [[ -e $link && ! -L $link ]]; then
@@ -219,12 +234,33 @@ cmd_use() {
   mkdir -p "$(dirname "$link")"
   ln -sfn "$bin" "$link"
   say "\`pando\` is now $(label "$wt")"
-  [[ $wt != "$main" ]] && say "\`pando-dev use main\` puts the main checkout's build back"
+  say "\`pando-dev use release\` goes back to the release"
   local found
   found=$(command -v pando || true)
   if [[ $found != "$link" ]]; then
     say "warning: \`pando\` on your PATH is ${found:-nothing}, not $link — put $(dirname "$link") first in PATH"
   fi
+  # A shell remembers where it found a command, and a new one earlier in
+  # PATH does not change its mind; one that is gone, zsh looks for again.
+  say "a shell that ran \`pando\` before may run the old one until \`rehash\` (zsh) or \`hash -r\` (bash)"
+}
+
+# `use release`: the link goes, so `pando` is whatever PATH finds without
+# it — the release, from Homebrew or wherever it was installed.
+release() {
+  if [[ -e $link && ! -L $link ]]; then
+    die "$link is a file, not a symlink: pando-dev will not remove it"
+  fi
+  if [[ -L $link ]]; then
+    rm "$link"
+  fi
+  local found
+  found=$(command -v pando || true)
+  if [[ -z $found ]]; then
+    say "\`pando\` is nothing now: \`brew install mertkaradayi/tap/pando\` installs the release, \`pando-dev use main\` builds the main checkout's"
+    return 0
+  fi
+  say "\`pando\` is now $("$found" --version), at $found"
 }
 
 cmd_try() {
@@ -258,9 +294,10 @@ cmd_rm() {
   [[ $wt == "$main" ]] && die "that is the main checkout"
   local branch
   branch=$(git -C "$wt" branch --show-current)
+  # Not the main checkout's build, which may be stale or never built.
   if [[ -L $link && $(readlink "$link") == "$wt/"* ]]; then
-    ln -sfn "$main/target/release/pando" "$link"
-    say "\`pando\` ran this worktree's build; it runs the main checkout's again"
+    say "\`pando\` ran this worktree's build, so it goes back to the release"
+    release
   fi
   # The links to the local material are not git's to remove.
   for item in docs plans CLAUDE.local.md; do

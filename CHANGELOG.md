@@ -18,6 +18,11 @@ may change behaviour.
   mouse (option in iTerm2); `[ui] mouse = false` in
   `~/.pando/config.toml` leaves it to the terminal, and the setup
   screen always does, so its prompt can be selected and pasted.
+- `scripts/dev use release`, for contributors: `pando` is the release
+  you installed again, Homebrew's or the install script's, after
+  `use <branch>` made it a branch's build. `pando update` on a branch's
+  build names it, and `scripts/dev rm` of the branch `pando` runs goes
+  back to the release rather than to the main checkout's build.
 
 ### Fixed
 
