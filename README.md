@@ -361,7 +361,7 @@ From a script they return once everything is spawned; `--wait` and
          and start it, or switch it when it runs
 s i S    start it: as last time, isolated, or on the shared services
 l        open the log viewer
-x X      stop it, or stop everything
+x X      stop it (or cancel its start), or stop everything
 r P      restart it, or only the selected process
 o O      open its URL (or its app, where it serves no page), or the public one
 c C y    copy its local URL, its public URL, its path
@@ -398,7 +398,10 @@ services, and the chooser was the asking. The logs are `l`.
 A key that would interrupt a running worktree asks for a second press:
 `r r` restarts it, `x x` stops it, `P P` restarts one process, and `i`
 or `S` twice restarts it in the mode it already runs in. Esc takes the
-first press back. Moving a running worktree between modes with `i` or
+first press back. `x` on a worktree being started or restarted cancels
+that at once: the start stops at its next safe point, undoes what it
+had brought up, and the worktree ends stopped. `q q` with a start in
+flight cancels it the same way and quits once it is undone. Moving a running worktree between modes with `i` or
 `S`, sharing it, and removing it ask in a dialog instead. On a stopped
 worktree nothing asks.
 

@@ -384,6 +384,17 @@ pub(super) const MARKED_HINTS: [(&str, &str, bool); 9] = [
     ("q", "quit", false),
 ];
 
+/// For a row with a start or a restart in flight: `x` cancels it.
+pub(super) const STARTING_HINTS: [(&str, &str, bool); 7] = [
+    ("j/k", "move", true),
+    ("x", "cancel", true),
+    ("l", "logs", false),
+    ("n", "new", false),
+    ("/", "filter", false),
+    ("?", "help", true),
+    ("q", "quit", true),
+];
+
 /// With nothing to select, only what gets something onto the list.
 pub(super) const EMPTY_HINTS: [(&str, &str, bool); 3] = [
     ("n", "new worktree", true),
@@ -456,6 +467,7 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         }
         Mode::Normal => match selected {
             None => hint_line(&EMPTY_HINTS, hints_width),
+            Some(name) if app.start_to_cancel(&name) => hint_line(&STARTING_HINTS, hints_width),
             // A shared worktree's public URL is what gets handed out, so
             // its keys come right after the one that shared it.
             Some(name) if app.public_url_of(&name).is_some() => {

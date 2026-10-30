@@ -10861,3 +10861,285 @@ fn a_stop_all_and_a_create_run_beside_each_other() {
         Some("already busy stopping everything".to_string())
     );
 }
+
+// ---- cancelling a start ------------------------------------------------
+
+/// A project on disk whose worktree `feat/one` has one native service,
+/// `stuckdb`, whose server never listens: an isolated start of it waits in
+/// readiness for the whole minute a service is given by default.
+fn app_with_a_stuck_service() -> (tempfile::TempDir, App, Receiver<AppEvent>) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("acme-shop");
+    crate::testutil::init_repo(&root);
+    let paths = PandoPaths::new(
+        dir.path().join("pando-home"),
+        ProjectRef::from_root(&root).unwrap(),
+    );
+    std::fs::create_dir_all(paths.recipes_dir()).unwrap();
+    std::fs::create_dir_all(paths.config_file().parent().unwrap()).unwrap();
+    std::fs::write(
+        paths.config_file(),
+        "[dev]\ncmd = \"sleep 30\"\nports = []\n\n[[services]]\nkind = \"native\"\nname = \"stuckdb\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        paths.recipes_dir().join("stuckdb.toml"),
+        "kind = \"service\"\nname = \"stuckdb\"\nbinaries = [\"pando-fake-stuckdb\"]\n\n\
+         [service]\ninit = \"mkdir -p {datadir}\"\ncmd = \"exec pando-fake-stuckdb {port}\"\n",
+    )
+    .unwrap();
+    let bin = paths.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("pando-fake-stuckdb"),
+        "#!/bin/sh\nexec sleep 300\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        bin.join("pando-fake-stuckdb"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let config = crate::config::load(&paths).unwrap().config;
+    actions::new(&paths, &config, "feat/one", None, &|_| {}).unwrap();
+    let mut app = App::new_for_test(paths, config, Vec::new());
+    let rx = app.event_rx.take().expect("the app owns its receiver");
+    app.apply_snapshot(snapshot(&app.paths, None, false).unwrap());
+    let row = app
+        .filtered_indices
+        .iter()
+        .position(|&i| app.worktrees[i].name == "feat+one")
+        .expect("feat/one is listed");
+    app.select_index(row);
+    (dir, app, rx)
+}
+
+/// Runs the app's loop, events and ticks' polls, until `done` says so,
+/// failing on a question nobody here would answer.
+fn run_until(
+    app: &mut App,
+    rx: &Receiver<AppEvent>,
+    within: Duration,
+    what: &str,
+    done: impl Fn(&App) -> bool,
+) {
+    let deadline = Instant::now() + within;
+    while !done(app) {
+        assert!(Instant::now() < deadline, "{what}: not within {within:?}");
+        while let Ok(event) = rx.try_recv() {
+            app.handle_event(event);
+        }
+        if let Some(Modal::Question { question, .. }) = &app.modal {
+            panic!("{what}: asked {:?}", question.prompt);
+        }
+        app.poll_pending();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+// `x` on a row whose start is in flight said "already busy starting", and
+// a start waits up to a minute for a service. It cancels the start now: a
+// start blocked in readiness stops within a round of its wait, its undo
+// takes down the server it spawned and puts the worktree back on the
+// shared services, and the row ends up stopped — well inside the minute.
+#[test]
+fn x_cancels_a_start_blocked_in_readiness_and_the_row_ends_stopped() {
+    let (_dir, mut app, rx) = app_with_a_stuck_service();
+    press(&mut app, KeyCode::Char('i'));
+    let saw_wait = |app: &App| {
+        app.pending_on("feat+one").is_some_and(|p| {
+            p.said
+                .iter()
+                .chain(&p.stage)
+                .any(|line| line.starts_with("waiting for stuckdb"))
+        })
+    };
+    run_until(
+        &mut app,
+        &rx,
+        Duration::from_secs(20),
+        "the start waits",
+        saw_wait,
+    );
+    let server = crate::state::load(&app.paths.state_file())
+        .unwrap()
+        .worktrees["feat+one"]
+        .services[0]
+        .clone();
+    let _server = server.pgid.map(|pgid| crate::testutil::Detached {
+        pid: server.pid.unwrap(),
+        pgid,
+    });
+    assert!(server.pid.is_some_and(crate::process::is_alive));
+
+    let asked = Instant::now();
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("cancelling the start of feat/one…".to_string())
+    );
+    assert_eq!(
+        app.pending_on("feat+one").map(|p| p.doing()),
+        Some("cancelling"),
+        "the row says so"
+    );
+    run_until(
+        &mut app,
+        &rx,
+        Duration::from_secs(10),
+        "the start is cancelled",
+        |app| app.pending.is_empty(),
+    );
+    let took = asked.elapsed();
+    assert!(
+        took < Duration::from_secs(5),
+        "cancelled within a round of the wait, not at its minute: {took:?}"
+    );
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.message == "cancelled the start of feat/one"),
+        "{:?}",
+        app.messages.iter().map(|m| &m.message).collect::<Vec<_>>()
+    );
+    let record = &crate::state::load(&app.paths.state_file())
+        .unwrap()
+        .worktrees["feat+one"];
+    assert!(
+        record.mode() != ServiceMode::Isolated,
+        "the switch to isolated was undone"
+    );
+    assert!(!server.pid.is_some_and(crate::process::is_alive));
+    assert!(!record.is_live() && record.processes.is_empty());
+    // And the row, once the refresh the outcome asked for lands.
+    run_until(
+        &mut app,
+        &rx,
+        Duration::from_secs(10),
+        "the row is stopped",
+        |app| !app.refreshing && app.phase_of("feat+one").is_none(),
+    );
+    assert!(app.pending_on("feat+one").is_none());
+}
+
+/// A start in flight that `x` can cancel, whose worker waits for the
+/// cancel and reports it, as a cancelled start's does once undone.
+fn a_start_that_waits_to_be_cancelled(app: &mut App, name: &str, kind: PendingKind) {
+    let cancel = crate::cancel::Cancel::new();
+    let seen = cancel.clone();
+    let worker_name = name.to_string();
+    assert!(app.spawn_pending(name.into(), kind, move || {
+        while !seen.is_cancelled() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(PendingOutcome::Cancelled {
+            name: worker_name,
+            stopped: false,
+        })
+    }));
+    app.pending.last_mut().unwrap().cancel = Some(cancel);
+}
+
+// `x` on a row being restarted cancels the restart, as on one being
+// started: the worktree ends stopped either way, which is what `x` asks.
+#[test]
+fn x_cancels_a_restart_in_flight_too() {
+    let mut app = test_app(&["feat+one"]);
+    a_start_that_waits_to_be_cancelled(&mut app, "feat+one", PendingKind::Restart);
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("cancelling the restart of feat/one…".to_string())
+    );
+    wait_for_pending(&mut app);
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("cancelled the restart of feat/one".to_string())
+    );
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.message.contains("already busy")),
+        "{:?}",
+        app.messages
+    );
+}
+
+// While a start is in flight the footer offers `x cancel`, a button like
+// every other hint.
+#[test]
+fn the_footer_of_a_row_being_started_offers_x_to_cancel_it() {
+    let mut app = test_app(&["feat+one"]);
+    a_start_that_waits_to_be_cancelled(&mut app, "feat+one", PendingKind::Start);
+    every_hint_presses_a_key(&mut app, "the footer of a row being started");
+    let rows = frame(&mut app, 160, 24);
+    assert!(
+        rows.last().unwrap().starts_with(" j/k move · x cancel"),
+        "{}",
+        rows.last().unwrap()
+    );
+    click_at(&mut app, in_footer(&rows, "x cancel"));
+    assert!(app.pending[0].cancelled(), "a click on it cancels");
+    wait_for_pending(&mut app);
+}
+
+// `x` with rows marked cancels a marked start in flight and stops the
+// marked one that runs, once the set is confirmed.
+#[test]
+fn x_on_the_marks_cancels_a_marked_start_and_stops_the_rest() {
+    let mut app = test_app(&["feat+up", "feat+starting"]);
+    with_process(&mut app, "feat+up", running_phase());
+    a_start_that_waits_to_be_cancelled(&mut app, "feat+starting", PendingKind::Start);
+    app.marks = ["feat+up", "feat+starting"].map(String::from).into();
+    press(&mut app, KeyCode::Char('x'));
+    assert!(!app.pending[0].cancelled(), "the first press only asks");
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.pending[0].cancelled());
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+starting".to_string(), PendingKind::Start),
+            ("feat+up".to_string(), PendingKind::Stop),
+        ]
+    );
+}
+
+// `q` twice with a start in flight cancels it, and pando quits once it has
+// run its undo, rather than abandoning it halfway; a `q` meanwhile quits
+// at once.
+#[test]
+fn q_twice_cancels_a_start_and_quits_once_it_is_undone() {
+    let mut app = test_app(&["feat+one"]);
+    a_start_that_waits_to_be_cancelled(&mut app, "feat+one", PendingKind::Start);
+    press(&mut app, KeyCode::Char('q'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some(
+            "cancel the start of feat/one and quit once it is undone? q again to confirm · esc \
+             cancels"
+                .to_string()
+        )
+    );
+    press(&mut app, KeyCode::Char('q'));
+    assert!(app.pending[0].cancelled());
+    assert!(!app.should_quit, "not until it is undone");
+    assert!(app.quitting);
+    wait_for_pending(&mut app);
+    assert!(app.should_quit, "quit once it was");
+
+    let mut app = test_app(&["feat+one"]);
+    let (hold, held) = mpsc::channel::<()>();
+    let cancel = crate::cancel::Cancel::new();
+    app.spawn_pending("feat+one".into(), PendingKind::Start, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.pending[0].cancel = Some(cancel);
+    press(&mut app, KeyCode::Char('q'));
+    press(&mut app, KeyCode::Char('q'));
+    assert!(!app.should_quit);
+    press(&mut app, KeyCode::Char('q'));
+    assert!(app.should_quit, "a q while it undoes quits now");
+    drop(hold);
+}

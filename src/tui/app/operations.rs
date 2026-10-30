@@ -6,6 +6,8 @@ use std::sync::mpsc;
 use std::thread;
 
 use crate::actions;
+use crate::cancel::Cancel;
+use crate::paths::PandoPaths;
 use crate::state::{Aggregate, Phase, ServiceMode};
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
@@ -27,6 +29,33 @@ fn owner_not_running(label: &str, owner: &str) -> String {
 /// worktree data apart from main's.
 pub(super) const MAIN_ONLY_SHARED: &str = "the main checkout runs on the project's own services, \
      which hold its data — isolated and namespaced are for worktrees";
+
+/// A start's or a restart's worker: `start` runs inside `cancel`, and once
+/// `x` has cancelled it, whatever is up afterwards is stopped — what the
+/// undo leaves, or what a start that passed its last safe point spawned —
+/// because `x` asked for the worktree to stop. A cancel wins over the
+/// start's own outcome either way.
+fn cancellable(
+    paths: &PandoPaths,
+    name: &str,
+    cancel: &Cancel,
+    progress: &dyn Fn(&str),
+    start: impl FnOnce() -> Result<PendingOutcome, String>,
+) -> Result<PendingOutcome, String> {
+    let outcome = cancel.run(start);
+    if !cancel.is_cancelled() {
+        return outcome;
+    }
+    match actions::stop(paths, name, None, progress) {
+        Ok(stopped) => Ok(PendingOutcome::Cancelled {
+            name: name.to_string(),
+            stopped: matches!(stopped, actions::StopOutcome::Stopped(_)),
+        }),
+        Err(e) => Err(format!(
+            "cancelled, but what it had brought up could not be stopped: {e:#}"
+        )),
+    }
+}
 
 pub(super) fn base64(input: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -288,27 +317,38 @@ impl App {
         let worker_name = name.clone();
         let tx = self.event_tx.clone();
         let (ptx, prx) = mpsc::channel::<String>();
+        let cancel = Cancel::new();
+        let handed = cancel.clone();
         let started = self.spawn_pending(name, PendingKind::Start, move || {
             let progress = |msg: &str| {
                 let _ = ptx.send(msg.to_string());
             };
-            // Detection may have a question; it goes back to the UI thread
-            // and this worker waits for the answer.
-            let ask = |question: &actions::Question| ask_through_ui(&tx, question);
-            let config = config_now(&paths)?;
-            let config =
-                actions::resolve_for_start(&paths, &config, &worker_name, mode, &ask, &progress)
-                    .map_err(|e| format!("{e:#}"))?;
-            // Back to the UI thread at once: an answer written to
-            // `pando.toml` that this session's own copy does not have is
-            // one the next keypress asks all over again.
-            let _ = tx.send(AppEvent::ConfigResolved(Box::new(config.clone())));
-            actions::start(&paths, &config, &worker_name, None, mode, &progress)
-                .map(|report| PendingOutcome::started(worker_name.clone(), &report))
-                .map_err(|e| format!("{e:#}"))
+            cancellable(&paths, &worker_name, &handed, &progress, || {
+                // Detection may have a question; it goes back to the UI
+                // thread and this worker waits for the answer.
+                let ask = |question: &actions::Question| ask_through_ui(&tx, question);
+                let config = config_now(&paths)?;
+                let config = actions::resolve_for_start(
+                    &paths,
+                    &config,
+                    &worker_name,
+                    mode,
+                    &ask,
+                    &progress,
+                )
+                .map_err(|e| format!("{e:#}"))?;
+                // Back to the UI thread at once: an answer written to
+                // `pando.toml` that this session's own copy does not have
+                // is one the next keypress asks all over again.
+                let _ = tx.send(AppEvent::ConfigResolved(Box::new(config.clone())));
+                actions::start(&paths, &config, &worker_name, None, mode, &progress)
+                    .map(|report| PendingOutcome::started(worker_name.clone(), &report))
+                    .map_err(|e| format!("{e:#}"))
+            })
         });
         if started && let Some(p) = self.pending.last_mut() {
             p.progress_rx = Some(prx);
+            p.cancel = Some(cancel);
         }
     }
 
@@ -316,10 +356,36 @@ impl App {
         let Some(name) = self.selected_name() else {
             return;
         };
+        // A start or a restart in flight is what `x` stops: cancelled now,
+        // not waited for, and the worktree is stopped once it is undone.
+        if let Some(what) = self.cancel_start(&name) {
+            return self.set_status(format!("cancelling {what}…"));
+        }
         let label = self.label_of(&name);
         if self.pressed_twice('x', &name, &format!("stop {label}")) {
             self.stop_named(name);
         }
+    }
+
+    /// Cancels the start or the restart in flight on `name`, if there is
+    /// one, and says which: `the start of feat/x`. One already cancelled
+    /// is said again, and cancelled no more.
+    pub(super) fn cancel_start(&mut self, name: &str) -> Option<String> {
+        let pending = self
+            .pending
+            .iter()
+            .find(|p| p.name == name && p.cancel.is_some())?;
+        if let Some(cancel) = &pending.cancel {
+            cancel.cancel();
+        }
+        Some(format!("the {} of {}", pending.kind.noun(), pending.label))
+    }
+
+    /// Whether `name` has a start or a restart in flight that `x` cancels.
+    pub fn start_to_cancel(&self, name: &str) -> bool {
+        self.pending
+            .iter()
+            .any(|p| p.name == name && p.cancel.is_some())
     }
 
     /// Stops `name`, asking nothing: whoever calls it has asked.
@@ -512,29 +578,40 @@ impl App {
         let worker_name = name.clone();
         let tx = self.event_tx.clone();
         let (ptx, prx) = mpsc::channel::<String>();
+        let cancel = Cancel::new();
+        let handed = cancel.clone();
         let started = self.spawn_pending(name, PendingKind::Restart, move || {
             let progress = |msg: &str| {
                 let _ = ptx.send(msg.to_string());
             };
-            let ask = |question: &actions::Question| ask_through_ui(&tx, question);
-            let config = config_now(&paths)?;
-            let config =
-                actions::resolve_for_start(&paths, &config, &worker_name, mode, &ask, &progress)
-                    .map_err(|e| format!("{e:#}"))?;
-            let _ = tx.send(AppEvent::ConfigResolved(Box::new(config.clone())));
-            actions::restart(
-                &paths,
-                &config,
-                &worker_name,
-                only.as_deref(),
-                mode,
-                &progress,
-            )
-            .map(|report| PendingOutcome::started(worker_name.clone(), &report))
-            .map_err(|e| format!("{e:#}"))
+            cancellable(&paths, &worker_name, &handed, &progress, || {
+                let ask = |question: &actions::Question| ask_through_ui(&tx, question);
+                let config = config_now(&paths)?;
+                let config = actions::resolve_for_start(
+                    &paths,
+                    &config,
+                    &worker_name,
+                    mode,
+                    &ask,
+                    &progress,
+                )
+                .map_err(|e| format!("{e:#}"))?;
+                let _ = tx.send(AppEvent::ConfigResolved(Box::new(config.clone())));
+                actions::restart(
+                    &paths,
+                    &config,
+                    &worker_name,
+                    only.as_deref(),
+                    mode,
+                    &progress,
+                )
+                .map(|report| PendingOutcome::started(worker_name.clone(), &report))
+                .map_err(|e| format!("{e:#}"))
+            })
         });
         if started && let Some(p) = self.pending.last_mut() {
             p.progress_rx = Some(prx);
+            p.cancel = Some(cancel);
             if let Some(label) = label {
                 p.label = label;
             }

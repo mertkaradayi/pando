@@ -350,6 +350,9 @@ pub struct App {
     /// dead half is said once and not on every refresh.
     pub silence_told: std::collections::HashSet<(String, u16)>,
     pub should_quit: bool,
+    /// `q` twice cancelled the starts in flight: pando quits as soon as
+    /// each has run its undo.
+    pub quitting: bool,
     pub tick: u32,
     /// Where the last frame put what the mouse acts on. Written by the
     /// paint, read by the mouse.
@@ -458,6 +461,7 @@ impl App {
             deaths_told: HashMap::new(),
             silence_told: std::collections::HashSet::new(),
             should_quit: false,
+            quitting: false,
             tick: 0,
             hits: Hits::default(),
             last_click: None,
@@ -1049,27 +1053,65 @@ impl App {
     /// whose undo then never runs — so with one in flight `q` asks for a
     /// second press, and esc, which cancels everywhere else, only says so.
     /// ctrl-c still quits at once, whatever is in flight.
+    ///
+    /// A start or a restart in flight is cancelled by the second `q`
+    /// rather than abandoned, and pando quits once each has run its undo:
+    /// abandoned, a switch to isolated left containers up that its record
+    /// does not say are isolated. A cancel lands at the start's next safe
+    /// point, so a hook it is running finishes first; a `q` meanwhile
+    /// quits at once. Anything else in flight is abandoned, as before.
     fn quit(&mut self, key: KeyCode) {
+        if self.quitting && key == KeyCode::Char('q') {
+            self.should_quit = true;
+            return;
+        }
         let Some(first) = self.pending.first() else {
             self.should_quit = true;
             return;
         };
         let name = first.name.clone();
-        let doing = self
-            .pending
-            .iter()
-            .map(|p| format!("{} {}", p.kind.verb(), p.label))
-            .collect::<Vec<_>>()
-            .join(" and ");
+        let listed = |cancels: bool| {
+            self.pending
+                .iter()
+                .filter(|p| p.cancel.is_some() == cancels)
+                .map(|p| match cancels {
+                    true => format!("the {} of {}", p.kind.noun(), p.label),
+                    false => format!("{} {}", p.doing(), p.label),
+                })
+                .collect::<Vec<_>>()
+                .join(" and ")
+        };
+        let (cancels, abandons) = (listed(true), listed(false));
+        let what = match (cancels.is_empty(), abandons.is_empty()) {
+            (true, _) => format!("abandon {abandons} and quit"),
+            (false, true) => format!("cancel {cancels} and quit once it is undone"),
+            (false, false) => {
+                format!("cancel {cancels}, abandon {abandons}, and quit once it is undone")
+            }
+        };
         if key == KeyCode::Esc {
-            self.set_prompt(format!(
-                "{doing} is in flight — q twice abandons it and quits"
-            ));
+            self.set_prompt(match cancels.is_empty() {
+                true => format!("{abandons} is in flight — q twice abandons it and quits"),
+                false => format!("q twice would {what}"),
+            });
             return;
         }
-        if self.pressed_again('q', &name, &format!("abandon {doing} and quit")) {
-            self.should_quit = true;
+        if !self.pressed_again('q', &name, &what) {
+            return;
         }
+        if cancels.is_empty() {
+            self.should_quit = true;
+            return;
+        }
+        for pending in &self.pending {
+            if let Some(cancel) = &pending.cancel {
+                cancel.cancel();
+            }
+        }
+        self.quitting = true;
+        self.set_status(format!(
+            "cancelling {cancels} — pando quits once it is undone · q quits now"
+        ));
     }
 
     fn handle_filter_key(&mut self, key: KeyEvent) {
@@ -1788,6 +1830,7 @@ impl App {
             deaths_told: HashMap::new(),
             silence_told: std::collections::HashSet::new(),
             should_quit: false,
+            quitting: false,
             tick: 0,
             hits: Hits::default(),
             last_click: None,
