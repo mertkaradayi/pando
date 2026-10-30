@@ -40,6 +40,12 @@ may change behaviour.
   seconds' grace, under the lock every other command waits for — four
   of them, twenty seconds; now five. Their compose projects are asked
   to stop together too.
+- A `pando stop` no longer holds the lock while its processes take
+  their grace period to end, so two stops of two worktrees — the TUI's,
+  or two panes' — end together, and a start or a refresh never waits
+  behind one: two worktrees whose servers ignore SIGTERM stop in 5.3s
+  at once, from 10.3s. A process a stop is taking down is never shown
+  as failed while it waits. `restart` stops the same way.
 - `pando check` and `pando new` stop their install when they are told
   to stop. A Ctrl-C that landed just before the install started, or a
   `kill` of pando alone — an agent's, CI's — reached pando and not the

@@ -183,6 +183,39 @@ pub struct WorktreeRecord {
     /// repository: each repository's new branch forks from its own.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bases: BTreeMap<String, String>,
+    /// The groups a `stop` of this worktree has signalled and is waiting
+    /// on with the lock let go. See [`StopMark`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stopping: Vec<StopMark>,
+}
+
+/// A process group a `stop` is taking down, written before it waits.
+///
+/// A stop waits for its groups to end — up to the grace period, for one
+/// that ignores SIGTERM — without the lock, so two stops of two worktrees
+/// wait together rather than one after the other. While it waits, the
+/// group dying is its doing: nothing calls that death a failure, sweeps
+/// the group as an orphan, drops its record or closes its share, and the
+/// stop settles all of it under the lock when it is done. A mark whose
+/// pando is gone, or older than [`STOP_MARK_LIFETIME_SECS`], is no mark.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StopMark {
+    pub pgid: Group,
+    /// The pando stopping it.
+    pub by: u32,
+    pub since: DateTime<Utc>,
+}
+
+/// How long a [`StopMark`] holds: far past a stop's grace period and its
+/// SIGKILL, so it only ever runs out on a stop that never came back.
+pub const STOP_MARK_LIFETIME_SECS: i64 = 120;
+
+impl StopMark {
+    /// Whether the stop that wrote this is still waiting on it.
+    pub fn live(&self, is_alive: &impl Fn(u32) -> bool) -> bool {
+        is_alive(self.by)
+            && Utc::now().signed_duration_since(self.since).num_seconds() < STOP_MARK_LIFETIME_SECS
+    }
 }
 
 impl WorktreeRecord {
@@ -225,7 +258,29 @@ impl WorktreeRecord {
             last_started: None,
             base: None,
             bases: BTreeMap::new(),
+            stopping: Vec::new(),
         }
+    }
+
+    /// Whether a `stop` in flight is taking `pgid` down: see [`StopMark`].
+    pub fn being_stopped(&self, pgid: Group, is_alive: &impl Fn(u32) -> bool) -> bool {
+        self.stopping
+            .iter()
+            .any(|mark| mark.pgid == pgid && mark.live(is_alive))
+    }
+
+    /// The groups of this worktree a `stop` in flight is taking down.
+    pub fn groups_being_stopped(&self, is_alive: &impl Fn(u32) -> bool) -> Vec<Group> {
+        self.stopping
+            .iter()
+            .filter(|mark| mark.live(is_alive))
+            .map(|mark| mark.pgid)
+            .collect()
+    }
+
+    /// Whether a `stop` in flight is taking down anything of this worktree.
+    pub fn stop_in_flight(&self, is_alive: &impl Fn(u32) -> bool) -> bool {
+        self.stopping.iter().any(|mark| mark.live(is_alive))
     }
 
     /// When this worktree last ran: the start that last spawned a process,
@@ -725,10 +780,13 @@ pub fn reconcile(
 ) -> bool {
     let mut changed = false;
     for rec in state.worktrees.values_mut() {
+        // A record a stop in flight signalled is that stop's to drop.
+        let stopping = rec.groups_being_stopped(&is_alive);
         let before = rec.processes.len();
         rec.processes.retain(|_, p| {
             record_alive(p.pid, p.pgid, p.ready_port, &is_alive, &group_alive)
                 || matches!(p.phase, Phase::Failed { .. })
+                || stopping.contains(&p.pgid)
         });
         changed |= rec.processes.len() != before;
 
@@ -807,6 +865,10 @@ pub fn forget_dead_native_services(
 fn sweep_dead_shares(state: &mut State, is_alive: &impl Fn(u32) -> bool) -> bool {
     let mut changed = false;
     for rec in state.worktrees.values_mut() {
+        // A stop in flight takes its share down itself, and says so.
+        if rec.stop_in_flight(is_alive) {
+            continue;
+        }
         let Some(share) = &rec.share else { continue };
         let tunnel_dead = !is_alive(share.tunnel_pid);
         let proxy_dead = share.proxy_pid.map(|p| !is_alive(p)).unwrap_or(false);
@@ -826,6 +888,9 @@ fn sweep_dead_shares(state: &mut State, is_alive: &impl Fn(u32) -> bool) -> bool
 /// port to find out, which would hand the server being waited for an
 /// `EADDRINUSE`. A process that declared no `ready_port` is Running as soon
 /// as it is alive.
+///
+/// A group a `stop` in flight is taking down is left where it is: its
+/// death is that stop's doing, and the stop settles it ([`StopMark`]).
 pub fn advance_phases<R: Into<PortCheck>>(
     state: &mut State,
     is_alive: impl Fn(u32) -> bool,
@@ -835,7 +900,11 @@ pub fn advance_phases<R: Into<PortCheck>>(
     let now = Utc::now();
     let mut changed = false;
     for rec in state.worktrees.values_mut() {
+        let stopping = rec.groups_being_stopped(&is_alive);
         for proc in rec.processes.values_mut() {
+            if stopping.contains(&proc.pgid) {
+                continue;
+            }
             match &proc.phase {
                 Phase::Starting { since } => {
                     let timeout = proc

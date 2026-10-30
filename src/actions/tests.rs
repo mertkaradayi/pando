@@ -2722,6 +2722,164 @@ esac
     );
 }
 
+/// A worktree record with one live process: the test's own pid as its
+/// leader, so no sweep signals it, and `pgid` for the stop to be handed.
+fn live_dev(fx: &Fx, name: &str, pgid: i32) {
+    let mut store = fx.state();
+    let mut dev = fake_record(pgid);
+    dev.pid = std::process::id();
+    store
+        .worktrees
+        .get_mut(name)
+        .expect("new wrote a record")
+        .processes
+        .insert("dev".to_string(), dev);
+    state::save(&fx.paths.state_file(), &store).unwrap();
+}
+
+// A stop waited out its grace period under the lock, so the TUI's stops
+// of several worktrees — and two `pando stop`s in two panes — ended one
+// grace after another, and every start and refresh waited behind them.
+#[test]
+fn two_stops_of_two_worktrees_wait_out_their_grace_together() {
+    let fx = fixture();
+    let one = worktree_named(&fx, "feat/one");
+    let two = worktree_named(&fx, "feat/two");
+    live_dev(&fx, &one, 4_000_401);
+    live_dev(&fx, &two, 4_000_402);
+
+    let grace = Duration::from_millis(800);
+    let slow = |_| {
+        std::thread::sleep(grace);
+        Ok(())
+    };
+    let began = Instant::now();
+    let (a, b) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| super::lifecycle::stop_with(&fx.paths, &one, None, slow, &noop));
+        let b = scope.spawn(|| super::lifecycle::stop_with(&fx.paths, &two, None, slow, &noop));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    let took = began.elapsed();
+    assert_eq!(a.unwrap(), StopOutcome::Stopped(vec!["dev".to_string()]));
+    assert_eq!(b.unwrap(), StopOutcome::Stopped(vec!["dev".to_string()]));
+    assert!(
+        took < grace * 2 - Duration::from_millis(200),
+        "two stops took {took:?}, where one grace is {grace:?}"
+    );
+    let saved = fx.state();
+    for name in [&one, &two] {
+        assert!(saved.worktrees[name].processes.is_empty(), "{name}");
+        assert!(saved.worktrees[name].stopping.is_empty(), "{name}");
+    }
+}
+
+// While it waits, the lock is free, and the group dying is the stop's
+// doing: a read in that window does not call it failed, nor does another
+// mutation's sweep signal it again or its reconcile drop its record.
+#[test]
+fn a_stop_waits_without_the_lock_and_nothing_calls_its_process_failed() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    let dev = crate::testutil::spawn_guarded(
+        "exec sleep 30",
+        &std::env::temp_dir(),
+        &fx.paths.log_file(&name, "dev"),
+    );
+    let mut store = fx.state();
+    let mut record = fake_record(dev.pgid.as_raw());
+    record.pid = dev.pid;
+    store
+        .worktrees
+        .get_mut(&name)
+        .unwrap()
+        .processes
+        .insert("dev".to_string(), record);
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let seen = std::sync::Mutex::new(None);
+    let outcome = super::lifecycle::stop_with(
+        &fx.paths,
+        &name,
+        None,
+        |pgid| {
+            // Not at once under a full run: a fork another test makes
+            // before its exec holds a copy of the lock's file a moment.
+            let free = wait_until(Duration::from_secs(5), || {
+                state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+            });
+            crate::process::stop(pgid, Duration::from_secs(5))?;
+            // Dead now, and not yet settled: what everyone else sees.
+            let read = refresh(&fx.paths).state.worktrees[&name].processes["dev"]
+                .phase
+                .clone();
+            // And what another mutation does, under its lock.
+            let mut other = fx.state();
+            let swept = super::lifecycle::sweep_orphaned_groups(&mut other).unwrap();
+            advance_before_reconcile(&mut other);
+            let advanced = other.worktrees[&name].processes["dev"].phase.clone();
+            state::reconcile(&mut other, proc::is_alive, proc::group_alive);
+            let kept = other.worktrees[&name].processes.contains_key("dev");
+            *seen.lock().unwrap() = Some((free, read, advanced, swept, kept));
+            Ok(())
+        },
+        &noop,
+    )
+    .unwrap();
+    assert_eq!(outcome, StopOutcome::Stopped(vec!["dev".to_string()]));
+    let (free, read, advanced, swept, kept) = seen.into_inner().unwrap().expect("the stop waited");
+    assert!(free, "the lock was held through the wait");
+    for phase in [read, advanced] {
+        assert!(
+            matches!(phase, Phase::Running { .. }),
+            "a death the stop is waiting on read as {phase:?}"
+        );
+    }
+    assert!(swept.is_empty(), "{swept:?}");
+    assert!(kept, "another mutation's reconcile dropped the record");
+    let saved = fx.state();
+    assert!(saved.worktrees[&name].processes.is_empty());
+    assert!(saved.worktrees[&name].stopping.is_empty());
+}
+
+// A start of the worktree in the meantime — its processes died under the
+// wait, and it spawned new ones — is not the stop's to undo.
+#[test]
+fn a_start_during_a_stops_wait_keeps_what_it_started() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    live_dev(&fx, &name, 4_000_411);
+    let outcome = super::lifecycle::stop_with(
+        &fx.paths,
+        &name,
+        None,
+        |_| {
+            // What a start writes once the old process is gone.
+            let _lock = state::lock(&fx.paths.lock_file()).unwrap();
+            let mut store = fx.state();
+            let mut new = fake_record(4_000_412);
+            new.pid = std::process::id();
+            store
+                .worktrees
+                .get_mut(&name)
+                .unwrap()
+                .processes
+                .insert("dev".to_string(), new);
+            state::save(&fx.paths.state_file(), &store).unwrap();
+            Ok(())
+        },
+        &noop,
+    )
+    .unwrap();
+    assert_eq!(outcome, StopOutcome::Stopped(Vec::new()));
+    let saved = fx.state();
+    assert_eq!(
+        saved.worktrees[&name].processes["dev"].pgid,
+        Group::from_raw(4_000_412),
+        "the start's process is kept"
+    );
+    assert!(saved.worktrees[&name].stopping.is_empty());
+}
+
 // A worktree whose processes are all gone can still be shared: the tunnel
 // outlives them. `stop` with no name is "nothing of pando's left running",
 // and it chose the worktrees to stop by their processes and services alone

@@ -498,6 +498,11 @@ pub(super) fn sweep_dead_shares_with(
     let mut notices = Vec::new();
     for (name, record) in store.worktrees.iter_mut() {
         sweep_interrupted_shares(name, record, &is_alive, &group_alive, &stop, &mut notices);
+        // A stop in flight takes the share down itself, once what it
+        // points at is gone, and says so.
+        if record.stop_in_flight(&is_alive) {
+            continue;
+        }
         let Some(share) = record.share.clone() else {
             continue;
         };
