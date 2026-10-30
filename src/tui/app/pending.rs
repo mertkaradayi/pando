@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use crate::actions;
 use crate::actions::git::{GitAction, Ran};
+use crate::cancel::Cancel;
 use crate::config::Config;
 use crate::paths::PandoPaths;
 use crate::state::{self, Aggregate, Phase, WorktreeRecord};
@@ -77,7 +78,7 @@ impl PendingKind {
     }
 
     /// What it was trying to do, for the line that says it did not.
-    fn noun(self) -> &'static str {
+    pub(super) fn noun(self) -> &'static str {
         match self {
             PendingKind::Create => "create",
             PendingKind::Remove => "remove",
@@ -110,6 +111,13 @@ pub enum PendingOutcome {
     StoppedAll(actions::StopAllReport),
     /// What a move from the git menu did to the worktree.
     Git(String, Ran),
+    /// A start or a restart `x` cancelled, and whether anything of the
+    /// worktree was up afterwards for the stop that followed it to take
+    /// down.
+    Cancelled {
+        name: String,
+        stopped: bool,
+    },
 }
 
 impl PendingOutcome {
@@ -231,9 +239,26 @@ pub struct PendingAction {
     /// A create whose worker has said [`actions::INSTALLING`]: every ref
     /// it writes is written, and what is left, the install, writes none.
     pub refs_written: bool,
+    /// What `x` cancels it with: a start's or a restart's, `None` for an
+    /// action nothing cancels.
+    pub cancel: Option<Cancel>,
 }
 
 impl PendingAction {
+    /// What the row, the spinner and a refusal say it is doing:
+    /// `cancelling` once `x` has cancelled it, until its undo is done.
+    pub fn doing(&self) -> &'static str {
+        match self.cancelled() {
+            true => "cancelling",
+            false => self.kind.verb(),
+        }
+    }
+
+    /// Whether `x` has cancelled it.
+    pub fn cancelled(&self) -> bool {
+        self.cancel.as_ref().is_some_and(Cancel::is_cancelled)
+    }
+
     /// Whether an action of `kind` on `covers` has to wait for this one.
     ///
     /// Two on one worktree always do. A stop-all runs alone: it stops
@@ -392,7 +417,7 @@ impl App {
         // By what the spinner calls it: a stop-all has no worktree's name,
         // and a create's name is the directory, not the branch typed.
         if let Some(p) = self.pending.iter().find(|p| p.conflicts(kind, &covers)) {
-            let busy = format!("{} {}", p.kind.verb(), p.label);
+            let busy = format!("{} {}", p.doing(), p.label);
             self.set_error(format!("already busy {busy}"));
             return false;
         }
@@ -414,6 +439,7 @@ impl App {
             stage: None,
             said: Vec::new(),
             refs_written: false,
+            cancel: None,
         });
         true
     }
@@ -467,6 +493,11 @@ impl App {
         for (pending, result) in done {
             self.finish_pending(pending, result);
         }
+        // `q` twice cancelled the starts in flight; pando goes once each
+        // has run its undo, and abandons whatever else is still running.
+        if self.quitting && !self.pending.iter().any(|p| p.cancel.is_some()) {
+            self.should_quit = true;
+        }
         // After the outcomes: one that finished has said so on the header,
         // and the spinner of the ones still running waits its turn.
         if self.spinner_may_take_header()
@@ -496,7 +527,7 @@ impl App {
             String::new()
         };
         if let [pending] = self.pending.as_slice() {
-            let label = format!("{} {}", pending.kind.verb(), pending.label);
+            let label = format!("{} {}", pending.doing(), pending.label);
             return Some(match &pending.stage {
                 Some(stage) => format!("{glyph} {label} · {stage}{suffix}"),
                 None => format!("{glyph} {label}…{suffix}"),
@@ -505,7 +536,7 @@ impl App {
         let each: Vec<String> = self
             .pending
             .iter()
-            .map(|p| format!("{} {}", p.kind.verb(), p.label))
+            .map(|p| format!("{} {}", p.doing(), p.label))
             .collect();
         Some(format!("{glyph} {}…{suffix}", each.join(" · ")))
     }
@@ -620,6 +651,17 @@ impl App {
                                 "{stopped} · {} came up since and were left running",
                                 many.join(", ")
                             ),
+                        });
+                        self.spawn_refresh();
+                    }
+                    PendingOutcome::Cancelled { name, stopped } => {
+                        self.awaiting_ready.retain(|a| a.name != name);
+                        self.set_success(match stopped {
+                            true => format!(
+                                "cancelled the {} of {label}, and stopped what it had brought up",
+                                kind.noun()
+                            ),
+                            false => format!("cancelled the {} of {label}", kind.noun()),
                         });
                         self.spawn_refresh();
                     }

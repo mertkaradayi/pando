@@ -2430,6 +2430,7 @@ fn every_footer_hint_is_a_key_help_documents() {
         .chain(&NOTHING_TO_RUN_HINTS)
         .chain(&EMPTY_HINTS)
         .chain(&MARKED_HINTS)
+        .chain(&STARTING_HINTS)
         .chain(&shared)
     {
         for part in hint_keys(key) {
@@ -3217,6 +3218,7 @@ fn the_footer_says_a_question_is_waiting() {
         said: Vec::new(),
         label: "feat/one".into(),
         refs_written: false,
+        cancel: None,
     }];
     let (tx, _rx) = std::sync::mpsc::channel();
     app.handle_event(crate::tui::app::AppEvent::AskQuestion(Box::new((
@@ -3644,6 +3646,7 @@ fn the_detail_title_shows_the_action_in_flight_as_the_row_does() {
         said: Vec::new(),
         label: "feat/one".into(),
         refs_written: false,
+        cancel: None,
     }];
     let buf = draw(&mut app, 140, 20);
     let rendered = text_of(&buf);

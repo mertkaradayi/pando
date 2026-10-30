@@ -75,7 +75,8 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key(
         "x",
         &[KeyCode::Char('x')],
-        "stop it (x twice when it runs) — with rows marked, every marked one",
+        "stop it (x twice when it runs), or cancel the start in flight on it — with rows \
+         marked, every marked one",
     ),
     key(
         "X",
@@ -172,7 +173,8 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key(
         "q esc",
         &[KeyCode::Char('q'), KeyCode::Esc],
-        "quit — esc first clears the filter, then unmarks every row",
+        "quit — esc first clears the filter, then unmarks every row; with a start in flight, \
+         q twice cancels it and quits once it is undone",
     ),
     key("ctrl-c", &[], "quit from anywhere"),
 ];

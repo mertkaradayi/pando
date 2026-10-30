@@ -667,7 +667,7 @@ fn status_row<'a>(app: &App, name: &str, width: usize) -> Line<'a> {
             ("? waiting for your answer".to_string(), String::new())
         } else {
             (
-                format!("◌ {}…", pending.kind.verb()),
+                format!("◌ {}…", pending.doing()),
                 pending
                     .stage
                     .as_ref()

@@ -74,6 +74,14 @@ may change behaviour.
   worktree that is up already, or busy with something else, is left
   alone and said once. The other keys still act on the row under the
   cursor.
+- `x` on a worktree being started or restarted in the TUI cancels it,
+  where it said `already busy starting …` and a start could wait a
+  minute for a service. The start stops at its next safe point — a
+  readiness wait looks every quarter second, a hook already running
+  finishes first — through the undo a failure there runs, and the
+  worktree ends stopped. `q` twice with a start in flight cancels it
+  and quits once it is undone, rather than leaving it half up; `q`
+  again quits at once.
 
 ### Fixed
 

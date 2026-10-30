@@ -245,7 +245,7 @@ fn row_cells(app: &App, wt: &Worktree) -> RowCells {
     let (glyph, color) = row_marker(app, &wt.name);
     let word = match pending {
         Some(_) if app.awaiting_answer() => Some("waiting"),
-        Some(pending) => Some(pending.kind.verb()),
+        Some(pending) => Some(pending.doing()),
         // Running and stopped are the glyph's to say; the rest have
         // something worth reading.
         None => match &phase {

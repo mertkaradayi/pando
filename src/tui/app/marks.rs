@@ -253,7 +253,7 @@ impl App {
         self.pending
             .iter()
             .find(|p| p.conflicts(kind, &[name.to_string()]))
-            .map(|p| format!("{} {}", p.kind.verb(), p.label))
+            .map(|p| format!("{} {}", p.doing(), p.label))
     }
 
     /// What a key on the marks left alone, and why, after what it started.
@@ -291,26 +291,42 @@ impl App {
     }
 
     /// `x` with rows marked: every marked worktree with something up
-    /// stops, at once. While any of them runs, `x` asks for a second press
-    /// first, once for the whole set, as it does for one.
+    /// stops, at once, and a start or a restart in flight on one is
+    /// cancelled, as `x` on its row does. While any of them runs, `x` asks
+    /// for a second press first, once for the whole set, as it does for
+    /// one.
     pub(super) fn stop_marked(&mut self) {
         let marked = self.marked();
+        let starting: Vec<String> = marked
+            .iter()
+            .filter(|name| self.start_to_cancel(name))
+            .cloned()
+            .collect();
         let targets: Vec<String> = marked
             .iter()
+            .filter(|name| !starting.contains(name))
             .filter(|name| self.phase_of(name).is_some() || self.is_live(name))
             .cloned()
             .collect();
-        if targets.is_empty() {
+        if targets.is_empty() && starting.is_empty() {
             let message = match marked.as_slice() {
                 [one] => format!("{} is not running", self.label_of(one)),
                 _ => format!("none of the {} marked worktrees is running", marked.len()),
             };
             return self.set_status(message);
         }
+        let acting: Vec<String> = starting.iter().chain(&targets).cloned().collect();
         let interrupts = targets.iter().any(|name| self.is_up(name));
-        let what = format!("stop {}", self.named(&targets));
-        if interrupts && !self.pressed_again('x', &armed_on(&targets), &what) {
+        let what = format!("stop {}", self.named(&acting));
+        if interrupts && !self.pressed_again('x', &armed_on(&acting), &what) {
             return;
+        }
+        let cancelled: Vec<String> = starting
+            .iter()
+            .filter_map(|name| self.cancel_start(name))
+            .collect();
+        if !cancelled.is_empty() {
+            self.set_status(format!("cancelling {}…", cancelled.join(", ")));
         }
         let mut started = 0;
         let mut left = Vec::new();
