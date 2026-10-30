@@ -39,6 +39,13 @@ pub(super) fn spawn_group(command: &mut Command) -> io::Result<(Child, Group)> {
     Ok((child, group))
 }
 
+pub(super) fn spawn_in_group(command: &mut Command) -> io::Result<(Child, Group)> {
+    let child = command.process_group(0).spawn()?;
+    // A group of 0 is one led by the child, whose id is its pid.
+    let group = Group::from_raw(child.id() as i32);
+    Ok((child, group))
+}
+
 pub(super) fn ports_by_group(groups: &[Group]) -> BTreeMap<Group, Option<Vec<u16>>> {
     super::scan::observed_ports_by_group(groups)
 }

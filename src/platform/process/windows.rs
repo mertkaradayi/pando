@@ -23,6 +23,10 @@ pub(super) fn spawn_group(_: &mut Command) -> io::Result<(Child, Group)> {
     Err(not_yet())
 }
 
+pub(super) fn spawn_in_group(_: &mut Command) -> io::Result<(Child, Group)> {
+    Err(not_yet())
+}
+
 pub(super) fn is_alive(_: u32) -> bool {
     false
 }
