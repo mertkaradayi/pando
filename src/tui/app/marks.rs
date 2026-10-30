@@ -197,24 +197,31 @@ impl App {
             }
             return;
         }
-        let mut removing = Vec::new();
+        let mut waiting = Vec::new();
         for name in going {
+            // Said once for the set below, rather than an error apiece.
+            if let Some(busy) = self.busy_with(PendingKind::Remove, name) {
+                waiting.push(format!("{} waits for {busy}", self.label_of(name)));
+                continue;
+            }
             let created_by_pando = self.created_by_pando.get(name).copied().unwrap_or(false);
             if self.spawn_remove(name.clone(), !created_by_pando, force) {
                 // On its way out: the mark has nothing left to do, and a
                 // key pressed meanwhile is not for it.
                 self.marks.remove(name);
-                removing.push(name.clone());
             }
         }
         // What stays, and why, after the spinner's first line: the rows
         // still marked say which.
-        let mut stays: Vec<String> = Vec::new();
+        let mut stays: Vec<String> = waiting;
         if !force && !forced.is_empty() {
+            let (its, it) = match forced.len() {
+                1 => ("its", "it"),
+                _ => ("their", "them"),
+            };
             stays.push(format!(
-                "{} kept for its changes — still marked, d then F removes {}",
+                "{} kept for {its} changes — still marked, d then F removes {it}",
                 crate::detect::listed(&forced),
-                if forced.len() == 1 { "it" } else { "them" }
             ));
         }
         for (name, verdict) in &verdicts {
@@ -222,7 +229,7 @@ impl App {
                 stays.push(format!("{} skipped: {why}", self.label_of(name)));
             }
         }
-        if !removing.is_empty() && !stays.is_empty() {
+        if !stays.is_empty() {
             self.set_error(stays.join(" · "));
         }
     }

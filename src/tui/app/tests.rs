@@ -10759,3 +10759,32 @@ fn the_footer_with_rows_marked_offers_what_acts_on_them() {
         rows.last().unwrap()
     );
 }
+
+// A marked worktree with an action in flight waits for it: removing the
+// marks says so once, and removes the rest.
+#[test]
+fn removing_the_marks_leaves_a_busy_one_and_says_so_once() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+one".into(), PendingKind::Start, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(removing(&app), vec!["feat+two"]);
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("feat/one waits for starting feat/one".to_string())
+    );
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.message.contains("already busy")),
+        "{:?}",
+        app.messages
+    );
+    assert_eq!(marked(&app), vec!["feat+one"], "still marked");
+    drop(hold);
+}
