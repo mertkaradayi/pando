@@ -1824,7 +1824,7 @@ fn claim_removal(
     // `removal_of` said so above, under the lock everything reads the mark
     // under.
     let lock_file = paths.removal_lock_file(name);
-    let Some(held) = state::try_lock(&lock_file)? else {
+    let Some(held) = take_removal_lock(&lock_file)? else {
         bail!("{shown} {BEING_REMOVED} — {ALREADY_REMOVING}");
     };
     if interrupted {
@@ -1876,6 +1876,21 @@ fn claim_removal(
         projects,
         _held: held,
     })
+}
+
+/// A removal's lock, which nobody holds by the time `rm` takes it. Taken
+/// at once almost always: but a process another thread of this pando is
+/// spawning holds a copy of every descriptor open at its fork until its
+/// exec — a look at this lock among them — so one that reads as taken is
+/// asked again, for a moment, before it is believed.
+fn take_removal_lock(lock_file: &Path) -> Result<Option<state::StateLock>> {
+    for _ in 0..10 {
+        if let Some(held) = state::try_lock(lock_file)? {
+            return Ok(Some(held));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Ok(None)
 }
 
 /// `rm`'s slow part, without the state lock: the containers and their

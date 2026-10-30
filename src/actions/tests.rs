@@ -3974,7 +3974,11 @@ fn unshare_holds_no_state_lock_while_the_share_exits() {
     plant();
     let seen = std::cell::RefCell::new(Vec::new());
     unshare_with(&fx.paths, &name, |pgid| {
-        let free = state::try_lock(&fx.paths.lock_file()).unwrap().is_some();
+        // Waited for, not taken at once: a fork another test makes holds a
+        // copy of a lock's descriptor until its exec.
+        let free = wait_until(Duration::from_secs(5), || {
+            state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+        });
         let named = fx.state().worktrees[&name].share.as_ref() == Some(&share);
         seen.borrow_mut().push((pgid, free, named));
         Ok(())
@@ -11109,10 +11113,13 @@ fn a_worktree_being_removed_refuses_everything_else_and_holds_up_nothing() {
                 .exists()),
             "the removal never reached its containers"
         );
-        drop(
-            state::try_lock(&fx.paths.lock_file())
-                .unwrap()
-                .expect("the state lock is free while the containers go"),
+        assert!(
+            wait_until(Duration::from_secs(5), || state::try_lock(
+                &fx.paths.lock_file()
+            )
+            .unwrap()
+            .is_some()),
+            "the state lock is free while the containers go"
         );
         let mark = fx.state().worktrees[&name]
             .removing
@@ -11307,10 +11314,12 @@ fn removals_says_where_each_removal_stands_and_asks_under_the_state_lock() {
         BTreeMap::from([(name.clone(), RemovalState::UnderWay(mark.clone()))])
     );
     drop(held);
-    assert_eq!(
-        removals(&fx.paths).unwrap(),
-        BTreeMap::from([(name.clone(), RemovalState::Interrupted(mark.clone()))])
-    );
+    // Waited for: a fork another test makes holds a copy of a lock's
+    // descriptor until its exec.
+    let interrupted = BTreeMap::from([(name.clone(), RemovalState::Interrupted(mark.clone()))]);
+    assert!(wait_until(Duration::from_secs(5), || removals(&fx.paths)
+        .unwrap()
+        == interrupted));
 
     // Held elsewhere, the lock is not waited for, and no removal's lock is
     // asked: the interrupted one reads as under way until it is free. A
@@ -11320,16 +11329,18 @@ fn removals_says_where_each_removal_stands_and_asks_under_the_state_lock() {
         removals(&fx.paths).unwrap(),
         BTreeMap::from([(name.clone(), RemovalState::UnderWay(mark.clone()))])
     );
-    drop(
-        state::try_lock(&fx.paths.removal_lock_file(&name))
-            .unwrap()
-            .expect("nothing took the removal's lock"),
+    assert!(
+        wait_until(Duration::from_secs(5), || state::try_lock(
+            &fx.paths.removal_lock_file(&name)
+        )
+        .unwrap()
+        .is_some()),
+        "nothing took the removal's lock"
     );
     drop(lock);
-    assert_eq!(
-        removals(&fx.paths).unwrap(),
-        BTreeMap::from([(name.clone(), RemovalState::Interrupted(mark.clone()))])
-    );
+    assert!(wait_until(Duration::from_secs(5), || removals(&fx.paths)
+        .unwrap()
+        == interrupted));
 }
 
 // Any command that creates a directory under pando's home must make the
