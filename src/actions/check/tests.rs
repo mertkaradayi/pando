@@ -346,12 +346,11 @@ fn a_folders_shared_service_down_is_started_from_its_repositorys_compose_file() 
     for repo in ["backend", "infra"] {
         crate::testutil::init_repo(&root.join(repo));
     }
-    // A port nothing listens on: bound once, and let go.
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    // A port nothing listens on, and nothing else can take while the
+    // check asks: one bound once and let go was, under a full run, bound
+    // again by another test in between.
+    let refused = crate::testutil::refused_port();
+    let port = refused.port;
     std::fs::write(
         root.join("backend/.env"),
         format!("DATABASE_URL=postgres://app:app@localhost:{port}/shop\n"),
