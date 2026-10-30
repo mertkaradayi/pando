@@ -237,16 +237,17 @@ impl PendingAction {
     /// what is live when it takes the lock, and a worktree halfway
     /// through an isolated start is not live yet, so its services would
     /// be stopped under the start. And the actions that write the
-    /// repository's own refs — a create, a removal, a git move — run one
-    /// at a time: git refuses a ref another process holds the lock of
-    /// rather than waiting for it.
-    fn conflicts(&self, kind: PendingKind, covers: &[String]) -> bool {
-        let repo = |k: PendingKind| {
-            matches!(
-                k,
-                PendingKind::Create | PendingKind::Remove | PendingKind::Git(_)
-            )
-        };
+    /// repository's own refs — a create, a git move — run one at a time:
+    /// git refuses a ref another process holds the lock of rather than
+    /// waiting for it.
+    ///
+    /// A removal writes no ref: it keeps the branch, and `git worktree
+    /// remove` deletes only that worktree's own entry under
+    /// `.git/worktrees`. So removals run beside each other, and beside a
+    /// create or a git move on another worktree, the state lock ordering
+    /// their bookkeeping as it orders two `pando rm` in two panes.
+    pub(super) fn conflicts(&self, kind: PendingKind, covers: &[String]) -> bool {
+        let repo = |k: PendingKind| matches!(k, PendingKind::Create | PendingKind::Git(_));
         let all = |k: PendingKind| k == PendingKind::StopAll;
         all(self.kind)
             || all(kind)

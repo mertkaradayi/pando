@@ -104,6 +104,10 @@ may change behaviour.
 - `unshare` no longer holds every other command up while the tunnel and
   its proxy get their five seconds to exit; the share stays recorded
   until both are down.
+- The TUI no longer removes one worktree at a time: `d` on another
+  while one was being removed said `already busy removing …`. A removal
+  keeps the branch and writes no ref, so it runs beside another
+  removal, a new worktree being made, or a git move elsewhere.
 
 ## 0.11.1 — 2026-10-26
 

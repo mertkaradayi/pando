@@ -4670,6 +4670,69 @@ fn a_stop_all_runs_alone_and_repository_writes_take_turns() {
     drop(hold);
 }
 
+// "We can't delete several worktrees at the same time": `d` on a second
+// worktree while the first was being removed said "already busy removing
+// feat/one". A removal keeps the branch and writes no ref, so it takes no
+// turns with another removal, nor with a git move on another worktree.
+#[test]
+fn a_second_removal_starts_while_the_first_runs() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending(
+        "feat+three".into(),
+        PendingKind::Git(crate::actions::git::GitAction::Fetch),
+        move || {
+            let _ = held.recv();
+            Err("let go".to_string())
+        },
+    );
+    for _ in 0..2 {
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('y'));
+        press(&mut app, KeyCode::Char('j'));
+    }
+    let removing: Vec<&str> = app
+        .pending
+        .iter()
+        .filter(|p| p.kind == PendingKind::Remove)
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(removing, vec!["feat+one", "feat+two"]);
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.message.contains("already busy")),
+        "{:?}",
+        app.messages
+    );
+    // One worktree still has one action at a time.
+    assert!(
+        !app.spawn_pending("feat+one".into(), PendingKind::Remove, || {
+            Err("never runs".to_string())
+        })
+    );
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("already busy removing feat/one".to_string())
+    );
+    drop(hold);
+}
+
+// Only a create and a git move write refs: a create runs beside a
+// removal.
+#[test]
+fn a_create_runs_beside_a_removal() {
+    let mut app = test_app(&["feat+one"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+one".into(), PendingKind::Remove, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    assert!(app.spawn_create("feat/pay".into(), None));
+    assert_eq!(app.pending.len(), 2);
+    drop(hold);
+}
+
 // A start blocked on a question is not starting anything: the status line
 // and the row say it is waiting, rather than counting seconds.
 #[test]
