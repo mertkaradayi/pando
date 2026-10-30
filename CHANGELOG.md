@@ -58,6 +58,11 @@ may change behaviour.
   as it stands. A command that does have to wait says `waiting for
   another pando to finish` after a second, rather than looking hung,
   and the socket scan behind every read no longer holds the lock.
+- `pando stop --all` and the TUI's `X` stop every worktree at once:
+  one after another, each dev server slow to stop took its own five
+  seconds' grace, under the lock every other command waits for — four
+  of them, twenty seconds; now five. Their compose projects are asked
+  to stop together too.
 
 ## 0.11.1 — 2026-10-26
 
