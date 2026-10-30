@@ -46,6 +46,10 @@ may change behaviour.
   `use <branch>` made it a branch's build. `pando update` on a branch's
   build names it, and `scripts/dev rm` of the branch `pando` runs goes
   back to the release rather than to the main checkout's build.
+- `pando rm` takes several worktrees: `pando rm feat/a feat/b fix/c`
+  removes them side by side, says each as it finishes, and exits 1
+  naming any it could not remove; `--yes` and `--force` apply to each.
+  One name reads exactly as before.
 
 ### Fixed
 

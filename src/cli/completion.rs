@@ -68,7 +68,8 @@ pub(super) fn with_worktree_names(shell: Shell, script: &str) -> String {
 
 /// zsh: a worktree positional is `'::name -- help:' \` — its action empty
 /// because the argument's hint is `Other` — and gets the function as its
-/// action. The function is defined before `_pando`, which calls it.
+/// action; `'*::name -- help:' \` is one that takes several, `rm`'s. The
+/// function is defined before `_pando`, which calls it.
 fn zsh(script: &str) -> String {
     let function = format!(
         "{ZSH_FUNCTION}() {{\n    local -a names\n    names=(${{(f)\"$({LIST})\"}})\n    \
@@ -82,8 +83,9 @@ fn zsh(script: &str) -> String {
             defined = true;
         }
         let trimmed = line.trim_start();
-        let worktree_arg = (trimmed.starts_with("':name -- ")
-            || trimmed.starts_with("'::name -- "))
+        let worktree_arg = ["':name -- ", "'::name -- ", "'*:name -- ", "'*::name -- "]
+            .iter()
+            .any(|start| trimmed.starts_with(start))
             && line.trim_end().ends_with(":' \\");
         match worktree_arg {
             true => {

@@ -20,6 +20,7 @@ mod ls;
 mod names;
 mod open;
 mod prompt;
+mod rm;
 mod signals;
 mod status;
 mod tip;
@@ -144,17 +145,25 @@ Examples:
         #[arg(long, hide = true, conflicts_with_all = ["json", "long"])]
         names: bool,
     },
-    /// Remove a worktree and wipe its pando data. The branch is kept.
+    /// Remove worktrees and wipe their pando data. The branches are kept.
+    ///
+    /// Several names are removed side by side, each said as it finishes.
+    /// One that cannot be removed leaves the others to finish, and the
+    /// exit code is then 1.
+    #[command(after_help = "\
+Examples:
+  pando rm feat/login            one worktree
+  pando rm feat/a feat/b fix/c   three, side by side")]
     #[command(display_order = 12)]
     Rm {
-        /// The worktree, by branch or directory name. Never the main
+        /// The worktrees, by branch or directory name. Never the main
         /// checkout.
-        #[arg(value_name = WORKTREE, value_hint = clap::ValueHint::Other)]
-        name: String,
+        #[arg(value_name = WORKTREE, value_hint = clap::ValueHint::Other, required = true)]
+        name: Vec<String>,
         /// Confirm removing a worktree pando did not create.
         #[arg(long)]
         yes: bool,
-        /// Remove it whatever is in the way.
+        /// Remove each whatever is in the way.
         ///
         /// Lets git discard modified or untracked files, and goes ahead
         /// with Docker not running — its services' data volumes then stay
@@ -702,12 +711,7 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
                 ls_text(paths, &mut out, long)
             }
         }
-        Command::Rm { name, yes, force } => {
-            let name = names::resolve(paths, &name)?;
-            actions::rm(paths, &name, yes, force, &notice)?;
-            writeln!(out, "removed {name}")?;
-            Ok(())
-        }
+        Command::Rm { name, yes, force } => rm::rm(paths, &name, yes, force, &mut out),
         Command::Path { name } => {
             writeln!(out, "{}", names::path(paths, &name)?.display())?;
             Ok(())

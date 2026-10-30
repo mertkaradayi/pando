@@ -326,7 +326,8 @@ pando stop [name]     stop one worktree, or the main checkout; --all for every o
 pando restart <name>  stop and start again, keeping the ports
 pando ls              list the main checkout and the worktrees: status, URL,
                       ports, git; -l for paths
-pando rm <name>       stop everything, remove the worktree, wipe its data
+pando rm <name>...    stop everything, remove the worktree, wipe its data;
+                      several names are removed side by side
 pando share <name>    expose it at a public URL
 pando unshare <name>  take the public URL down
 pando open <name>     open its URL in the browser; --public for the shared one,

@@ -607,6 +607,47 @@ fn removing_a_worktree_pando_did_not_create_needs_yes() {
     assert!(!adopted.exists());
 }
 
+// `pando rm a b c`: removed side by side, each said as it finishes. One
+// refused leaves the others to finish, and the command fails naming it; a
+// worktree named twice, by its branch and by its directory, is removed
+// once. One name reads exactly as it always did.
+#[test]
+fn rm_takes_several_names_and_says_what_became_of_each() {
+    let e = env();
+    for branch in ["feat/one", "feat/two", "feat/three"] {
+        let out = e.pando(&["new", branch]);
+        assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    }
+    let two = stdout(&e.pando(&["path", "feat/two"])).trim().to_string();
+    std::fs::write(Path::new(&two).join("scratch.txt"), "wip\n").unwrap();
+
+    let out = e.pando(&["rm", "feat/one", "feat/two", "feat+three", "feat/three"]);
+    assert_eq!(code(&out), EXIT_ERROR, "stderr: {}", stderr(&out));
+    let printed = stdout(&out);
+    let mut removed: Vec<&str> = printed.lines().collect();
+    removed.sort();
+    assert_eq!(
+        removed,
+        ["removed feat+one", "removed feat+three"],
+        "{printed}"
+    );
+    let said = stderr(&out);
+    assert!(
+        said.contains("pando: feat+two was not removed: ") && said.contains("--force"),
+        "{said}"
+    );
+    assert!(
+        said.contains("1 of 3 worktrees was not removed: feat+two"),
+        "{said}"
+    );
+    assert!(Path::new(&two).exists());
+
+    let out = e.pando(&["rm", "feat/two", "--force"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "removed feat+two\n");
+    assert_eq!(status_porcelain(&e.root), "", "the fixture must stay clean");
+}
+
 // A `pando rm` killed half way — here while its containers go down — lets
 // go of its removal lock as it dies, and leaves its record marked: a start
 // of the worktree is refused with the command that finishes it, and that
