@@ -15,7 +15,10 @@ use crate::worktree::{self, PrInfo, Worktree};
 
 use super::checkout::CheckoutPlan;
 use super::hooks::{HookContext, run_hooks};
-use super::lifecycle::{StopOutcome, stop_recorded, sweep_orphaned_groups};
+use super::lifecycle::{
+    STOP_GRACE, StopOutcome, mark_stop, settle_stop, stop_recorded, stop_recorded_with,
+    sweep_orphaned_groups, unmark_stop, wait_for,
+};
 use super::namespaced::drop_namespaces;
 use super::refresh::refresh;
 use super::services::{clear_native_sockets, compose_projects, docker_down_for, remove_containers};
@@ -1585,11 +1588,36 @@ fn git_succeeds(root: &Path, args: &[&str]) -> bool {
 /// git and Docker are asked before the lock, and the ones state answers
 /// asked again under it. A removal stopped half way leaves its record
 /// marked, and the next `rm` of the name finishes it.
+///
+/// What runs is stopped as `stop` stops it: marked and signalled under the
+/// lock, waited for without it, settled under it again. A dev server that
+/// ignores SIGTERM takes its whole grace before its SIGKILL, and several
+/// removals of running worktrees wait out theirs together.
 pub fn rm(
     paths: &PandoPaths,
     name: &str,
     yes: bool,
     force: bool,
+    progress: &dyn Fn(&str),
+) -> Result<()> {
+    rm_with(
+        paths,
+        name,
+        yes,
+        force,
+        |pgid| crate::process::stop(pgid, STOP_GRACE),
+        progress,
+    )
+}
+
+/// [`rm`] with the signal injected, so a test can give a stop the grace a
+/// stubborn dev server takes without spending it.
+pub(super) fn rm_with(
+    paths: &PandoPaths,
+    name: &str,
+    yes: bool,
+    force: bool,
+    stop: impl Fn(crate::process::Group) -> Result<()> + Sync,
     progress: &dyn Fn(&str),
 ) -> Result<()> {
     let discovery = worktree::discover_all(&paths.project)?;
@@ -1678,9 +1706,12 @@ pub fn rm(
         refuse_docker_down(paths, &shown, &asked)?;
     }
 
-    let claim = claim_removal(
-        paths, &discovery, target, name, yes, force, &asked, progress,
+    let mut claim = claim_removal(
+        paths, &discovery, target, name, yes, force, &asked, &stop, progress,
     )?;
+    if let Err(e) = stop_claimed(paths, &mut claim, &stop) {
+        return Err(abandon_removal(paths, claim, e));
+    }
     match take_down(paths, &claim, target, force, progress) {
         Ok(()) => finish_removal(paths, claim, progress),
         Err(e) => Err(abandon_removal(paths, claim, e)),
@@ -1740,6 +1771,9 @@ struct Claim {
     /// none of, which a removal that fails leaves with none again.
     made_record: bool,
     created_by_pando: bool,
+    /// The process groups the claim marked as its stop's and signals once
+    /// the lock is let go; none when nothing was running.
+    planned: Vec<crate::process::Group>,
     stopped: StopOutcome,
     /// The compose projects the record named, taken down before git runs.
     projects: Vec<String>,
@@ -1767,9 +1801,11 @@ impl Claim {
 }
 
 /// `rm`'s first step, under the state lock: the refusals state answers,
-/// asked of it as it is now; then what runs is stopped, the record marked,
-/// and both saved — with the compose projects the record names, so the
-/// `rm` that finishes an interrupted removal has them.
+/// asked of it as it is now; then what runs is marked as this removal's
+/// stop, the record marked as being removed, and both saved — with the
+/// compose projects the record names, so the `rm` that finishes an
+/// interrupted removal has them. Nothing is signalled here unless nothing
+/// is running, when it is all settled at once.
 #[allow(clippy::too_many_arguments)]
 fn claim_removal(
     paths: &PandoPaths,
@@ -1779,6 +1815,7 @@ fn claim_removal(
     yes: bool,
     force: bool,
     asked: &[String],
+    stop: &(impl Fn(crate::process::Group) -> Result<()> + Sync),
     progress: &dyn Fn(&str),
 ) -> Result<Claim> {
     let _lock = state::lock(&paths.lock_file())?;
@@ -1854,15 +1891,25 @@ fn claim_removal(
     if !running.is_empty() {
         progress(&format!("stopping {}", running.join(", ")));
     }
-    let stopped = match stop_recorded(&mut store, name, None, &mut projects) {
-        Ok(stopped) => stopped,
+    // Marked, and signalled and waited for once the lock is let go
+    // ([`stop_claimed`]). With nothing to wait on — no process up, only the
+    // records a stopped worktree keeps — settled here at once.
+    let stopping = mark_stop(&mut store, name, None).and_then(|planned| {
+        match planned.is_empty() {
+            true => stop_recorded_with(&mut store, name, None, stop, &mut projects),
+            false => Ok(StopOutcome::NotRunning),
+        }
+        .map(|stopped| (planned, stopped))
+    });
+    let (planned, stopped) = match stopping {
+        Ok(stopping) => stopping,
         Err(e) => {
             let _ = std::fs::remove_file(&lock_file);
             return Err(e);
         }
     };
 
-    // And the mark, saved with what the stop cleared.
+    // And the removal's mark, saved with the stop's.
     let made_record = !store.worktrees.contains_key(name);
     store
         .worktrees
@@ -1879,10 +1926,56 @@ fn claim_removal(
         marked: store,
         made_record,
         created_by_pando,
+        planned,
         stopped,
         projects,
         _held: held,
     })
+}
+
+/// `rm`'s stop of what was running, when its claim marked any: every
+/// group signalled and waited for together, with no lock held — a dev
+/// server that ignores SIGTERM takes its whole grace, and every other
+/// command, and every other removal, used to wait it out too — then the
+/// records settled under the lock by what the wait found, as `stop`
+/// settles them. A group that would not end fails the removal before
+/// anything is removed, its record kept for a retry to signal.
+fn stop_claimed(
+    paths: &PandoPaths,
+    claim: &mut Claim,
+    stop: &(impl Fn(crate::process::Group) -> Result<()> + Sync),
+) -> Result<()> {
+    if claim.planned.is_empty() {
+        return Ok(());
+    }
+    let waited = wait_for(&claim.planned, stop);
+    let _lock = state::lock(&paths.lock_file())?;
+    let mut store = state::load(&paths.state_file())?;
+    let before = store.clone();
+    let mut projects = Vec::new();
+    match settle_stop(
+        &mut store,
+        &claim.name,
+        None,
+        &claim.planned,
+        &waited,
+        stop,
+        &mut projects,
+    ) {
+        Ok(stopped) => {
+            state::save(&paths.state_file(), &store)?;
+            claim.stopped = stopped;
+            claim.projects = projects;
+            claim.marked = store;
+            Ok(())
+        }
+        Err(e) => {
+            let mut kept = before;
+            unmark_stop(&mut kept, &claim.name, &claim.planned);
+            state::save(&paths.state_file(), &kept)?;
+            Err(e)
+        }
+    }
 }
 
 /// A removal's lock, which nobody holds by the time `rm` takes it. Taken
