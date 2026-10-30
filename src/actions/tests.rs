@@ -14217,6 +14217,33 @@ fn new_says_nothing_about_steps_it_has_nothing_to_do_for() {
     );
 }
 
+// The TUI lets the other git writers go once `new` says it is installing,
+// so by then every ref it writes is written, its record saved, and the
+// state lock free: the install is all that is left.
+#[test]
+fn new_says_installing_only_once_its_git_work_is_done() {
+    let fx = installable_fixture("echo installed");
+    let seen = std::sync::Mutex::new(None);
+    new(&fx.paths, &fx.config, "feat/one", None, &|m| {
+        if m != INSTALLING {
+            return;
+        }
+        let lock_free = state::try_lock(&fx.paths.lock_file()).unwrap().is_some();
+        let recorded = fx.state().worktrees.contains_key("feat+one");
+        let branch = Command::new("git")
+            .arg("-C")
+            .arg(&fx.root)
+            .args(["rev-parse", "--quiet", "--verify", "refs/heads/feat/one"])
+            .output()
+            .unwrap()
+            .status
+            .success();
+        *seen.lock().unwrap() = Some((lock_free, recorded, branch));
+    })
+    .unwrap();
+    assert_eq!(seen.into_inner().unwrap(), Some((true, true, true)));
+}
+
 // `rm` of a running worktree printed only "removed": that it stopped the
 // dev server first went unsaid.
 #[test]

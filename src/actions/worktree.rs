@@ -26,6 +26,13 @@ use crate::remedy;
 /// it as made.
 pub const CREATED_BUT_INSTALL_FAILED: &str = "was created, but its install step failed";
 
+/// What `new` says as its install starts, once it has written every ref it
+/// writes: the branch, each checkout's entry, the record — and let go of
+/// the state lock. What follows is the install and the create hooks, which
+/// take minutes and write no ref, so the TUI lets the other git writers
+/// run from this line on.
+pub const INSTALLING: &str = "installing";
+
 /// What `new` says when another command recorded the worktree while git
 /// checked it out. The worktree is kept here too, so a caller may treat
 /// it as made.
@@ -319,7 +326,7 @@ fn complete_set(
     );
     progress(&format!("added {} to {shown}", names.join(", ")));
     if has_install_step(config) {
-        progress("installing");
+        progress(INSTALLING);
     }
     let no_ports: BTreeMap<String, u16> = BTreeMap::new();
     let no_services: BTreeMap<String, String> = BTreeMap::new();
@@ -784,7 +791,7 @@ fn create(
         }
     }
     if installs {
-        progress("installing");
+        progress(INSTALLING);
     }
     let no_ports: BTreeMap<String, u16> = BTreeMap::new();
     let no_services: BTreeMap<String, String> = BTreeMap::new();

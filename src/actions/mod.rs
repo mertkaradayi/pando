@@ -92,8 +92,8 @@ pub use update::{
     latest_release, update,
 };
 pub use worktree::{
-    BEING_REMOVED, CREATED_BUT_INSTALL_FAILED, KEPT_OVER_RACED_RECORD, MAIN_RUNS_ONLY, Ownership,
-    RemovalState, Unprovisioned, beside_checkouts, created_by_pando, foreign_checkouts,
+    BEING_REMOVED, CREATED_BUT_INSTALL_FAILED, INSTALLING, KEPT_OVER_RACED_RECORD, MAIN_RUNS_ONLY,
+    Ownership, RemovalState, Unprovisioned, beside_checkouts, created_by_pando, foreign_checkouts,
     guard_write_locations, ls, ls_all, new, new_for_pr, ownership, path, path_in, removals, rm,
     sanitize_branch_to_dir, unprovisioned,
 };
