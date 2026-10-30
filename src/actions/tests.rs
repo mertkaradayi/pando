@@ -14064,6 +14064,99 @@ fn a_compose_leftover_does_not_hide_a_service_moving_back_to_compose() {
     );
 }
 
+/// A fixture whose one native service, `stuckdb`, spawns a server that
+/// never listens: a start in isolated mode waits on it until its timeout.
+fn stuck_native_fixture() -> (Fx, String) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut fx = fixture();
+    with_dev(&mut fx, dev("sleep 30"));
+    let name = worktree_named(&fx, "feat/one");
+    let recipes = fx.paths.recipes_dir();
+    std::fs::create_dir_all(&recipes).unwrap();
+    std::fs::write(
+        recipes.join("stuckdb.toml"),
+        "kind = \"service\"\nname = \"stuckdb\"\nbinaries = [\"pando-fake-stuckdb\"]\n\n\
+         [service]\ninit = \"mkdir -p {datadir}\"\ncmd = \"exec pando-fake-stuckdb {port}\"\n",
+    )
+    .unwrap();
+    let bin = fx.paths.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("pando-fake-stuckdb"),
+        "#!/bin/sh\nexec sleep 300\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        bin.join("pando-fake-stuckdb"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let native: Config =
+        toml::from_str("[[services]]\nkind = \"native\"\nname = \"stuckdb\"\n").unwrap();
+    fx.config.services = native.services;
+    (fx, name)
+}
+
+// `x` on a start the TUI has in flight cancels it. A start blocked in a
+// readiness wait — a minute, by default — stops within a round of it,
+// through the undo a failed wait runs: the server it spawned is stopped,
+// the worktree is back on the shared services, and nothing was spawned.
+#[test]
+fn a_start_cancelled_in_its_readiness_wait_stops_at_once_and_undoes_itself() {
+    let (fx, name) = stuck_native_fixture();
+    let cancel = crate::cancel::Cancel::new();
+    let (said, heard) = std::sync::mpsc::channel::<String>();
+    let started = std::thread::scope(|scope| {
+        // The worker holds the only sender, so a start that never waits
+        // ends the search below rather than hanging it.
+        let (paths, config, worktree, handed) = (&fx.paths, &fx.config, &name, cancel.clone());
+        let worker = scope.spawn(move || {
+            handed.run(|| {
+                let progress = |line: &str| {
+                    let _ = said.send(line.to_string());
+                };
+                super::start(paths, config, worktree, None, Mode::Isolated, &progress)
+            })
+        });
+        // Until it waits on the server, then a moment more inside the wait.
+        let waiting = heard
+            .iter()
+            .find(|line| line.starts_with("waiting for stuckdb"));
+        assert!(waiting.is_some(), "the start never waited on stuckdb");
+        let server = fx.state().worktrees[&name].services[0].clone();
+        let _server = server.pgid.map(|pgid| crate::testutil::Detached {
+            pid: server.pid.unwrap(),
+            pgid,
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let asked = Instant::now();
+        cancel.cancel();
+        let result = worker.join().unwrap();
+        (result, asked.elapsed(), server.pid)
+    });
+    let (result, took, server_pid) = started;
+    let err = result.expect_err("a cancelled start fails");
+    assert!(
+        format!("{err:#}").contains(crate::cancel::CANCELLED),
+        "{err:#}"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "it stopped within a round of its wait, not at the deadline: {took:?}"
+    );
+    let record = &fx.state().worktrees[&name];
+    assert!(
+        record.mode() != crate::state::ServiceMode::Isolated,
+        "the switch to isolated was undone"
+    );
+    assert!(record.processes.is_empty(), "nothing was spawned");
+    assert!(
+        !server_pid.is_some_and(proc::is_alive),
+        "the server it spawned was stopped"
+    );
+    assert!(!record.is_live(), "nothing of it is up");
+}
+
 // Two starts of one worktree at once — the TUI and an agent — both found
 // no native server running and both spawned one on the same data
 // directory, and the second pid was written over the first: a live server
