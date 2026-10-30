@@ -7068,8 +7068,8 @@ fn the_first_frames_read_never_waits_for_the_state_lock() {
         crate::project::ProjectRef::from_root(&root).unwrap(),
     );
     paths.ensure_home().unwrap();
-    // A process whose pid is gone, so the read has to advance rather than
-    // take the file as it stands.
+    // A process whose pid is gone, so the read cannot take the file as it
+    // stands without asking for the refresh that takes the lock.
     let mut store = State::new();
     let mut record = WorktreeRecord::new("/trees/feat+a", true);
     let gone = ProcessRecord {
@@ -7106,9 +7106,10 @@ fn the_first_frames_read_never_waits_for_the_state_lock() {
     assert!(
         matches!(
             state.worktrees["feat+a"].processes["dev"].phase,
-            Phase::Failed { .. }
+            Phase::Running { .. }
         ),
-        "and what it shows is advanced all the same"
+        "and it shows the state as it stands: a death under another pando's lock may be its \
+         stop, and is not called a failure"
     );
 }
 

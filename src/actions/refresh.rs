@@ -58,12 +58,12 @@ pub fn refresh(paths: &PandoPaths) -> Refreshed {
     // Never waited for: a `rm` or a stop holds it for as long as a
     // `docker compose down` takes, and `ls`, `status` and the TUI's first
     // frame waited all that time with nothing on screen. While someone
-    // holds it, the answer is the same advance on the copy just read,
-    // written nowhere — the holder's next save is the one that counts,
-    // and the next read that finds the lock free saves this one's work.
+    // holds it, the answer is the copy just read, advanced and written
+    // nowhere — the holder's next save is the one that counts, and the
+    // next read that finds the lock free saves this one's work.
     let _lock = match state::try_lock(&paths.lock_file()) {
         Ok(Some(lock)) => lock,
-        Ok(None) => return advanced(seen, &scans),
+        Ok(None) => return advanced_while_held(seen, &scans),
         Err(e) => return unreadable(e),
     };
     // Read again under the lock: a mutation may have saved since.
@@ -153,8 +153,48 @@ pub fn inspect(paths: &PandoPaths) -> Refreshed {
     advanced(store, &scans)
 }
 
-/// The advance on a copy: [`inspect`]'s whole answer, and [`refresh`]'s
-/// while another pando holds the lock.
+/// [`refresh`]'s answer while another pando holds the lock: the advance on
+/// a copy, except that nothing is called dead.
+///
+/// A process that died under another pando's lock is as likely that
+/// pando's doing — a stop signalling it, a restart replacing it — as a
+/// crash, and its save says which. Called failed here, every worktree a
+/// stop was taking down read as crashed until it saved: the TUI's rows
+/// during its own `X`, and a check whose processes `stop --all` stopped
+/// recorded itself failed by its settings rather than interrupted. So a
+/// new failure that is a death keeps the phase it was recorded in; one
+/// that is a wait run out stands, and so does a process seen ready.
+fn advanced_while_held(
+    seen: state::State,
+    scans: &BTreeMap<proc::Group, Option<Vec<u16>>>,
+) -> Refreshed {
+    let recorded = seen.clone();
+    let mut refreshed = advanced(seen, scans);
+    for (name, record) in refreshed.state.worktrees.iter_mut() {
+        for (process, p) in record.processes.iter_mut() {
+            let Phase::Failed { reason, .. } = &p.phase else {
+                continue;
+            };
+            if !reason.starts_with(state::EXITED) {
+                continue;
+            }
+            let Some(before) = recorded
+                .worktrees
+                .get(name)
+                .and_then(|r| r.processes.get(process))
+            else {
+                continue;
+            };
+            if !matches!(before.phase, Phase::Failed { .. }) {
+                *p = before.clone();
+            }
+        }
+    }
+    refreshed
+}
+
+/// The advance on a copy: [`inspect`]'s whole answer, and the ground of
+/// [`refresh`]'s while another pando holds the lock.
 fn advanced(mut store: state::State, scans: &BTreeMap<proc::Group, Option<Vec<u16>>>) -> Refreshed {
     // The same forgetting the read path does, on the copy: a report that
     // listed a database whose server is gone would contradict `status`.
