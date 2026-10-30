@@ -11143,3 +11143,26 @@ fn q_twice_cancels_a_start_and_quits_once_it_is_undone() {
     assert!(app.should_quit, "a q while it undoes quits now");
     drop(hold);
 }
+
+// Removing a set of marks says what it kept, and why, on the header; a
+// removal that finished at once wrote its `✓ removed` over it. The row
+// going says that one too, and `m` keeps it.
+#[test]
+fn a_removal_that_finishes_leaves_a_fresh_error_on_the_header() {
+    let mut app = test_app(&["feat+one"]);
+    // In the order the dialog's confirm does it: the removals, then what
+    // stays.
+    app.spawn_pending("feat+one".into(), PendingKind::Remove, || {
+        Ok(PendingOutcome::Removed("feat+one".into()))
+    });
+    app.set_error("feat/dirty kept for its changes — still marked, d then F removes it");
+    wait_for_pending(&mut app);
+    assert_eq!(
+        app.active_status(),
+        Some((
+            "feat/dirty kept for its changes — still marked, d then F removes it",
+            true
+        ))
+    );
+    assert!(app.messages.iter().any(|m| m.message == "removed feat/one"));
+}
