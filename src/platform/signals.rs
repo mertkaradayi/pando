@@ -22,6 +22,13 @@ pub fn interrupted() -> bool {
     imp::interrupted()
 }
 
+/// Whether [`catch_interrupts`] has run: pando notes an interrupt rather
+/// than ending of it, so what it runs that the signal did not reach is
+/// pando's own to stop.
+pub fn catching() -> bool {
+    imp::catching()
+}
+
 /// Before a hang-up or a termination ends pando, hang up on every group a
 /// [`HangUpOnExit`] holds: what each would have had from the terminal, had
 /// it shared pando's.
@@ -69,6 +76,9 @@ mod imp {
     /// Set by [`note_interrupt`].
     static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
+    /// Set once [`catch_interrupts`] has installed its handler.
+    static CATCHING: AtomicBool = AtomicBool::new(false);
+
     /// How many groups can be held at once. One hook runs at a time per
     /// worktree action, so this is far more than the TUI ever has in
     /// flight.
@@ -93,6 +103,11 @@ mod imp {
             // The handler stores one atomic, which is safe in one.
             let _ = unsafe { sigaction(signal, &action) };
         }
+        CATCHING.store(true, Ordering::SeqCst);
+    }
+
+    pub(super) fn catching() -> bool {
+        CATCHING.load(Ordering::SeqCst)
     }
 
     extern "C" fn note_interrupt(_: libc::c_int) {
@@ -174,6 +189,10 @@ mod imp {
     pub(super) fn catch_interrupts() {}
 
     pub(super) fn interrupted() -> bool {
+        false
+    }
+
+    pub(super) fn catching() -> bool {
         false
     }
 

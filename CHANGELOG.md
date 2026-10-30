@@ -63,6 +63,12 @@ may change behaviour.
   seconds' grace, under the lock every other command waits for — four
   of them, twenty seconds; now five. Their compose projects are asked
   to stop together too.
+- `pando check` and `pando new` stop their install when they are told
+  to stop. A Ctrl-C that landed just before the install started, or a
+  `kill` of pando alone — an agent's, CI's — reached pando and not the
+  install, and the check sat until the install ended by itself. Now no
+  hook starts once pando has been told to stop, and outside a terminal
+  a running one leads a process group of its own, which pando stops.
 
 ## 0.11.1 — 2026-10-26
 

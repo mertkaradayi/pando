@@ -34,6 +34,15 @@ pub fn spawn_group(command: &mut Command) -> io::Result<(Child, Group)> {
     imp::spawn_group(command)
 }
 
+/// Spawns `command` as the first process of a group of its own in pando's
+/// session. It keeps pando's controlling terminal, as a background group,
+/// so no signal the terminal sends reaches it: whoever spawned it passes
+/// them on, with [`stop`]. Everything it starts stays in the group unless
+/// it leaves on purpose.
+pub fn spawn_in_group(command: &mut Command) -> io::Result<(Child, Group)> {
+    imp::spawn_in_group(command)
+}
+
 /// Whether `pid` is running.
 ///
 /// A child of this pando that has ended is collected here as a side
