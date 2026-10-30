@@ -48,7 +48,8 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key(
         "+",
         &[KeyCode::Char('+')],
-        "mark it, or unmark it, and move down",
+        "mark it, or unmark it, and move down: s x r d then act on every marked row, the \
+         other keys on the cursor's",
     ),
     key(
         "⏎",
@@ -59,7 +60,7 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key(
         "s",
         &[KeyCode::Char('s')],
-        "start it, in the mode it last ran in",
+        "start it, in the mode it last ran in — with rows marked, every marked one",
     ),
     key(
         "i",
@@ -71,7 +72,11 @@ pub const LIST_KEYS: &[KeyHelp] = &[
         &[KeyCode::Char('S')],
         "start it shared: the project's own services (asks when it runs otherwise)",
     ),
-    key("x", &[KeyCode::Char('x')], "stop it (x twice when it runs)"),
+    key(
+        "x",
+        &[KeyCode::Char('x')],
+        "stop it (x twice when it runs) — with rows marked, every marked one",
+    ),
     key(
         "X",
         &[KeyCode::Char('X')],
@@ -80,7 +85,8 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key(
         "r",
         &[KeyCode::Char('r')],
-        "restart it: r twice when it runs, once when stopped starts it",
+        "restart it: r twice when it runs, once when stopped starts it — with rows marked, \
+         every marked one",
     ),
     key(
         "P",
@@ -182,7 +188,7 @@ pub const LEADER_KEYS: &[KeyHelp] = &[
 pub const LIST_LEGEND: &[(&str, &str)] = &[
     (
         "+",
-        "marked with + — d removes every marked row; esc unmarks them all",
+        "marked with + — s x r d act on every marked row; esc unmarks them all",
     ),
     ("●", "running: the dev server is up"),
     ("◌", "starting, or something is being done to it"),

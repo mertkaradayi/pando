@@ -11,6 +11,15 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use super::App;
 use super::dialogs::{Modal, RemoveBlocker};
+use super::pending::PendingKind;
+use crate::actions;
+
+/// What `x` and `r` arm on with rows marked. No worktree is called this,
+/// so the second press counts only on the same set: a mark added or taken
+/// away between the two presses asks again.
+fn armed_on(names: &[String]) -> String {
+    format!("\u{0}marks\u{0}{}", names.join("\u{0}"))
+}
 
 /// What removing the marks does with one of them, read again at every
 /// paint and every key.
@@ -216,5 +225,123 @@ impl App {
         if !removing.is_empty() && !stays.is_empty() {
             self.set_error(stays.join(" · "));
         }
+    }
+
+    /// Marked worktrees as a sentence names them: by branch while that
+    /// reads, counted after three.
+    fn named(&self, names: &[String]) -> String {
+        match names.len() {
+            0..=3 => {
+                let labels: Vec<String> = names.iter().map(|n| self.label_of(n)).collect();
+                crate::detect::listed(&labels)
+            }
+            n => format!("{n} marked worktrees"),
+        }
+    }
+
+    /// What an action of `kind` on `name` would wait for, as the spinner
+    /// says it: `stopping feat/x`. Asked first, so a set says it once for
+    /// all its rows rather than an error apiece.
+    fn busy_with(&self, kind: PendingKind, name: &str) -> Option<String> {
+        self.pending
+            .iter()
+            .find(|p| p.conflicts(kind, &[name.to_string()]))
+            .map(|p| format!("{} {}", p.kind.verb(), p.label))
+    }
+
+    /// What a key on the marks left alone, and why, after what it started.
+    fn say_what_was_left(&mut self, started: usize, left: Vec<String>) {
+        if left.is_empty() {
+            return;
+        }
+        let left = left.join(" · ");
+        match started {
+            0 => self.set_status(left),
+            _ => self.set_status(format!("left alone: {left}")),
+        }
+    }
+
+    /// `s` with rows marked: every marked worktree that is not up starts,
+    /// in the mode it last ran in, each on its own worker and all at once.
+    pub(super) fn start_marked(&mut self) {
+        if self.refuses_nothing_to_run() {
+            return;
+        }
+        let mut started = 0;
+        let mut left = Vec::new();
+        for name in self.marked() {
+            let label = self.label_of(&name);
+            if self.is_up(&name) {
+                left.push(format!("{label} is up already"));
+            } else if let Some(busy) = self.busy_with(PendingKind::Start, &name) {
+                left.push(format!("{label} waits for {busy}"));
+            } else {
+                self.start_named(name, actions::Mode::Remembered);
+                started += 1;
+            }
+        }
+        self.say_what_was_left(started, left);
+    }
+
+    /// `x` with rows marked: every marked worktree with something up
+    /// stops, at once. While any of them runs, `x` asks for a second press
+    /// first, once for the whole set, as it does for one.
+    pub(super) fn stop_marked(&mut self) {
+        let marked = self.marked();
+        let targets: Vec<String> = marked
+            .iter()
+            .filter(|name| self.phase_of(name).is_some() || self.is_live(name))
+            .cloned()
+            .collect();
+        if targets.is_empty() {
+            let message = match marked.as_slice() {
+                [one] => format!("{} is not running", self.label_of(one)),
+                _ => format!("none of the {} marked worktrees is running", marked.len()),
+            };
+            return self.set_status(message);
+        }
+        let interrupts = targets.iter().any(|name| self.is_up(name));
+        let what = format!("stop {}", self.named(&targets));
+        if interrupts && !self.pressed_again('x', &armed_on(&targets), &what) {
+            return;
+        }
+        let mut started = 0;
+        let mut left = Vec::new();
+        for name in targets {
+            match self.busy_with(PendingKind::Stop, &name) {
+                Some(busy) => left.push(format!("{} waits for {busy}", self.label_of(&name))),
+                None => {
+                    self.stop_named(name);
+                    started += 1;
+                }
+            }
+        }
+        self.say_what_was_left(started, left);
+    }
+
+    /// `r` with rows marked: every marked worktree restarts in the mode it
+    /// last ran in, and one that is stopped starts, at once. While any of
+    /// them runs, `r` asks for a second press first, once for the set.
+    pub(super) fn restart_marked(&mut self) {
+        let marked = self.marked();
+        let interrupts = marked.iter().any(|name| self.is_up(name));
+        let what = format!("restart {}", self.named(&marked));
+        if interrupts && !self.pressed_again('r', &armed_on(&marked), &what) {
+            return;
+        }
+        let mut started = 0;
+        let mut left = Vec::new();
+        for name in marked {
+            if let Some(busy) = self.busy_with(PendingKind::Restart, &name) {
+                left.push(format!("{} waits for {busy}", self.label_of(&name)));
+                continue;
+            }
+            match self.phase_of(&name) {
+                None => self.start_named(name, actions::Mode::Remembered),
+                Some(_) => self.restart_named(name, actions::Mode::Remembered, None),
+            }
+            started += 1;
+        }
+        self.say_what_was_left(started, left);
     }
 }

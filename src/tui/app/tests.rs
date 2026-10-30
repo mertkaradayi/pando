@@ -10577,3 +10577,185 @@ fn a_click_on_the_marks_dialogs_hint_removes_them() {
     assert!(click_at(&mut app, on_frame(&rows, "y remove 2")));
     assert_eq!(removing(&app).len(), 2);
 }
+
+/// The actions in flight, by worktree and kind, oldest first.
+fn in_flight(app: &App) -> Vec<(String, PendingKind)> {
+    app.pending
+        .iter()
+        .map(|p| (p.name.clone(), p.kind))
+        .collect()
+}
+
+// `s` with rows marked starts every marked one that is not up, at once,
+// and says which it left alone.
+#[test]
+fn s_starts_every_marked_worktree_that_is_not_up() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+up", "feat+other"]);
+    with_process(&mut app, "feat+up", running_phase());
+    for name in ["feat+one", "feat+two", "feat+up"] {
+        app.marks.insert(name.into());
+    }
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+one".to_string(), PendingKind::Start),
+            ("feat+two".to_string(), PendingKind::Start),
+        ]
+    );
+    let (message, _) = app.active_status().unwrap();
+    assert_eq!(message, "left alone: feat/up is up already");
+}
+
+// `x` with rows marked asks once for the whole set, and the second `x`
+// stops every marked worktree that runs, at once. A mark changed between
+// the two presses asks again.
+#[test]
+fn x_twice_stops_every_marked_worktree_that_runs() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    with_process(&mut app, "feat+one", running_phase());
+    with_process(&mut app, "feat+two", running_phase());
+    app.marks = ["feat+one", "feat+two", "feat+three"]
+        .map(String::from)
+        .into();
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.pending.is_empty(), "the first press only asks");
+    let (message, _) = app.active_status().unwrap();
+    assert_eq!(
+        message,
+        "stop feat/one and feat/two? x again to confirm · esc cancels"
+    );
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+one".to_string(), PendingKind::Stop),
+            ("feat+two".to_string(), PendingKind::Stop),
+        ],
+        "feat+three has nothing up"
+    );
+
+    // `+` between the presses unmarks feat+one under the cursor: the set
+    // the second `x` would stop is not the one asked about.
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    with_process(&mut app, "feat+one", running_phase());
+    with_process(&mut app, "feat+two", running_phase());
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["feat+two"]);
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.pending.is_empty(), "asked again");
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("stop feat/two? x again to confirm · esc cancels".to_string())
+    );
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        in_flight(&app),
+        vec![("feat+two".to_string(), PendingKind::Stop)]
+    );
+}
+
+// With nothing marked up, `x` says so and stops nothing.
+#[test]
+fn x_with_no_marked_worktree_running_says_so() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+up"]);
+    with_process(&mut app, "feat+up", running_phase());
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.pending.is_empty());
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("none of the 2 marked worktrees is running".to_string())
+    );
+}
+
+// `r` with rows marked asks once while any of them runs; the second `r`
+// restarts the ones that run and starts the ones that do not, at once.
+// With none up, the first `r` starts them all, as it does for one.
+#[test]
+fn r_twice_restarts_every_marked_worktree() {
+    let mut app = test_app(&["feat+up", "feat+down"]);
+    with_process(&mut app, "feat+up", running_phase());
+    app.marks = ["feat+up", "feat+down"].map(String::from).into();
+    press(&mut app, KeyCode::Char('r'));
+    assert!(app.pending.is_empty(), "the first press only asks");
+    assert!(
+        app.active_status()
+            .unwrap()
+            .0
+            .starts_with("restart feat/up and feat/down? r again"),
+        "{:?}",
+        app.active_status()
+    );
+    press(&mut app, KeyCode::Char('r'));
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+up".to_string(), PendingKind::Restart),
+            ("feat+down".to_string(), PendingKind::Start),
+        ]
+    );
+
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('r'));
+    assert_eq!(app.pending.len(), 2, "nothing runs, so nothing to ask");
+}
+
+// A marked worktree with an action in flight is left alone, and the set
+// says so once rather than an "already busy" apiece.
+#[test]
+fn a_key_on_the_marks_leaves_a_busy_one_alone_and_says_so() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+one".into(), PendingKind::Remove, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+one".to_string(), PendingKind::Remove),
+            ("feat+two".to_string(), PendingKind::Start),
+        ]
+    );
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("left alone: feat/one waits for removing feat/one".to_string())
+    );
+    drop(hold);
+}
+
+// While rows are marked the footer offers the keys that act on them,
+// every one a button; esc's only once no filter would take it first.
+#[test]
+fn the_footer_with_rows_marked_offers_what_acts_on_them() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    press(&mut app, KeyCode::Char('+'));
+    every_hint_presses_a_key(&mut app, "the footer with rows marked");
+    let rows = frame(&mut app, 160, 24);
+    let footer = rows.last().unwrap();
+    assert!(
+        footer.starts_with(
+            " 1 marked · s start · x stop · r restart · d remove · + mark · esc unmark all"
+        ),
+        "{footer}"
+    );
+    click_at(&mut app, in_footer(&rows, "esc unmark all"));
+    assert!(app.marks.is_empty(), "a click on esc unmarks them");
+
+    press(&mut app, KeyCode::Char('/'));
+    type_str(&mut app, "feat");
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Char('+'));
+    let rows = frame(&mut app, 160, 24);
+    assert!(
+        !rows.last().unwrap().contains("esc"),
+        "{}",
+        rows.last().unwrap()
+    );
+}

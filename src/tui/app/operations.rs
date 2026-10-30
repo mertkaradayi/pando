@@ -256,7 +256,7 @@ impl App {
     /// so. The config is read again first — a `[dev]` added while the TUI
     /// is open is what somebody reading that line goes and does — so the
     /// next key after the edit starts it.
-    fn refuses_nothing_to_run(&mut self) -> bool {
+    pub(super) fn refuses_nothing_to_run(&mut self) -> bool {
         if !self.nothing_to_run {
             return false;
         }
@@ -280,7 +280,7 @@ impl App {
         }
     }
 
-    fn start_named(&mut self, name: String, mode: actions::Mode) {
+    pub(super) fn start_named(&mut self, name: String, mode: actions::Mode) {
         if self.refuses_nothing_to_run() {
             return;
         }
@@ -317,9 +317,13 @@ impl App {
             return;
         };
         let label = self.label_of(&name);
-        if !self.pressed_twice('x', &name, &format!("stop {label}")) {
-            return;
+        if self.pressed_twice('x', &name, &format!("stop {label}")) {
+            self.stop_named(name);
         }
+    }
+
+    /// Stops `name`, asking nothing: whoever calls it has asked.
+    pub(super) fn stop_named(&mut self, name: String) {
         let paths = self.paths.clone();
         let worker_name = name.clone();
         // A stop reaches the sweep that closes a *sibling's* half-dead

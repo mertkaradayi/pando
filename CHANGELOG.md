@@ -68,6 +68,12 @@ may change behaviour.
   the main checkout), and one confirm starts every removal at once.
   `y` keeps the ones that need `F` marked, so `d` then `F` finishes
   them.
+- `s`, `x` and `r` with rows marked start, stop or restart every marked
+  worktree at once, each on its own worker. `x` and `r` ask for their
+  second press once for the whole set, while any of it runs; a marked
+  worktree that is up already, or busy with something else, is left
+  alone and said once. The other keys still act on the row under the
+  cursor.
 
 ### Fixed
 

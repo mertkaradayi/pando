@@ -374,6 +374,8 @@ c C y    copy its local URL, its public URL, its path
 t        share it publicly, or stop sharing
 ! e      a shell in it, or open it in your editor
 n d      new worktree, remove one (never the main checkout, ⌂)
++ esc    mark rows, or unmark them all: s x r d then act on every
+         marked one at once, d in one dialog
 p        open pull requests: ⏎ makes a worktree for one
 space p  open its own pull request on GitHub (the row's #n)
 a v      copy the setup prompt, or test the setup (pando check)
@@ -405,6 +407,16 @@ or `S` twice restarts it in the mode it already runs in. Esc takes the
 first press back. Moving a running worktree between modes with `i` or
 `S`, sharing it, and removing it ask in a dialog instead. On a stopped
 worktree nothing asks.
+
+`+` marks the row under the cursor and moves down, and a `+` before
+the cursor's column shows it; `+` again unmarks it, and esc unmarks
+every row. While rows are marked, `s`, `x`, `r` and `d` act on all of
+them at once, each on its own worker: `x x` and `r r` ask once for the
+whole set, and `d` opens one dialog that says what each removal stops
+or takes with it, which only `F` removes (uncommitted changes), and
+which stay (locked, the main checkout). Every other key still acts on
+the row under the cursor. A mark stays on its worktree through a
+refresh, a re-sort or a filter, and goes with it.
 
 The list is a table with a header row: `branch`, then `changes`
 (`uncommitted` when there are uncommitted changes), `port`, `public` (`◈`
