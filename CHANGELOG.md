@@ -108,6 +108,9 @@ may change behaviour.
   `new` of its name; a removal stopped half way, by Ctrl-C or a crash,
   is finished by the next `pando rm` of it, containers and namespaces
   included.
+- `rm` of a running worktree stops it as `stop` now does, waiting for
+  its processes without the lock: two removals of worktrees whose
+  servers ignore SIGTERM end in 5.3s together, from 10.3s.
 - `unshare` no longer holds every other command up while the tunnel and
   its proxy get their five seconds to exit; the share stays recorded
   until both are down.

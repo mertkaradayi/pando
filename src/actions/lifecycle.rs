@@ -1372,7 +1372,7 @@ pub(super) fn stop_with(
         let shared = public_url(&store, name);
         // A refusal — `--only` of a process it is not running — comes from
         // here, before anything is marked or signalled.
-        let planned = groups_to_stop(&store, name, only)?;
+        let planned = mark_stop(&mut store, name, only)?;
         if planned.is_empty() {
             // Nothing to wait on: settled now, in one go.
             let mut projects = Vec::new();
@@ -1382,68 +1382,26 @@ pub(super) fn stop_with(
             stop_containers(paths, &projects, progress)?;
             return Ok(outcome);
         }
-        if let Some(record) = store.worktrees.get_mut(name) {
-            let by = std::process::id();
-            let since = Utc::now();
-            record
-                .stopping
-                .extend(planned.iter().map(|pgid| state::StopMark {
-                    pgid: *pgid,
-                    by,
-                    since,
-                }));
-        }
         state::save(&paths.state_file(), &store)?;
         (shared, planned)
     };
 
-    // Every group at once, each on a thread of its own, and no lock held.
-    let waited: BTreeMap<proc::Group, std::result::Result<(), String>> =
-        std::thread::scope(|scope| {
-            let waits: Vec<_> = planned
-                .iter()
-                .map(|pgid| {
-                    let (pgid, stop) = (*pgid, &stop);
-                    scope.spawn(move || (pgid, stop(pgid).map_err(|e| format!("{e:#}"))))
-                })
-                .collect();
-            waits
-                .into_iter()
-                .zip(&planned)
-                .map(|(wait, pgid)| {
-                    wait.join()
-                        .unwrap_or_else(|_| (*pgid, Err("the stop panicked".to_string())))
-                })
-                .collect()
-        });
+    let waited = wait_for(&planned, &stop);
 
     let mut projects = Vec::new();
     let outcome = {
         let _lock = state::lock(&paths.lock_file())?;
         let mut store = state::load(&paths.state_file())?;
         let before = store.clone();
-        let unmark = |store: &mut state::State| {
-            if let Some(record) = store.worktrees.get_mut(name) {
-                record.stopping.retain(|mark| !planned.contains(&mark.pgid));
-            }
-        };
-        // What the wait found, for the groups it waited on; anything else
-        // the settle would signal is a group nobody has stopped yet.
-        let waited_for = |pgid: proc::Group| match waited.get(&pgid) {
-            Some(Ok(())) => Ok(()),
-            Some(Err(e)) => Err(anyhow::anyhow!("{e}")),
-            None => stop(pgid),
-        };
-        // A start of this worktree in the meantime — its processes died
-        // under the wait, and it spawned new ones — is not this stop's to
-        // undo: only the groups this stop waited on are settled then.
-        let unchanged = groups_to_stop(&store, name, only)
-            .is_ok_and(|now| now.iter().all(|pgid| planned.contains(pgid)));
-        unmark(&mut store);
-        let settled = match unchanged {
-            true => stop_recorded_with(&mut store, name, only, waited_for, &mut projects),
-            false => settle_only_ours(&mut store, name, &waited),
-        }
+        let settled = settle_stop(
+            &mut store,
+            name,
+            only,
+            &planned,
+            &waited,
+            &stop,
+            &mut projects,
+        )
         .and_then(|outcome| {
             finish_stop(paths, &mut store, name, shared, progress)?;
             Ok(outcome)
@@ -1454,7 +1412,7 @@ pub(super) fn stop_with(
                 // As a stop that failed always has: nothing settled, and
                 // the records kept — but no longer marked as this stop's.
                 let mut kept = before;
-                unmark(&mut kept);
+                unmark_stop(&mut kept, name, &planned);
                 state::save(&paths.state_file(), &kept)?;
                 return Err(e);
             }
@@ -1466,6 +1424,100 @@ pub(super) fn stop_with(
     // `stop` again.
     stop_containers(paths, &projects, progress)?;
     Ok(outcome)
+}
+
+/// The first step of a stop that waits without the lock, under it: the
+/// groups a stop of `name` signals, each marked in `store` as this
+/// stop's ([`state::StopMark`]) for the caller to save. None marked when
+/// there are none to wait on.
+pub(super) fn mark_stop(
+    store: &mut state::State,
+    name: &str,
+    only: Option<&str>,
+) -> Result<Vec<proc::Group>> {
+    let planned = groups_to_stop(store, name, only)?;
+    if let Some(record) = store.worktrees.get_mut(name)
+        && !planned.is_empty()
+    {
+        let by = std::process::id();
+        let since = Utc::now();
+        record
+            .stopping
+            .extend(planned.iter().map(|pgid| state::StopMark {
+                pgid: *pgid,
+                by,
+                since,
+            }));
+    }
+    Ok(planned)
+}
+
+/// What the wait of a stop found, group by group: `Err` with why for one
+/// that would not end.
+pub(super) type Waited = BTreeMap<proc::Group, std::result::Result<(), String>>;
+
+/// The second step, with no lock held: every group signalled and waited
+/// on at once, each on a thread of its own.
+pub(super) fn wait_for(
+    planned: &[proc::Group],
+    stop: &(impl Fn(proc::Group) -> Result<()> + Sync),
+) -> Waited {
+    std::thread::scope(|scope| {
+        let waits: Vec<_> = planned
+            .iter()
+            .map(|pgid| {
+                let pgid = *pgid;
+                scope.spawn(move || (pgid, stop(pgid).map_err(|e| format!("{e:#}"))))
+            })
+            .collect();
+        waits
+            .into_iter()
+            .zip(planned)
+            .map(|(wait, pgid)| {
+                wait.join()
+                    .unwrap_or_else(|_| (*pgid, Err("the stop panicked".to_string())))
+            })
+            .collect()
+    })
+}
+
+/// Takes this stop's marks off `name`'s record.
+pub(super) fn unmark_stop(store: &mut state::State, name: &str, planned: &[proc::Group]) {
+    if let Some(record) = store.worktrees.get_mut(name) {
+        record.stopping.retain(|mark| !planned.contains(&mark.pgid));
+    }
+}
+
+/// The last step, under the lock again: the marks taken off, and the
+/// records settled by what the wait found. On an error `store` is left
+/// part settled; the caller saves what it had before, less the marks.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn settle_stop(
+    store: &mut state::State,
+    name: &str,
+    only: Option<&str>,
+    planned: &[proc::Group],
+    waited: &Waited,
+    stop: &(impl Fn(proc::Group) -> Result<()> + Sync),
+    projects: &mut Vec<String>,
+) -> Result<StopOutcome> {
+    // What the wait found, for the groups it waited on; anything else the
+    // settle would signal is a group nobody has stopped yet.
+    let waited_for = |pgid: proc::Group| match waited.get(&pgid) {
+        Some(Ok(())) => Ok(()),
+        Some(Err(e)) => Err(anyhow::anyhow!("{e}")),
+        None => stop(pgid),
+    };
+    // A start of this worktree in the meantime — its processes died under
+    // the wait, and it spawned new ones — is not this stop's to undo: only
+    // the groups this stop waited on are settled then.
+    let unchanged = groups_to_stop(store, name, only)
+        .is_ok_and(|now| now.iter().all(|pgid| planned.contains(pgid)));
+    unmark_stop(store, name, planned);
+    match unchanged {
+        true => stop_recorded_with(store, name, only, waited_for, projects),
+        false => settle_only_ours(store, name, waited),
+    }
 }
 
 /// The groups a stop of `name` would signal, read by running

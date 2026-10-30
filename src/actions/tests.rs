@@ -10912,6 +10912,125 @@ fn fill_tree(dir: &Path, dirs: usize, files: usize) {
     }
 }
 
+// `rm` stopped what a worktree ran under the state lock, so a dev server
+// that ignores SIGTERM cost its whole grace with every other command
+// waiting — and the TUI's removals of several running worktrees ended one
+// grace after another. Here each stop takes a grace of its own, and the
+// two removals take about one.
+#[test]
+fn two_removals_of_running_worktrees_wait_out_their_grace_together() {
+    let fx = fixture();
+    let one = worktree_named(&fx, "feat/one");
+    let two = worktree_named(&fx, "feat/two");
+    live_dev(&fx, &one, 4_000_501);
+    live_dev(&fx, &two, 4_000_502);
+
+    let grace = Duration::from_millis(800);
+    let free = std::sync::Mutex::new(Vec::new());
+    let slow = |_| {
+        // Waited for, not taken at once: a fork another test makes holds a
+        // copy of a lock's descriptor until its exec.
+        free.lock()
+            .unwrap()
+            .push(wait_until(Duration::from_secs(5), || {
+                state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+            }));
+        std::thread::sleep(grace);
+        Ok(())
+    };
+    let began = Instant::now();
+    let (a, b) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| rm_with(&fx.paths, &one, false, false, slow, &noop));
+        let b = scope.spawn(|| rm_with(&fx.paths, &two, false, false, slow, &noop));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    let took = began.elapsed();
+    a.unwrap();
+    b.unwrap();
+    assert!(
+        took < grace * 2 - Duration::from_millis(200),
+        "two removals took {took:?}, where one grace is {grace:?}"
+    );
+    assert_eq!(
+        *free.lock().unwrap(),
+        [true, true],
+        "a stop waited with the lock held"
+    );
+    assert!(fx.state().worktrees.is_empty(), "{:?}", fx.state());
+    assert!(fx.names().is_empty());
+}
+
+// A group that will not end fails the removal before anything is
+// removed, as it did when the stop ran under the lock: the worktree, its
+// record and the process's record are kept, unmarked, for a retry.
+#[test]
+fn a_removal_whose_process_will_not_stop_keeps_the_worktree() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/stuck");
+    live_dev(&fx, &name, 4_000_503);
+
+    let err = rm_with(
+        &fx.paths,
+        &name,
+        false,
+        false,
+        |_| bail!("it would not die"),
+        &noop,
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("would not die"), "{err:#}");
+    assert_eq!(fx.names(), vec![name.clone()]);
+    let record = &fx.state().worktrees[&name];
+    assert!(record.processes.contains_key("dev"), "{record:?}");
+    assert!(record.stopping.is_empty(), "{record:?}");
+    assert!(record.removing.is_none(), "{record:?}");
+    assert!(!fx.paths.removal_lock_file(&name).exists());
+}
+
+/// The number behind "removals of running worktrees wait out their grace
+/// together": two worktrees whose dev server ignores SIGTERM, so each stop
+/// takes the whole of `STOP_GRACE` before its SIGKILL, removed at once.
+/// Ignored, as a measurement; `two_removals_of_running_worktrees_wait_out_
+/// their_grace_together` proves it. Run with `--ignored --nocapture`.
+#[test]
+#[ignore = "a measurement: run with --ignored --nocapture"]
+fn measure_removals_of_running_worktrees() {
+    let mut fx = fixture();
+    with_dev(
+        &mut fx,
+        ProcessConfig {
+            cmd: "trap '' TERM; sleep 60".to_string(),
+            ..Default::default()
+        },
+    );
+    let names: Vec<String> = (0..2)
+        .map(|i| worktree_named(&fx, &format!("feat/stubborn-{i}")))
+        .collect();
+    let _running: Vec<Vec<Detached>> = names
+        .iter()
+        .map(|name| guard(&start(&fx.paths, &fx.config, name, None, &noop).unwrap()))
+        .collect();
+    let at = Instant::now();
+    std::thread::scope(|scope| {
+        let removals: Vec<_> = names
+            .iter()
+            .map(|name| {
+                let paths = &fx.paths;
+                scope.spawn(move || rm(paths, name, false, false))
+            })
+            .collect();
+        for removal in removals {
+            removal.join().unwrap().unwrap();
+        }
+    });
+    eprintln!(
+        "two removals of running worktrees that ignore SIGTERM, at once: {:.2?} (the grace is \
+         {STOP_GRACE:?})",
+        at.elapsed()
+    );
+    assert!(fx.state().worktrees.is_empty());
+}
+
 /// The numbers behind "removals run side by side": one removal of a
 /// sizeable worktree alone, four one after another, and four at once.
 /// Ignored — it measures, and a measurement asserted on fails on a loaded
