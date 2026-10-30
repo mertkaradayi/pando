@@ -62,6 +62,12 @@ may change behaviour.
   and the list's title and the footer say how many are marked. A mark
   stays on its worktree through a refresh, a re-sort or a filter, and
   goes with it; esc unmarks every row, after clearing a filter.
+- `d` with rows marked removes every marked worktree from one dialog.
+  It lists each with what its removal stops or takes with it, says
+  which only `F` removes (uncommitted changes) and which stay (locked,
+  the main checkout), and one confirm starts every removal at once.
+  `y` keeps the ones that need `F` marked, so `d` then `F` finishes
+  them.
 
 ### Fixed
 

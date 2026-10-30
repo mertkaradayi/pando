@@ -127,7 +127,7 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key(
         "d",
         &[KeyCode::Char('d')],
-        "remove it (never the main checkout)",
+        "remove it (never the main checkout) — with rows marked, every marked one, in one dialog",
     ),
     key(
         "space g",
@@ -180,7 +180,10 @@ pub const LEADER_KEYS: &[KeyHelp] = &[
 
 /// What the marks in a list row mean, shown under the keys.
 pub const LIST_LEGEND: &[(&str, &str)] = &[
-    ("+", "marked with + — esc unmarks every row"),
+    (
+        "+",
+        "marked with + — d removes every marked row; esc unmarks them all",
+    ),
     ("●", "running: the dev server is up"),
     ("◌", "starting, or something is being done to it"),
     ("✗", "failed — l shows the log that says why"),

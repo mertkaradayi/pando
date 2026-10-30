@@ -396,6 +396,7 @@ impl App {
                 } => Some(1),
                 Modal::Git { .. }
                 | Modal::Remove { .. }
+                | Modal::RemoveMarked { .. }
                 | Modal::StopAll { .. }
                 | Modal::Unshare { .. }
                 | Modal::Share { .. }

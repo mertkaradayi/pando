@@ -10393,3 +10393,187 @@ fn a_marked_row_shows_its_mark_and_the_list_counts_them() {
         rows.join("\n")
     );
 }
+
+/// Marks every row of `app` with `+`, top to bottom.
+fn mark_all(app: &mut App) {
+    press(app, KeyCode::Char('g'));
+    for _ in 0..app.filtered_indices.len() {
+        press(app, KeyCode::Char('+'));
+    }
+}
+
+/// The worktrees with a removal in flight, oldest first.
+fn removing(app: &App) -> Vec<String> {
+    app.pending
+        .iter()
+        .filter(|p| p.kind == PendingKind::Remove)
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+// "We can't delete several worktrees at the same time." Three marked, `d`,
+// one confirm: three removals in flight at once, each on its own worker,
+// and their marks gone with them.
+#[test]
+fn d_with_three_marked_removes_all_three_at_once() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    let Some(Modal::RemoveMarked { names }) = &app.modal else {
+        panic!("one dialog for all of them: {:?}", app.modal);
+    };
+    assert_eq!(names, &["feat+one", "feat+two", "feat+three"]);
+    press(&mut app, KeyCode::Char('y'));
+    assert!(app.modal.is_none());
+    let names = removing(&app);
+    assert_eq!(names, vec!["feat+one", "feat+two", "feat+three"]);
+    assert_eq!(app.pending.len(), 3, "all three in flight together");
+    assert!(app.marks.is_empty(), "the marks went with them");
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.message.contains("already busy")),
+        "{:?}",
+        app.messages
+    );
+}
+
+// One marked row gets the dialog one row always gets, for that row
+// wherever the cursor is.
+#[test]
+fn d_with_one_marked_opens_the_dialog_for_it() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(app.selected_worktree().unwrap().name, "feat+two");
+    press(&mut app, KeyCode::Char('d'));
+    assert!(
+        matches!(&app.modal, Some(Modal::Remove { name, .. }) if name == "feat+one"),
+        "{:?}",
+        app.modal
+    );
+}
+
+// A marked worktree with uncommitted changes needs F, as one alone does:
+// `y` removes the others, keeps it marked and says so; `d` then `F`
+// removes it. With only such ones marked, `y` keeps the dialog open.
+#[test]
+fn a_dirty_marked_worktree_needs_f() {
+    let mut app = test_app(&["feat+one", "feat+dirty", "feat+three"]);
+    app.worktrees[1].dirty = Some(true);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    on_frame(
+        &rows,
+        "* feat/dirty — uncommitted changes · only F removes it",
+    );
+    on_frame(&rows, "y remove 2");
+    on_frame(&rows, "F remove all 3, discarding changes");
+    press(&mut app, KeyCode::Char('y'));
+    let names = removing(&app);
+    assert_eq!(names, vec!["feat+one", "feat+three"]);
+    assert_eq!(marked(&app), vec!["feat+dirty"], "it stays marked");
+    let (message, is_error) = app.active_status().unwrap();
+    assert!(is_error);
+    assert!(
+        message.contains("feat/dirty kept for its changes — still marked, d then F removes it"),
+        "{message}"
+    );
+
+    // Alone now: `y` is refused in the dialog, and F removes it.
+    let mut app = test_app(&["feat+dirty", "feat+also"]);
+    app.worktrees[0].dirty = Some(true);
+    app.worktrees[1].dirty = Some(true);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('y'));
+    assert!(
+        matches!(app.modal, Some(Modal::RemoveMarked { .. })),
+        "the dialog stays"
+    );
+    assert!(app.pending.is_empty());
+    let (message, _) = app.active_status().unwrap();
+    assert!(message.contains("F removes them anyway"), "{message}");
+    press(&mut app, KeyCode::Char('F'));
+    assert!(app.modal.is_none());
+    assert_eq!(removing(&app).len(), 2);
+}
+
+// A locked worktree and the main checkout are never removed: the dialog
+// says each stays and why, and the confirm removes the rest.
+#[test]
+fn removing_the_marks_skips_a_locked_one_and_the_main_checkout() {
+    let mut app = test_app(&["feat+one", "locked+two"]);
+    app.apply_snapshot(listing(&app, &["feat+one", "locked+two"]));
+    let locked = app
+        .worktrees
+        .iter_mut()
+        .find(|w| w.name == "locked+two")
+        .unwrap();
+    locked.locked = true;
+    locked.lock_reason = Some("benchmarking".into());
+    app.created_by_pando = [("feat+one", true), ("locked+two", true)]
+        .map(|(n, b)| (n.to_string(), b))
+        .into();
+    mark_all(&mut app);
+    assert_eq!(marked(&app), vec!["acme-shop", "feat+one", "locked+two"]);
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    on_frame(&rows, "remove 1 marked worktree?");
+    on_frame(
+        &rows,
+        "– acme-shop — stays: the main checkout, never removed",
+    );
+    on_frame(&rows, "– locked/two — stays: locked (benchmarking)");
+    on_frame(&rows, "✕ feat/one");
+    press(&mut app, KeyCode::Char('y'));
+    let names = removing(&app);
+    assert_eq!(names, vec!["feat+one"]);
+    let (message, _) = app.active_status().unwrap();
+    assert!(
+        message.contains("locked/two skipped: locked (benchmarking)"),
+        "{message}"
+    );
+    // Nothing left that can go: the dialog says so, and closes.
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    on_frame(&rows, "none of the marked worktrees can be removed");
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(removing(&app).len(), 1, "nothing more started");
+}
+
+// Each row says what its removal takes or stops on the way, the most
+// serious first: what stays, what only F removes, the data that goes.
+#[test]
+fn the_dialog_for_the_marks_says_what_each_removal_costs() {
+    let mut app = test_app(&["feat+plain", "feat+up", "feat+adopted"]);
+    with_process(&mut app, "feat+up", running_phase());
+    app.created_by_pando.insert("feat+adopted".into(), false);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    let at = |text: &str| on_frame(&rows, text).1;
+    on_frame(&rows, "remove 3 marked worktrees?");
+    on_frame(
+        &rows,
+        "the branches are kept; their logs and data are deleted",
+    );
+    on_frame(&rows, "✕ feat/up — running, stopped first");
+    on_frame(&rows, "✕ feat/adopted — not made by pando");
+    assert!(at("✕ feat/up") < at("✕ feat/plain"), "the plain row last");
+    on_frame(&rows, "y remove 3");
+    on_frame(&rows, "F force");
+    every_hint_presses_a_key(&mut app, "the dialog for the marks");
+}
+
+// The dialog's hints are buttons like any other's: a click on `y remove`
+// is `y`.
+#[test]
+fn a_click_on_the_marks_dialogs_hint_removes_them() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    assert!(click_at(&mut app, on_frame(&rows, "y remove 2")));
+    assert_eq!(removing(&app).len(), 2);
+}
