@@ -8063,16 +8063,23 @@ fn refresh_on_a_project_that_never_started_anything_writes_nothing() {
 // A `rm` or a stop holds the state lock for as long as a `docker compose
 // down` takes, and every `ls`, `status` and TUI frame waited all that time
 // for it. A read that finds the lock held answers from the file as it
-// stands, advanced on a copy and written nowhere.
+// stands, advanced on a copy and written nowhere — except that a death it
+// sees is not called a failure, since the holder may be the one stopping
+// it: a check whose processes `stop --all` stopped recorded itself failed.
 #[test]
 fn refresh_answers_at_once_while_another_pando_holds_the_lock() {
     let fx = fixture();
     let mut store = state::State::new();
     let mut record = WorktreeRecord::new("/trees/feat+one", true);
-    // A process whose pid is long gone: the advance calls it failed.
+    // A process whose pid is long gone, and one starting with nothing to
+    // wait for that is alive: the test's own pid.
     record
         .processes
         .insert("dev".to_string(), fake_record(4_000_011));
+    let mut up = fake_record(4_000_012);
+    up.pid = std::process::id();
+    up.phase = Phase::Starting { since: Utc::now() };
+    record.processes.insert("api".to_string(), up);
     store.worktrees.insert("feat+one".to_string(), record);
     state::save(&fx.paths.state_file(), &store).unwrap();
 
@@ -8089,30 +8096,45 @@ fn refresh_answers_at_once_while_another_pando_holds_the_lock() {
     let took = began.elapsed();
     assert!(took < Duration::from_secs(2), "took {took:?}");
     assert!(refreshed.warning.is_none(), "{:?}", refreshed.warning);
+    let answered = &refreshed.state.worktrees["feat+one"].processes;
     assert!(
-        matches!(
-            refreshed.state.worktrees["feat+one"].processes["dev"].phase,
-            Phase::Failed { .. }
-        ),
-        "the copy is advanced all the same"
+        matches!(answered["api"].phase, Phase::Running { .. }),
+        "a process seen ready is advanced: {:?}",
+        answered["api"].phase
     );
     assert!(
+        matches!(answered["dev"].phase, Phase::Running { .. }),
+        "a death under another pando's lock is not called a failure: {:?}",
+        answered["dev"].phase
+    );
+    let saved = fx.state();
+    assert!(
         matches!(
-            fx.state().worktrees["feat+one"].processes["dev"].phase,
-            Phase::Running { .. }
+            saved.worktrees["feat+one"].processes["api"].phase,
+            Phase::Starting { .. }
         ),
         "and nothing is written without the lock"
     );
 
     drop(held);
-    refresh(&fx.paths);
+    // A fork another test makes before its exec can hold a copy of the
+    // lock's file a moment after the drop, so the read that finds it free
+    // may be the second.
     assert!(
-        matches!(
-            fx.state().worktrees["feat+one"].processes["dev"].phase,
-            Phase::Failed { .. }
-        ),
-        "the next read that finds it free saves the advance"
+        wait_until(Duration::from_secs(5), || {
+            refresh(&fx.paths);
+            matches!(
+                fx.state().worktrees["feat+one"].processes["dev"].phase,
+                Phase::Failed { .. }
+            )
+        }),
+        "the next read that finds it free judges the death, and saves"
     );
+    let saved = fx.state();
+    assert!(matches!(
+        saved.worktrees["feat+one"].processes["api"].phase,
+        Phase::Running { .. }
+    ));
 }
 
 #[test]
