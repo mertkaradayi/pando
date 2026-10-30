@@ -320,8 +320,7 @@ pando stop [name]     stop one worktree, or the main checkout; --all for every o
 pando restart <name>  stop and start again, keeping the ports
 pando ls              list the main checkout and the worktrees: status, URL,
                       ports, git; -l for paths
-pando rm <name>...    stop everything, remove the worktree, wipe its data;
-                      several names are removed side by side
+pando rm <name>       stop everything, remove the worktree, wipe its data
 pando share <name>    expose it at a public URL
 pando unshare <name>  take the public URL down
 pando open <name>     open its URL in the browser; --public for the shared one,
@@ -339,7 +338,10 @@ pando update          update pando to the latest release, the way it was install
 
 A worktree is named by its branch (`feat/login`) or by its directory
 (`feat+login`). Inside a worktree, `start`, `stop`, `restart`, `logs`,
-`open`, `share` and `unshare` need no name.
+`open`, `share` and `unshare` need no name. `start`, `stop`, `restart` and
+`rm` take several — `pando start feat/a feat/b` — and act on them side by
+side, each said as it finishes; one that fails leaves the others, and the
+exit code is then 1.
 
 The main checkout runs too, first in every list, named the same way —
 `pando start main` — or with no name from inside it (but for `stop`,
