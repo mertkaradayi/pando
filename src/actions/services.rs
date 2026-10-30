@@ -250,13 +250,19 @@ pub(super) fn docker_down_for(
     })
 }
 
-/// Runs one compose verb against every project a worktree owns, reporting
-/// the failures together. A failure `note` has words for — a daemon that
-/// is down, say — is said through `progress` instead of failing.
+/// Runs one compose verb against every project named, reporting the
+/// failures together. A failure `note` has words for — a daemon that is
+/// down, say — is said through `progress` instead of failing.
+///
+/// Every project at once, each on a thread of its own: a `docker compose
+/// stop` waits for its containers to shut down, up to compose's own ten
+/// seconds apiece, and one project after another a stop of every worktree
+/// took that for each. Together it is as long as the slowest. What is
+/// said is said in the projects' order, once they have all answered.
 fn stop_compose_projects(
     paths: &PandoPaths,
     projects: &[String],
-    run: impl Fn(&services::Compose) -> Result<()>,
+    run: impl Fn(&services::Compose) -> Result<()> + Sync,
     note: impl Fn(&str, &anyhow::Error) -> Option<String>,
     progress: &dyn Fn(&str),
 ) -> Result<()> {
@@ -264,10 +270,26 @@ fn stop_compose_projects(
         return Ok(());
     }
     let program = services::docker_program(paths);
+    let ran: Vec<Result<()>> = std::thread::scope(|scope| {
+        let running: Vec<_> = projects
+            .iter()
+            .map(|project| {
+                let (program, run) = (&program, &run);
+                scope.spawn(move || run(&services::Compose::by_project(program, project.as_str())))
+            })
+            .collect();
+        running
+            .into_iter()
+            .map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("the compose call panicked")))
+            })
+            .collect()
+    });
     let mut failures = Vec::new();
-    for project in projects {
-        let compose = services::Compose::by_project(&program, project.as_str());
-        if let Err(e) = run(&compose) {
+    for (project, ran) in projects.iter().zip(ran) {
+        if let Err(e) = ran {
             match note(project, &e) {
                 Some(note) => progress(&note),
                 None => failures.push(format!("{project}: {e:#}")),

@@ -1391,12 +1391,48 @@ pub fn stop_all_with(
     let mut stopped = Vec::new();
     let mut failures = Vec::new();
     let mut projects: Vec<String> = Vec::new();
-    for name in names {
-        // One worktree that will not die must not leave the rest running —
-        // and must not lose its record either. The failures are collected
-        // and reported once every other group has been signalled.
-        let shared = public_url(&store, &name);
-        match stop_recorded_with(&mut store, &name, None, &stop, &mut projects) {
+    // Every worktree at once, each on a thread of its own with its record
+    // lent to it alone. One after another, a dev server slow to stop cost
+    // `STOP_GRACE` per worktree — under the lock every other command
+    // waits for — and together it is as long as the slowest.
+    let mut lent: Vec<(String, Option<String>, state::State)> = names
+        .into_iter()
+        .filter_map(|name| {
+            let shared = public_url(&store, &name);
+            let record = store.worktrees.remove(&name)?;
+            let mut alone = state::State::new();
+            alone.worktrees.insert(name.clone(), record);
+            Some((name, shared, alone))
+        })
+        .collect();
+    let outcomes: Vec<(Result<StopOutcome>, Vec<String>)> = std::thread::scope(|scope| {
+        let stopping: Vec<_> = lent
+            .iter_mut()
+            .map(|(name, _, alone)| {
+                let stop = &stop;
+                scope.spawn(move || {
+                    let mut projects = Vec::new();
+                    let outcome = stop_recorded_with(alone, name, None, stop, &mut projects);
+                    (outcome, projects)
+                })
+            })
+            .collect();
+        stopping
+            .into_iter()
+            .map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|_| (Err(anyhow::anyhow!("the stop panicked")), Vec::new()))
+            })
+            .collect()
+    });
+    for ((name, shared, alone), (outcome, theirs)) in lent.into_iter().zip(outcomes) {
+        // Back before anything reads the store, whatever the stop did: one
+        // worktree that will not die must not lose its record. Its failure
+        // is reported once every other group has been signalled.
+        store.worktrees.extend(alone.worktrees);
+        projects.extend(theirs);
+        match outcome {
             Ok(StopOutcome::Stopped(_)) => {
                 say_if_closed(&store, &name, shared, progress);
                 stopped.push(name);

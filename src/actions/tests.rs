@@ -2627,6 +2627,101 @@ fn stop_all_keeps_a_record_whose_group_it_could_not_signal() {
     );
 }
 
+// `stop` with no name and the TUI's `X` stopped one worktree after another
+// under the lock, so each dev server slow to stop cost a grace period of
+// its own: four of them, twenty seconds. Every worktree is signalled at
+// once now, and the whole stop is as long as the slowest.
+#[test]
+fn stop_all_waits_out_every_worktrees_grace_together() {
+    let fx = fixture();
+    let names: Vec<String> = (1..=4)
+        .map(|i| worktree_named(&fx, &format!("feat/slow{i}")))
+        .collect();
+    let mut store = fx.state();
+    for (i, name) in names.iter().enumerate() {
+        store
+            .worktrees
+            .get_mut(name)
+            .expect("new wrote a record")
+            .processes
+            .insert("dev".to_string(), fake_record(4_000_301 + i as i32));
+    }
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let grace = Duration::from_millis(600);
+    let began = Instant::now();
+    let stopped = stop_all_with(&fx.paths, |_| {
+        std::thread::sleep(grace);
+        Ok(())
+    })
+    .unwrap();
+    let took = began.elapsed();
+    assert_eq!(stopped, names);
+    assert!(
+        took < grace * 3,
+        "four worktrees took {took:?}, where one grace is {grace:?}"
+    );
+    let saved = fx.state();
+    for name in &names {
+        assert!(saved.worktrees[name].processes.is_empty(), "{name}");
+    }
+}
+
+// And their containers: each `docker compose stop` waits for its own to
+// shut down, and they were asked one project after another.
+#[test]
+fn stop_all_asks_docker_to_stop_every_project_at_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture();
+    let calls = fx.paths.home.join("docker-calls");
+    let bin = fx.paths.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("docker"),
+        format!(
+            "#!/bin/sh
+case \"$*\" in *' stop')
+  echo \"begin $*\" >> '{c}'
+  sleep 1
+               echo \"end $*\" >> '{c}' ;;
+esac
+",
+            c = calls.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("docker"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let names: Vec<String> = (1..=3)
+        .map(|i| worktree_named(&fx, &format!("feat/iso{i}")))
+        .collect();
+    let mut store = fx.state();
+    for (i, name) in names.iter().enumerate() {
+        // A stopped isolated worktree's record: the project, no pump.
+        store.worktrees.get_mut(name).unwrap().services = vec![state::ServiceRecord {
+            name: "postgres".to_string(),
+            kind: state::ServiceKind::Compose,
+            port: None,
+            pid: None,
+            pgid: None,
+            compose_project: Some(format!("pando-x-iso{i}")),
+        }];
+    }
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    stop_all_with(&fx.paths, |_| Ok(())).unwrap();
+    let lines: Vec<String> = std::fs::read_to_string(&calls)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 6, "{lines:#?}");
+    let first_end = lines.iter().position(|l| l.starts_with("end ")).unwrap();
+    assert_eq!(
+        first_end, 3,
+        "every project was asked before the first one answered: {lines:#?}"
+    );
+}
+
 // A worktree whose processes are all gone can still be shared: the tunnel
 // outlives them. `stop` with no name is "nothing of pando's left running",
 // and it chose the worktrees to stop by their processes and services alone
