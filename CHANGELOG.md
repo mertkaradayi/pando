@@ -94,6 +94,9 @@ may change behaviour.
   `new` of its name; a removal stopped half way, by Ctrl-C or a crash,
   is finished by the next `pando rm` of it, containers and namespaces
   included.
+- `unshare` no longer holds every other command up while the tunnel and
+  its proxy get their five seconds to exit; the share stays recorded
+  until both are down.
 
 ## 0.11.1 — 2026-10-26
 
