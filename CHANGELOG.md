@@ -50,6 +50,13 @@ may change behaviour.
   removes them side by side, says each as it finishes, and exits 1
   naming any it could not remove; `--yes` and `--force` apply to each.
   One name reads exactly as before.
+- `pando start`, `stop` and `restart` take several worktrees too:
+  `pando start feat/a feat/b` settles every question first, one name
+  after another, then starts them side by side, each said as it
+  finishes; one that fails leaves the others, and the exit code is then
+  1. A question still open is the whole command's exit 3, and nothing is
+  started. Every flag applies to each; one name, or none, reads exactly
+  as before.
 
 ### Fixed
 

@@ -15,12 +15,14 @@ mod art;
 mod check;
 mod completion;
 mod doctor;
+mod each;
 mod logs;
 mod ls;
 mod names;
 mod open;
 mod prompt;
 mod rm;
+mod running;
 mod signals;
 mod status;
 mod tip;
@@ -183,6 +185,10 @@ Example:
     },
     /// Start a worktree's processes, or the main checkout's.
     ///
+    /// Several names are started side by side once every question is
+    /// settled, each said as it finishes; one that fails leaves the
+    /// others, and the exit code is then 1.
+    ///
     /// On a terminal it waits until every process is ready, and says why
     /// when one is not. Anywhere else — a script, an agent, a pipe — it
     /// returns as soon as everything is spawned unless `--wait` is given.
@@ -194,6 +200,7 @@ Example:
     #[command(after_help = "\
 Examples:
   pando start feat/login               start everything; on a terminal, wait until it is ready
+  pando start feat/a feat/b            two worktrees, side by side
   pando start feat/login --no-wait     return as soon as everything is spawned
   pando start feat/login --wait        wait, even from a script
   pando start feat/login --isolated    with private copies of the services
@@ -202,11 +209,11 @@ Examples:
   pando start --only api               one process of the worktree you are in")]
     #[command(display_order = 2)]
     Start {
-        /// The worktree or the main checkout, by branch or directory name.
+        /// The worktrees, or the main checkout, by branch or directory name.
         ///
         /// The one you are in when left out.
         #[arg(value_name = WORKTREE, value_hint = clap::ValueHint::Other)]
-        name: Option<String>,
+        name: Vec<String>,
         /// Accept pando's own recommendation for anything it would ask.
         ///
         /// Without it, an unanswerable question exits 3.
@@ -382,22 +389,25 @@ Examples:
     ///
     /// With no name: the worktree you are in, or every worktree and the
     /// main checkout when you are in none of them — in the main checkout
-    /// itself too. `--all` stops every one from anywhere.
+    /// itself too. `--all` stops every one from anywhere. Several names
+    /// are stopped side by side; one that fails leaves the others, and the
+    /// exit code is then 1.
     #[command(after_help = "\
 Examples:
   pando stop feat/login               one worktree
+  pando stop feat/a feat/b            two, side by side
   pando stop feat/login --only api    one process; the others keep running
   pando stop                          the worktree you are in
   pando stop --all                    every worktree of this repository")]
     #[command(display_order = 3)]
     Stop {
-        /// The worktree or the main checkout, by branch or directory name.
+        /// The worktrees, or the main checkout, by branch or directory name.
         #[arg(
             conflicts_with = "all",
             value_name = WORKTREE,
             value_hint = clap::ValueHint::Other
         )]
-        name: Option<String>,
+        name: Vec<String>,
         /// One process by name. The others keep running.
         #[arg(long, conflicts_with = "all")]
         only: Option<String>,
@@ -409,14 +419,15 @@ Examples:
     /// checkout.
     ///
     /// Waits for readiness on a terminal, like `start`, and not elsewhere
-    /// unless `--wait` is given.
+    /// unless `--wait` is given. Several names are restarted side by side,
+    /// as `start` starts them.
     #[command(display_order = 4)]
     Restart {
-        /// The worktree or the main checkout, by branch or directory name.
+        /// The worktrees, or the main checkout, by branch or directory name.
         ///
         /// The one you are in when left out.
         #[arg(value_name = WORKTREE, value_hint = clap::ValueHint::Other)]
-        name: Option<String>,
+        name: Vec<String>,
         /// Accept pando's own recommendation for anything it would ask.
         ///
         /// Without it, an unanswerable question exits 3.
@@ -726,52 +737,13 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
             wait,
             no_wait,
         } => {
-            // Before any question: a misspelt name is worth knowing about
-            // before being asked which dev command to run.
-            let typed = name;
-            let named = names::target_named(paths, typed.as_deref(), "start")?;
-            let name = named.dir.clone();
-            let mode = actions::Mode::of(isolated, namespaced, shared);
-            // Before any question too: a login asked for, or a slot freed,
-            // for a start that is refused is a cost with nothing for it.
-            actions::refuse_only_on_a_mode_change(paths, config, &name, only.as_deref(), mode)
-                .map_err(|e| with_a_way_past(paths, named.reword(e)))?;
-            // After the refusals, which say nothing unless the start is
-            // not going to happen, and before the first question.
-            tip::first_time_tip(paths, config, stderr_is_terminal(), &notice, &draw);
-            let config = &actions::resolve_for_start(
-                paths,
-                config,
-                &name,
-                mode,
-                &everyday_asker(yes),
-                &notice,
-            )?;
-            let report = actions::start(paths, config, &name, only.as_deref(), mode, &notice)
-                .map_err(|e| with_a_way_past(paths, named.reword(e)))?;
-            if report.reassigned {
-                notice(&format!(
-                    "the ports {} had were taken; it moved to new ones",
-                    named.shown
-                ));
-            }
-            let wait = waits(wait, no_wait);
-            if wait {
-                wait::wait_ready(paths, &named, only.as_deref(), &report.spawned(), &notice)?;
-            }
-            let url = url_suffix(report.url.as_deref());
-            if report.started_nothing() {
-                writeln!(out, "{name} is already running{url}")?;
-            } else {
-                writeln!(out, "started {name}{url}")?;
-                if !wait {
-                    hint(&format!(
-                        "`pando status {}` shows when it is ready",
-                        named.typed
-                    ));
-                }
-            }
-            Ok(())
+            let run = running::Run {
+                yes,
+                only: only.as_deref(),
+                mode: actions::Mode::of(isolated, namespaced, shared),
+                wait: waits(wait, no_wait),
+            };
+            running::start(paths, config, &name, &run, &mut out)
         }
         Command::Init {
             agent: true,
@@ -902,48 +874,7 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
             None => doctor(paths, json, &mut out),
         },
         Command::Stop { name, only, all } => {
-            let name = match (name, all) {
-                (_, true) => None,
-                (Some(name), false) => Some(names::resolve(paths, &name)?),
-                // No name: the worktree the shell is in, said out loud
-                // because `stop` alone used to mean every one.
-                (None, false) => {
-                    let cwd = std::env::current_dir()?;
-                    let here = names::containing(paths, &cwd)?;
-                    if let Some(here) = &here {
-                        notice(&format!(
-                            "stopping {}, the worktree you are in — `pando stop --all` \
-                             stops every one",
-                            names::shown(paths, here)
-                        ));
-                    }
-                    here
-                }
-            };
-            match name {
-                Some(name) => stop_one(paths, &name, only.as_deref(), &mut out),
-                None if only.is_some() => Err(UsageError(
-                    "--only needs a worktree: `pando stop <name> --only <process>`, or run it \
-                     from inside one"
-                        .to_string(),
-                )
-                .into()),
-                None => {
-                    let stopped = actions::stop_all(paths, &notice)?;
-                    if stopped.is_empty() {
-                        writeln!(out, "nothing was running")?;
-                    } else {
-                        // A running `pando check` is stopped with the rest,
-                        // and named for what it is, not its directory.
-                        let stopped: Vec<&str> = stopped
-                            .iter()
-                            .map(|name| crate::worktree::label(name))
-                            .collect();
-                        writeln!(out, "stopped {}", stopped.join(", "))?;
-                    }
-                    Ok(())
-                }
-            }
+            running::stop(paths, &name, only.as_deref(), all, &mut out)
         }
         Command::Restart {
             name,
@@ -954,33 +885,16 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
             wait,
             no_wait,
         } => {
-            let typed = name;
-            let named = names::target_named(paths, typed.as_deref(), "restart")?;
-            let name = named.dir.clone();
-            // Resolved exactly as `start` resolves it: a project whose
-            // process question has never been answered gets the question,
-            // not a refusal.
             // `--shared` is `start`'s: a restart into shared mode is what
             // `start --shared` already is, since changing the mode
             // restarts the processes anyway.
-            let mode = actions::Mode::of(isolated, namespaced, false);
-            actions::refuse_only_on_a_mode_change(paths, config, &name, only.as_deref(), mode)
-                .map_err(|e| with_a_way_past(paths, named.reword(e)))?;
-            let config = &actions::resolve_for_start(
-                paths,
-                config,
-                &name,
-                mode,
-                &everyday_asker(yes),
-                &notice,
-            )?;
-            let report = actions::restart(paths, config, &name, only.as_deref(), mode, &notice)
-                .map_err(|e| with_a_way_past(paths, named.reword(e)))?;
-            if waits(wait, no_wait) {
-                wait::wait_ready(paths, &named, only.as_deref(), &report.spawned(), &notice)?;
-            }
-            writeln!(out, "restarted {name}{}", url_suffix(report.url.as_deref()))?;
-            Ok(())
+            let run = running::Run {
+                yes,
+                only: only.as_deref(),
+                mode: actions::Mode::of(isolated, namespaced, false),
+                wait: waits(wait, no_wait),
+            };
+            running::restart(paths, config, &name, &run, &mut out)
         }
         Command::Status { name, json, env } => {
             let name = name
@@ -1105,27 +1019,6 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
         // repository, because the proxy has none.
         Command::ShareProxy { listen, upstream } => run_share_proxy(listen, upstream),
     }
-}
-
-fn stop_one<W: Write>(
-    paths: &PandoPaths,
-    name: &str,
-    only: Option<&str>,
-    out: &mut W,
-) -> Result<()> {
-    match actions::stop(paths, name, only, &notice)? {
-        actions::StopOutcome::Stopped(processes) => {
-            // Empty when the worktree had only its services left up, which
-            // is a real thing to stop and a silly thing to narrate as
-            // "stopped ".
-            if !processes.is_empty() {
-                notice(&format!("stopped {}", processes.join(", ")));
-            }
-            writeln!(out, "stopped {name}")?;
-        }
-        actions::StopOutcome::NotRunning => writeln!(out, "{name} was not running")?,
-    }
-    Ok(())
 }
 
 /// The completion script for `shell`, generated from the same clap

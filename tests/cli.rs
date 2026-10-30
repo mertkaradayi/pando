@@ -648,6 +648,106 @@ fn rm_takes_several_names_and_says_what_became_of_each() {
     assert_eq!(status_porcelain(&e.root), "", "the fixture must stay clean");
 }
 
+/// The lines of `out`'s stdout, sorted: several worktrees are said in the
+/// order they finish.
+fn sorted_lines(out: &Output) -> Vec<String> {
+    let mut lines: Vec<String> = stdout(out).lines().map(str::to_string).collect();
+    lines.sort();
+    lines
+}
+
+/// The processes the state file records for `name`.
+fn recorded_processes(e: &Env, name: &str) -> Vec<String> {
+    pando::state::load(&e.project_dir().join("state.json"))
+        .unwrap()
+        .worktrees
+        .get(name)
+        .map(|record| record.processes.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+// `pando start a b`, `restart a b`, `stop a b`: side by side, each said
+// as it finishes. A name that does not resolve is said under its own name
+// and leaves the others to go ahead, and the command then exits 1 naming
+// it. A worktree typed twice, by branch and by directory, is acted on once.
+#[test]
+fn start_restart_and_stop_take_several_names() {
+    let e = env();
+    e.write_config(SLEEPER);
+    for branch in ["feat/one", "feat/two"] {
+        let out = e.pando(&["new", branch]);
+        assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    }
+
+    let out = e.pando(&["start", "feat/one", "feat/nope", "feat/two", "feat+two"]);
+    assert_eq!(code(&out), EXIT_ERROR, "stderr: {}", stderr(&out));
+    let lines = sorted_lines(&out);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("started feat+one"), "{lines:?}");
+    assert!(lines[1].starts_with("started feat+two"), "{lines:?}");
+    let said = stderr(&out);
+    assert!(
+        said.contains("pando: feat/nope was not started: "),
+        "{said}"
+    );
+    assert!(
+        said.contains("1 of 3 worktrees was not started: feat/nope"),
+        "{said}"
+    );
+    for name in ["feat+one", "feat+two"] {
+        assert_eq!(recorded_processes(&e, name), ["dev"], "{name}");
+    }
+
+    let out = e.pando(&["restart", "feat/one", "feat/two"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    let lines = sorted_lines(&out);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("restarted feat+one"), "{lines:?}");
+    assert!(lines[1].starts_with("restarted feat+two"), "{lines:?}");
+
+    let out = e.pando(&["stop", "feat/one", "feat/nope", "feat/two"]);
+    assert_eq!(code(&out), EXIT_ERROR, "stderr: {}", stderr(&out));
+    assert_eq!(
+        sorted_lines(&out),
+        ["stopped feat+one", "stopped feat+two"],
+        "stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("1 of 3 worktrees was not stopped: feat/nope"),
+        "{}",
+        stderr(&out)
+    );
+    for name in ["feat+one", "feat+two"] {
+        assert!(recorded_processes(&e, name).is_empty(), "{name}");
+    }
+
+    // One name reads exactly as it always did.
+    let out = e.pando(&["stop", "feat/one"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "feat+one was not running\n");
+}
+
+// A question is the whole command's: several names whose start needs an
+// answer exit 3 with the question, and start none of them.
+#[test]
+fn a_question_before_several_starts_starts_none_of_them() {
+    let e = env_pinning_an_impossible_runtime();
+    assert_eq!(code(&e.pando(&["new", "feat/two"])), EXIT_OK);
+
+    let out = e.pando(&["start", "feat/one", "feat/two"]);
+    assert_eq!(code(&out), EXIT_NEEDS_ANSWER, "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("node 99 (.nvmrc)"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(stdout(&out), "");
+    for name in ["feat+one", "feat+two"] {
+        assert!(recorded_processes(&e, name).is_empty(), "{name}");
+    }
+}
+
 // A `pando rm` killed half way — here while its containers go down — lets
 // go of its removal lock as it dies, and leaves its record marked: a start
 // of the worktree is refused with the command that finishes it, and that
