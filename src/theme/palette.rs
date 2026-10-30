@@ -141,6 +141,10 @@ pub struct Palette {
     pub magenta: Color,
     pub cyan: Color,
     pub orange: Color,
+    /// Orange, one step off it and off every other colour text is drawn
+    /// in: a key a hint names, which the TUI reads off a painted frame to
+    /// know what a click presses. No eye tells it from orange.
+    pub hint_key: Color,
     pub namespaced: Color,
     pub text: Color,
     pub text_dim: Color,
@@ -187,7 +191,7 @@ impl Variant {
             }
             hue.mix(away, t)
         });
-        Palette {
+        let mut palette = Palette {
             red: self.red.color(),
             green: self.green.color(),
             yellow: self.yellow.color(),
@@ -195,6 +199,7 @@ impl Variant {
             magenta: self.magenta.color(),
             cyan: self.cyan.color(),
             orange: self.orange.color(),
+            hint_key: self.orange.color(),
             namespaced: namespaced.color(),
             text: fg.color(),
             text_dim: readable(self.text_dim, TEXT_DIM, bg, TEXT_DIM_CONTRAST),
@@ -207,6 +212,43 @@ impl Variant {
                 .search_match
                 .unwrap_or(bg.mix(self.blue, SEARCH_MATCH))
                 .color(),
-        }
+        };
+        // Two themes give orange another accent's value — colorblind's is
+        // its red, Rosé Pine's its cyan — and a theme file may too.
+        palette.hint_key = apart(self.orange, &palette.text_colours()).color();
+        palette
     }
+}
+
+impl Palette {
+    /// Every colour text is drawn in but the key's own.
+    pub(super) fn text_colours(&self) -> [Color; 12] {
+        [
+            self.red,
+            self.green,
+            self.yellow,
+            self.blue,
+            self.magenta,
+            self.cyan,
+            self.orange,
+            self.namespaced,
+            self.text,
+            self.text_dim,
+            self.text_muted,
+            self.border,
+        ]
+    }
+}
+
+/// The colour nearest `colour` that is none of `taken`, a step at a time
+/// on its blue channel: a step no eye sees, and one a frame's cells tell
+/// apart.
+fn apart(colour: Rgb, taken: &[Color]) -> Rgb {
+    let Rgb(r, g, b) = colour;
+    (0..=u8::MAX)
+        .flat_map(|step| [b.checked_add(step), b.checked_sub(step)])
+        .flatten()
+        .map(|b| Rgb(r, g, b))
+        .find(|candidate| !taken.contains(&candidate.color()))
+        .unwrap_or(colour)
 }

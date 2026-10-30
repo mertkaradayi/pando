@@ -1,23 +1,23 @@
 //! The key hints a click presses, read off the frame as it was painted.
 //!
-//! A hint is a key in the key style — orange and bold, as the footer and
-//! every dialog draw one — and the words after it: `esc cancel`, `⏎ starts
-//! it`. Reading them off the frame rather than out of each dialog's layout
-//! keeps one rule for every place a hint is drawn, however it is laid out.
-//! A key with no words after it is no hint: a base the create picker was
-//! told is drawn the same way, and says what it is rather than a key.
+//! A hint is a key drawn bold in the palette's `hint_key` — orange to the
+//! eye, and a colour nothing else on screen has, whatever the theme gives
+//! orange — and the words after it: `esc cancel`, `⏎ starts it`. Reading
+//! them off the frame rather than out of each dialog's layout keeps one
+//! rule for every place a hint is drawn, however it is laid out. A key
+//! with no words after it is no hint: every hint says what its key does.
 
 use ratatui::buffer::{Buffer, Cell};
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 
-use crate::theme::orange;
+use crate::theme::hint_key;
 
 /// Each hint painted in `area`: the cells of its key and of the words
 /// after it, and the key as it is written.
 pub(super) fn key_hints(buf: &Buffer, area: Rect) -> Vec<(Rect, String)> {
     let area = area.intersection(buf.area);
-    let key_colour = orange();
+    let key_colour = hint_key();
     let is_key = |cell: &Cell| cell.fg == key_colour && cell.modifier.contains(Modifier::BOLD);
     let mut hints = Vec::new();
     for y in area.top()..area.bottom() {

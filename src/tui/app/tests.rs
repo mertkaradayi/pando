@@ -9487,6 +9487,10 @@ fn the_keys_help_lists_are_no_buttons() {
     assert!(app.hits.keys.is_empty(), "{:?}", app.hits.keys);
 }
 
+/// What a hint writes for a choice of keys rather than one: drawn as a
+/// key, and no click can press it.
+const KEY_CHOICES: [&str; 4] = ["↑↓", "j/k", "g/G", "1-9"];
+
 /// Paints `app` and holds every hint read off the frame to a key a click
 /// can press, or to a choice of keys, which it cannot.
 fn every_hint_presses_a_key(app: &mut App, what: &str) {
@@ -9497,7 +9501,7 @@ fn every_hint_presses_a_key(app: &mut App, what: &str) {
     );
     for (_, key) in &app.hits.keys {
         assert!(
-            super::mouse::keys_of(key).is_some() || ["↑↓", "j/k"].contains(&key.as_str()),
+            super::mouse::keys_of(key).is_some() || KEY_CHOICES.contains(&key.as_str()),
             "{what}: {key:?} is drawn as a key, and no click can press it"
         );
     }
@@ -10059,6 +10063,89 @@ fn help_has_the_mouse_only_while_pando_has_it() {
                 "{line:?} with the mouse {}, viewer {viewer}:\n{text}",
                 if mouse { "on" } else { "off" }
             );
+        }
+    }
+}
+
+/// The hints read off one frame of `state` — the list's footer, a dialog
+/// a key opens, or the log viewer's footer — under `palette`, or under
+/// the default theme with none. The worktree runs, its log has an error
+/// and a warning to count, and there is a pull request to pick.
+fn hints_read(
+    palette: Option<crate::theme::Palette>,
+    state: &str,
+) -> std::collections::BTreeSet<String> {
+    let (_dir, mut app) = app_with_logs(&["feat+one", "feat+two"]);
+    app.pr_list = vec![a_pr(11, "feat/one", crate::worktree::PrState::Open)];
+    with_process(&mut app, "feat+one", running_phase());
+    write_log(&app, "feat+one", "dev", &["ERROR boom", "WARN hmm", "fine"]);
+    if let Some(palette) = palette {
+        crate::theme::set_palette(palette);
+    }
+    match state {
+        "the footer" => {}
+        "the mode chooser" => press(&mut app, KeyCode::Enter),
+        "the remove dialog" => press(&mut app, KeyCode::Char('d')),
+        "the pull request picker" => press(&mut app, KeyCode::Char('p')),
+        "the new worktree picker, with a base" => {
+            press(&mut app, KeyCode::Char('n'));
+            app.handle_event(AppEvent::BranchesReady(vec![branch("develop")]));
+            press(&mut app, KeyCode::Tab);
+        }
+        "a question" => {
+            let (reply, _) = mpsc::channel();
+            open_question_with(&mut app, a_question(), reply);
+        }
+        "the log viewer" => open_viewer(&mut app, 120, 30),
+        other => panic!("no state {other}"),
+    }
+    frame(&mut app, 120, 30);
+    for (_, key) in &app.hits.keys {
+        assert!(
+            super::mouse::keys_of(key).is_some() || KEY_CHOICES.contains(&key.as_str()),
+            "{state}: {key:?} is read as a key, and no click can press it"
+        );
+    }
+    app.hits.keys.iter().map(|(_, key)| key.clone()).collect()
+}
+
+fn open_question_with(
+    app: &mut App,
+    question: actions::Question,
+    reply: mpsc::Sender<Result<actions::Answer, String>>,
+) {
+    app.handle_event(AppEvent::AskQuestion(Box::new((question, reply))));
+}
+
+// Hints are found by the colour of their key, and two built-in themes give
+// orange another accent's value: colorblind its red, Rosé Pine its cyan.
+// Under every theme, dark and light, the footer, the dialogs and the
+// viewer read exactly the hints the default theme reads, every one a key
+// a click can press, and nothing bold in red or cyan among them.
+#[test]
+fn every_theme_reads_the_same_hints_as_the_default_and_nothing_else() {
+    use crate::theme::Appearance;
+    let themes = test_app(&["feat+one"]).theme.themes.clone();
+    for state in [
+        "the footer",
+        "the mode chooser",
+        "the remove dialog",
+        "the pull request picker",
+        "the new worktree picker, with a base",
+        "a question",
+        "the log viewer",
+    ] {
+        let default = hints_read(None, state);
+        assert!(!default.is_empty(), "{state}: no hint read");
+        for theme in &themes {
+            for appearance in [Appearance::Dark, Appearance::Light] {
+                assert_eq!(
+                    hints_read(Some(theme.palette(appearance)), state),
+                    default,
+                    "{state} under {} {appearance:?}",
+                    theme.name
+                );
+            }
         }
     }
 }

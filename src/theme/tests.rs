@@ -362,3 +362,29 @@ fn a_theme_that_names_namespaced_gets_it_and_one_that_does_not_gets_its_own() {
         .namespaced;
     assert_ne!(pando, gruvbox, "each theme mixes its own");
 }
+
+// The TUI reads hints off a painted frame by the colour of their key, so
+// that colour is no other role's in any built-in theme, either half: two
+// of them give orange another accent's value, colorblind its red and Rosé
+// Pine its cyan. To the eye it is still orange, one step off it.
+#[test]
+fn the_hint_key_is_orange_to_the_eye_and_no_other_colour() {
+    use ratatui::style::Color;
+    for (name, text) in BUILT_IN {
+        let theme = Theme::parse(name, text, Source::BuiltIn).unwrap();
+        for appearance in [Appearance::Dark, Appearance::Light] {
+            let palette = theme.palette(appearance);
+            assert!(
+                !palette.text_colours().contains(&palette.hint_key),
+                "{name} {appearance:?}: {:?} is another role's",
+                palette.hint_key
+            );
+            let (Color::Rgb(r, g, b), Color::Rgb(or, og, ob)) = (palette.hint_key, palette.orange)
+            else {
+                panic!("{name} {appearance:?}: not 24-bit colours");
+            };
+            assert_eq!((r, g), (or, og), "{name} {appearance:?}");
+            assert!(b.abs_diff(ob) <= 1, "{name} {appearance:?}: {b} from {ob}");
+        }
+    }
+}

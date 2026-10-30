@@ -30,6 +30,9 @@
 //! |              | when a theme does not name it                      |
 //! | `blue`       | where you are: the cursor, the checked-out branch  |
 //! | `orange`     | a key to press                                     |
+//! | `hint_key`   | a key a hint names, which a click presses: orange  |
+//! |              | to the eye, one step off every other colour to the |
+//! |              | TUI, which finds hints by it. Never set by a theme |
 //! | `text`       | what the row is about: a branch, a title           |
 //! | `text_dim`   | a value that is there but not news                 |
 //! | `text_muted` | labels, titles, hints: read once, then skipped     |
@@ -156,6 +159,12 @@ pub fn blue() -> Color {
 
 pub fn orange() -> Color {
     palette().orange
+}
+
+/// The colour a hint draws its key in: orange, as the eye sees it, and a
+/// colour of its own to the TUI, which reads hints off a painted frame.
+pub fn hint_key() -> Color {
+    palette().hint_key
 }
 
 pub fn magenta() -> Color {
