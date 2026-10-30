@@ -571,8 +571,11 @@ impl App {
                         self.select_on_arrival = Some(name);
                         self.spawn_discovery();
                     }
+                    // Behind a fresh error: the row going says it too, and
+                    // what removing a set of marks kept, and why, is the
+                    // line still worth reading while the others go.
                     PendingOutcome::Removed(_) => {
-                        self.set_success(format!("removed {label}"));
+                        self.set_success_behind_error(format!("removed {label}"));
                         self.spawn_discovery();
                     }
                     PendingOutcome::Started(name, url, spawned) => {
