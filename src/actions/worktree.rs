@@ -1626,8 +1626,8 @@ pub fn rm(
     let seen = {
         let _lock = state::lock(&paths.lock_file())?;
         let seen = state::load(&paths.state_file())?;
-        if let Some(Removing::UnderWay(mark)) = removal_of(paths, &seen, name) {
-            bail!(being_removed(&shown, mark, ALREADY_REMOVING));
+        if let Some(RemovalState::UnderWay(mark)) = removal_of(paths, &seen, name) {
+            bail!(being_removed(&shown, &mark, ALREADY_REMOVING));
         }
         seen
     };
@@ -1801,8 +1801,10 @@ fn claim_removal(
         },
     };
     let interrupted = match removal_of(paths, &store, name) {
-        Some(Removing::UnderWay(mark)) => bail!(being_removed(&shown, mark, ALREADY_REMOVING)),
-        Some(Removing::Interrupted) => true,
+        Some(RemovalState::UnderWay(mark)) => {
+            bail!(being_removed(&shown, &mark, ALREADY_REMOVING))
+        }
+        Some(RemovalState::Interrupted(_)) => true,
         None => false,
     };
     let created_by_pando = refuse_unowned(&store, target, name, yes, &shown, &recorded_at)?;
@@ -2054,26 +2056,66 @@ fn abandon_removal(paths: &PandoPaths, claim: Claim, err: anyhow::Error) -> anyh
     }
 }
 
-/// Where a removal of a worktree stands, as its record and its removal
-/// lock say.
-pub(super) enum Removing<'a> {
-    /// An `rm` is at it now.
-    UnderWay(&'a state::Removal),
-    /// One began and stopped: the next `rm` finishes it.
-    Interrupted,
+/// Where a removal of a worktree stands, for one a removal has begun on,
+/// as its record's mark and its removal lock say. Each carries the mark:
+/// which pando began it, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemovalState {
+    /// An `rm` is at it now. Everything else asked of the worktree is
+    /// refused, and the record goes when it is done.
+    UnderWay(state::Removal),
+    /// One began and stopped — a Ctrl-C, a crash, a TUI quit — leaving
+    /// the record for the next `rm` of the name to finish, containers
+    /// and namespaces included. A start, a share and a `new` of the name
+    /// are refused until then.
+    Interrupted(state::Removal),
+}
+
+/// Every worktree of the project a removal has begun on, by name, and
+/// where each stands: the one rule anything outside `rm` reads it by.
+///
+/// Asked under the state lock, which asking needs: finding out whether a
+/// removal holds its lock means taking that lock for a moment, and done
+/// outside the state lock, the moment could fall on an `rm` claiming it,
+/// which would then refuse as if another were under way
+/// ([`state::is_held`]). Never waited for, as no read waits: while
+/// another pando holds the state lock, the answer is the state as it
+/// stands with nothing asked of any removal's lock, and every mark in it
+/// reads as under way — something holds the lock right now — until a read
+/// that finds it free. For a caller that holds no lock — the TUI's
+/// refresh worker, after `refresh` — and so never for one that does.
+/// Nothing is made, and nothing is asked, where there is no state yet.
+pub fn removals(paths: &PandoPaths) -> Result<BTreeMap<String, RemovalState>> {
+    if !paths.state_file().exists() {
+        return Ok(BTreeMap::new());
+    }
+    let Some(_lock) = state::try_lock(&paths.lock_file())? else {
+        let store = state::load(&paths.state_file())?;
+        return Ok(store
+            .worktrees
+            .into_iter()
+            .filter_map(|(name, record)| Some((name, RemovalState::UnderWay(record.removing?))))
+            .collect());
+    };
+    let store = state::load(&paths.state_file())?;
+    Ok(store
+        .worktrees
+        .keys()
+        .filter_map(|name| Some((name.clone(), removal_of(paths, &store, name)?)))
+        .collect())
 }
 
 /// Where a removal of `name` stands, if one has begun. Asked under the
 /// state lock: see [`state::is_held`].
-pub(super) fn removal_of<'a>(
+pub(super) fn removal_of(
     paths: &PandoPaths,
-    store: &'a state::State,
+    store: &state::State,
     name: &str,
-) -> Option<Removing<'a>> {
-    let mark = store.worktrees.get(name)?.removing.as_ref()?;
+) -> Option<RemovalState> {
+    let mark = store.worktrees.get(name)?.removing.clone()?;
     Some(match state::is_held(&paths.removal_lock_file(name)) {
-        true => Removing::UnderWay(mark),
-        false => Removing::Interrupted,
+        true => RemovalState::UnderWay(mark),
+        false => RemovalState::Interrupted(mark),
     })
 }
 
@@ -2100,8 +2142,8 @@ pub(super) fn refuse_while_removed(
 ) -> Result<()> {
     match removal_of(paths, store, name) {
         None => Ok(()),
-        Some(Removing::UnderWay(mark)) => bail!(being_removed(shown, mark, nothing)),
-        Some(Removing::Interrupted) => bail!(
+        Some(RemovalState::UnderWay(mark)) => bail!(being_removed(shown, &mark, nothing)),
+        Some(RemovalState::Interrupted(_)) => bail!(
             "a removal of {shown} was interrupted — {nothing}; `pando rm {shown}` finishes it"
         ),
     }

@@ -11278,6 +11278,60 @@ fn an_interrupted_removal_is_finished_by_the_next_rm() {
     new(&fx.paths, &fx.config, "feat/half", None, &noop).unwrap();
 }
 
+// The TUI reads where a removal stands from `removals`, so the rule is
+// written once. Asking means taking the removal's lock for a moment, and
+// a moment that fell on an `rm` claiming it would make that `rm` refuse as
+// if another were under way: so it asks only under the state lock, which
+// it takes itself — and, as no read does, never waits for it.
+#[test]
+fn removals_says_where_each_removal_stands_and_asks_under_the_state_lock() {
+    let fx = fixture();
+    assert!(removals(&fx.paths).unwrap().is_empty());
+    assert!(!fx.paths.home.exists(), "nothing to ask, so nothing made");
+    let name = worktree_named(&fx, "feat/going");
+    worktree_named(&fx, "feat/staying");
+    assert!(removals(&fx.paths).unwrap().is_empty());
+    let mark = state::Removal {
+        owner_pid: 4_000_021,
+        since: Utc::now(),
+    };
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().removing = Some(mark.clone());
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let held = state::try_lock(&fx.paths.removal_lock_file(&name))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        removals(&fx.paths).unwrap(),
+        BTreeMap::from([(name.clone(), RemovalState::UnderWay(mark.clone()))])
+    );
+    drop(held);
+    assert_eq!(
+        removals(&fx.paths).unwrap(),
+        BTreeMap::from([(name.clone(), RemovalState::Interrupted(mark.clone()))])
+    );
+
+    // Held elsewhere, the lock is not waited for, and no removal's lock is
+    // asked: the interrupted one reads as under way until it is free. A
+    // removal claiming its lock meanwhile finds it free.
+    let lock = state::lock(&fx.paths.lock_file()).unwrap();
+    assert_eq!(
+        removals(&fx.paths).unwrap(),
+        BTreeMap::from([(name.clone(), RemovalState::UnderWay(mark.clone()))])
+    );
+    drop(
+        state::try_lock(&fx.paths.removal_lock_file(&name))
+            .unwrap()
+            .expect("nothing took the removal's lock"),
+    );
+    drop(lock);
+    assert_eq!(
+        removals(&fx.paths).unwrap(),
+        BTreeMap::from([(name.clone(), RemovalState::Interrupted(mark.clone()))])
+    );
+}
+
 // Any command that creates a directory under pando's home must make the
 // home itself 0700 first: later phases copy env files in there, and a
 // home created by a stray `create_dir_all` would carry the umask.
