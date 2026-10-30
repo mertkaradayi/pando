@@ -457,25 +457,63 @@ fn forget_pending(paths: &PandoPaths, name: &str) {
 }
 
 /// Takes a worktree's public URL down.
+///
+/// The share is read under the state lock and signalled without it: each
+/// half gets up to five seconds to exit, and every other command waited
+/// that out. The record keeps naming the share until both halves are
+/// down — signal first, drop second — so one that would not stop, or an
+/// unshare that died half way, leaves the pgids a retry signals. A share
+/// of the worktree started meanwhile waits on the share's own lock, as a
+/// second share does, rather than opening a tunnel beside one going away.
 pub fn unshare(paths: &PandoPaths, name: &str) -> Result<()> {
+    unshare_with(paths, name, |pgid| proc::stop(pgid, STOP_GRACE))
+}
+
+/// [`unshare`] with the signal injected, so a test can see what is held
+/// while it runs.
+pub(super) fn unshare_with(
+    paths: &PandoPaths,
+    name: &str,
+    stop: impl Fn(proc::Group) -> Result<()>,
+) -> Result<()> {
     paths.ensure_home()?;
+    let read = |store: &state::State| -> Result<ShareRecord> {
+        let record = store
+            .worktrees
+            .get(name)
+            .with_context(|| format!("pando has no record of {name}"))?;
+        record
+            .share
+            .clone()
+            .with_context(|| format!("{name} is not shared"))
+    };
+    // Read first, so a name with no share makes no lock in its logs.
+    {
+        let _lock = state::lock(&paths.lock_file())?;
+        read(&state::load(&paths.state_file())?)?;
+    }
+    let _one_share = state::lock(&paths.share_lock_file(name))?;
+    // And again, now no share of it can be on its way up.
+    let share = {
+        let _lock = state::lock(&paths.lock_file())?;
+        read(&state::load(&paths.state_file())?)?
+    };
+    let stopped = tunnel::stop_share_with(&share, &stop);
     let _lock = state::lock(&paths.lock_file())?;
     let mut store = state::load(&paths.state_file())?;
-    let record = store
-        .worktrees
-        .get_mut(name)
-        .with_context(|| format!("pando has no record of {name}"))?;
-    let Some(share) = record.share.take() else {
-        bail!("{name} is not shared");
-    };
-    if let Err(e) = tunnel::stop_share(&share) {
-        // Still alive, so the record goes back: state has to match what is
+    if let Err(e) = stopped {
+        // Still alive, so the record stays: state has to match what is
         // really running, or a retry has no pgid to signal.
-        record.share = Some(share);
-        state::save(&paths.state_file(), &store)?;
         return Err(e.context(format!("could not take {name}'s share down")));
     }
-    state::save(&paths.state_file(), &store)?;
+    // A stop or a sweep may have dropped it meanwhile, having signalled
+    // the same groups; a share recorded since is another one.
+    if let Some(record) = store.worktrees.get_mut(name)
+        && record.share.as_ref() == Some(&share)
+    {
+        record.share = None;
+        state::save(&paths.state_file(), &store)?;
+    }
     Ok(())
 }
 

@@ -3956,6 +3956,45 @@ fn unshare_refuses_a_worktree_that_is_not_shared() {
     assert!(format!("{err:#}").contains("not shared"), "{err:#}");
 }
 
+// Each half of a share gets five seconds to exit, and an unshare that held
+// the state lock through them held up every other command as long. The
+// record still names the share while it goes, and keeps naming one that
+// would not stop, for the retry.
+#[test]
+fn unshare_holds_no_state_lock_while_the_share_exits() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    let share = share_record_of(4_000_011, Some(4_000_012));
+    let plant = || {
+        let mut store = fx.state();
+        store.worktrees.get_mut(&name).unwrap().share = Some(share.clone());
+        state::save(&fx.paths.state_file(), &store).unwrap();
+    };
+
+    plant();
+    let seen = std::cell::RefCell::new(Vec::new());
+    unshare_with(&fx.paths, &name, |pgid| {
+        let free = state::try_lock(&fx.paths.lock_file()).unwrap().is_some();
+        let named = fx.state().worktrees[&name].share.as_ref() == Some(&share);
+        seen.borrow_mut().push((pgid, free, named));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        *seen.borrow(),
+        [
+            (share.tunnel_pgid, true, true),
+            (share.proxy_pgid.unwrap(), true, true)
+        ]
+    );
+    assert!(fx.state().worktrees[&name].share.is_none());
+
+    plant();
+    let err = unshare_with(&fx.paths, &name, |_| bail!("it would not stop")).unwrap_err();
+    assert!(format!("{err:#}").contains("could not take"), "{err:#}");
+    assert_eq!(fx.state().worktrees[&name].share, Some(share.clone()));
+}
+
 // A tunnel whose process is already gone must still unshare: the record
 // is the only thing holding a URL nobody can reach.
 #[test]
