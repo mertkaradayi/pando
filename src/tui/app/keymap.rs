@@ -417,6 +417,11 @@ const CLICK: &[MouseEventKind] = &[MouseEventKind::Down(MouseButton::Left)];
 
 const WHEEL: &[MouseEventKind] = &[MouseEventKind::ScrollUp, MouseEventKind::ScrollDown];
 
+const DRAG: &[MouseEventKind] = &[MouseEventKind::Drag(MouseButton::Left)];
+
+/// A drag selects nothing while pando has the mouse, and says so.
+const DRAG_HELP: MouseHelp = gesture("drag", DRAG, "says how to select text, as below");
+
 /// What the mouse does on the list while pando has it, under its keys.
 pub const LIST_MOUSE: &[MouseHelp] = &[
     gesture(
@@ -435,6 +440,7 @@ pub const LIST_MOUSE: &[MouseHelp] = &[
         WHEEL,
         "move the list, or scroll the log preview under it",
     ),
+    DRAG_HELP,
 ];
 
 /// What the mouse does in the log viewer while pando has it.
@@ -447,6 +453,7 @@ pub const LOG_MOUSE: &[MouseHelp] = &[
     gesture("click twice", CLICK, "inspect the line"),
     gesture("click a hint", CLICK, "press its key"),
     gesture("wheel", WHEEL, "move the cursor three lines"),
+    DRAG_HELP,
 ];
 
 /// How the terminal's own selection still works while pando has the

@@ -16,7 +16,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::{Position, Rect};
 
-use super::{App, GitStage, Modal, SearchMode, View};
+use super::{App, GitStage, MOUSE_NOTE, Modal, SearchMode, View};
 
 /// Lines a step of the wheel moves what is read by scrolling: help, the
 /// messages, the log viewer, the log preview. Three is what a terminal
@@ -116,9 +116,29 @@ impl App {
         match mouse.kind {
             MouseEventKind::ScrollUp => self.wheel(at, -1),
             MouseEventKind::ScrollDown => self.wheel(at, 1),
-            MouseEventKind::Down(MouseButton::Left) => self.click(at),
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.drag_told = false;
+                self.click(at)
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                self.drag_told = false;
+                false
+            }
+            MouseEventKind::Drag(MouseButton::Left) => self.dragged(),
             _ => false,
         }
+    }
+
+    /// A step of a drag with the left button: somebody selecting text, as
+    /// a plain drag did before pando took the mouse. Nothing here selects,
+    /// so the first step of each drag says how selecting works now, and
+    /// the rest cost no frame.
+    fn dragged(&mut self) -> bool {
+        if std::mem::replace(&mut self.drag_told, true) {
+            return false;
+        }
+        self.set_status(MOUSE_NOTE[0]);
+        true
     }
 
     /// Whether the list and the detail pane have the mouse: no modal over
