@@ -8,7 +8,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::state::Aggregate;
-use crate::theme::{blue, green, orange, red, surface, text, text_dim, text_muted, yellow};
+use crate::theme::{
+    blue, green, hint_key, orange, red, surface, text, text_dim, text_muted, yellow,
+};
 use crate::tui::app::{App, LEADER_KEYS, Mode, SetupHint, Status, StatusKind};
 use crate::worktree::GhAccount;
 
@@ -507,7 +509,7 @@ pub(super) fn hint_line(hints: &[(&str, &str, bool)], width: usize) -> Line<'sta
         first = false;
         spans.push(Span::styled(
             (*key).to_string(),
-            Style::new().fg(orange()).add_modifier(Modifier::BOLD),
+            Style::new().fg(hint_key()).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
             format!(" {label}"),

@@ -22,8 +22,8 @@ use crate::actions;
 use crate::actions::git::{GitAction, GitRead, Ran};
 use crate::state::ServiceMode;
 use crate::theme::{
-    AppearanceOrigin, blue, border, cyan, green, highlight_bg, magenta, namespaced, orange, red,
-    surface, text, text_dim, text_muted, yellow,
+    AppearanceOrigin, blue, border, cyan, green, highlight_bg, hint_key, magenta, namespaced,
+    orange, red, surface, text, text_dim, text_muted, yellow,
 };
 use crate::worktree::{BranchSource, PrState};
 
@@ -219,7 +219,7 @@ fn widest(lines: &[Line]) -> usize {
 fn key_span(key: &str) -> Span<'static> {
     Span::styled(
         key.to_string(),
-        Style::new().fg(orange()).add_modifier(Modifier::BOLD),
+        Style::new().fg(hint_key()).add_modifier(Modifier::BOLD),
     )
 }
 
@@ -1412,7 +1412,7 @@ fn render_help(
             Span::styled(what.to_string(), Style::new().fg(text_dim())),
         ])
     };
-    let key_style = Style::new().fg(orange()).add_modifier(Modifier::BOLD);
+    let key_style = Style::new().fg(hint_key()).add_modifier(Modifier::BOLD);
     let mut lines: Vec<Line> = keys
         .iter()
         .map(|k| row(k.keys, k.action, key_style))
