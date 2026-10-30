@@ -108,7 +108,7 @@ fn sources_for(
     progress: &dyn Fn(&str),
 ) -> Result<Vec<RepoSource>> {
     let root = paths.root();
-    let mut sources = Vec::new();
+    let mut wanted_checkouts = Vec::new();
     for (repo, checkout) in paths.project.repo_checkouts_in(root) {
         if !wanted(repo) {
             continue;
@@ -128,23 +128,53 @@ fn sources_for(
         let requested = base
             .or_else(|| config.base_for(repo, Some(branch)))
             .map(str::to_string);
-        // Each repository's lookup said as its own, or a fetch per
-        // repository reads as one line said twice.
-        let said = |line: &str| match repo {
-            Some(repo) => progress(&format!("{repo}: {line}")),
-            None => progress(line),
-        };
-        let source = in_repo(
-            resolve_create_source(&checkout, branch, requested, &said),
-            repo,
-        )?;
-        sources.push(RepoSource {
-            repo: repo.map(str::to_string),
-            root: checkout,
-            source,
-        });
+        wanted_checkouts.push((repo.map(str::to_string), checkout, requested));
     }
-    Ok(sources)
+    // Every repository's lookup at once, each on a thread of its own: a
+    // lookup can be a `git fetch`, and one repository after another a set
+    // of five waited on five. What each says is said here as it comes,
+    // as its own, or a fetch per repository reads as one line said twice.
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let resolved: Vec<Result<CreateSource>> = std::thread::scope(|scope| {
+        let resolving: Vec<_> = wanted_checkouts
+            .iter()
+            .map(|(repo, checkout, requested)| {
+                let tx = tx.clone();
+                scope.spawn(move || {
+                    let said = |line: &str| {
+                        let _ = tx.send(match repo {
+                            Some(repo) => format!("{repo}: {line}"),
+                            None => line.to_string(),
+                        });
+                    };
+                    resolve_create_source(checkout, branch, requested.clone(), &said)
+                })
+            })
+            .collect();
+        drop(tx);
+        for line in rx {
+            progress(&line);
+        }
+        resolving
+            .into_iter()
+            .map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    wanted_checkouts
+        .into_iter()
+        .zip(resolved)
+        .map(|((repo, root, _), source)| {
+            Ok(RepoSource {
+                source: in_repo(source, repo.as_deref())?,
+                repo,
+                root,
+            })
+        })
+        .collect()
 }
 
 /// The set called `name` when it lacks a checkout of one of the project's
