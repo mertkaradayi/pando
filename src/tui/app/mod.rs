@@ -975,6 +975,11 @@ impl App {
             // a curl, a chat. `C` is the public one, and never stands in.
             KeyCode::Char('c') => self.copy_selected_url(),
             KeyCode::Char('C') => self.copy_selected_public_url(),
+            // With rows marked, the keys that make sense on several at
+            // once act on every marked one; the rest stay the cursor's.
+            KeyCode::Char('s') if !self.marks.is_empty() => self.start_marked(),
+            KeyCode::Char('x') if !self.marks.is_empty() => self.stop_marked(),
+            KeyCode::Char('r') if !self.marks.is_empty() => self.restart_marked(),
             KeyCode::Char('s') => self.start_selected(),
             // The key pressed on a row without thinking: which services
             // it runs on, with what it already does under the cursor.

@@ -370,6 +370,20 @@ pub(super) const NOTHING_TO_RUN_HINTS: [(&str, &str, bool); 11] = [
     ("q", "quit", true),
 ];
 
+/// While rows are marked: the keys that act on every marked one first,
+/// then how to mark more or unmark them all.
+pub(super) const MARKED_HINTS: [(&str, &str, bool); 9] = [
+    ("s", "start", true),
+    ("x", "stop", true),
+    ("r", "restart", false),
+    ("d", "remove", true),
+    ("+", "mark", true),
+    ("esc", "unmark all", true),
+    ("j/k", "move", false),
+    ("?", "help", true),
+    ("q", "quit", false),
+];
+
 /// With nothing to select, only what gets something onto the list.
 pub(super) const EMPTY_HINTS: [(&str, &str, bool); 3] = [
     ("n", "new worktree", true),
@@ -430,6 +444,16 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             ],
             width,
         ),
+        // esc clears a filter before it unmarks anything, and the filter
+        // line says so; the hint is only offered once it is true.
+        Mode::Normal if !app.marks.is_empty() => {
+            let hints: Vec<_> = MARKED_HINTS
+                .iter()
+                .copied()
+                .filter(|(key, ..)| *key != "esc" || app.filter.is_empty())
+                .collect();
+            hint_line(&hints, hints_width)
+        }
         Mode::Normal => match selected {
             None => hint_line(&EMPTY_HINTS, hints_width),
             // A shared worktree's public URL is what gets handed out, so

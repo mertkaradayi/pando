@@ -2429,6 +2429,7 @@ fn every_footer_hint_is_a_key_help_documents() {
         .chain(&STOPPED_HINTS)
         .chain(&NOTHING_TO_RUN_HINTS)
         .chain(&EMPTY_HINTS)
+        .chain(&MARKED_HINTS)
         .chain(&shared)
     {
         for part in hint_keys(key) {
