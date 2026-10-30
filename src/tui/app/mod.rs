@@ -352,6 +352,9 @@ pub struct App {
     /// The last press on a worktree or on a picker's option, and which,
     /// while the next press could still make it a double click.
     pub last_click: Option<(Instant, Clicked)>,
+    /// The drag under way has been told how to select text: once a drag,
+    /// until the button is pressed or let go again.
+    pub drag_told: bool,
     pub event_tx: Sender<AppEvent>,
     pub event_rx: Option<Receiver<AppEvent>>,
     /// How `!` and `e` leave pando: inside tmux or not, which shell, which
@@ -452,6 +455,7 @@ impl App {
             tick: 0,
             hits: Hits::default(),
             last_click: None,
+            drag_told: false,
             event_tx,
             event_rx: Some(event_rx),
             launch_env: LaunchEnv::from_env(),
@@ -1768,6 +1772,7 @@ impl App {
             tick: 0,
             hits: Hits::default(),
             last_click: None,
+            drag_told: false,
             event_tx,
             event_rx: Some(event_rx),
             launch_env: LaunchEnv::default(),

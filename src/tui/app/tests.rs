@@ -9087,23 +9087,46 @@ fn the_wheel_moves_the_list_a_row_a_step() {
     assert_eq!(app.list_state.selected(), Some(1));
 }
 
-// A release, a drag and a move answer nothing, nor does a press where no
-// frame has put anything: none of them costs a frame.
+// A release, another button and a move answer nothing, nor does a press
+// where no frame has put anything: none of them costs a frame.
 #[test]
-fn a_release_a_drag_a_move_and_a_click_on_nothing_do_nothing() {
+fn a_release_a_move_another_button_and_a_click_on_nothing_do_nothing() {
     use ratatui::crossterm::event::{MouseButton, MouseEventKind};
     let mut app = test_app(&["a", "b"]);
     for kind in [
         MouseEventKind::Down(MouseButton::Left),
         MouseEventKind::Up(MouseButton::Left),
-        MouseEventKind::Drag(MouseButton::Left),
         MouseEventKind::Down(MouseButton::Right),
+        MouseEventKind::Drag(MouseButton::Right),
         MouseEventKind::Moved,
     ] {
         assert!(!mouse(&mut app, kind), "{kind:?}");
     }
     assert_eq!(app.list_state.selected(), Some(0));
     assert!(app.modal.is_none());
+}
+
+// A plain drag is how text was selected before pando took the mouse, and
+// it selects nothing now: its first step says how selecting works, the
+// rest cost no frame, and the next press starts that over.
+#[test]
+fn a_drag_says_once_how_to_select_text() {
+    use ratatui::crossterm::event::MouseButton::Left;
+    use ratatui::crossterm::event::MouseEventKind::{Down, Drag, Up};
+    let mut app = test_app(&["a", "b"]);
+    mouse(&mut app, Down(Left));
+    assert!(mouse(&mut app, Drag(Left)), "the first step is a frame");
+    let (said, _) = app.active_status().expect("a status");
+    assert_eq!(said, MOUSE_NOTE[0]);
+    assert!(!mouse(&mut app, Drag(Left)), "the next steps are not");
+    mouse(&mut app, Up(Left));
+    app.status = None;
+    mouse(&mut app, Down(Left));
+    assert!(mouse(&mut app, Drag(Left)), "a new drag says it again");
+    assert_eq!(
+        app.active_status().map(|(said, _)| said),
+        Some(MOUSE_NOTE[0])
+    );
 }
 
 #[test]

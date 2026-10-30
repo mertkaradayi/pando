@@ -40,9 +40,12 @@ const INPUT_POLL: Duration = Duration::from_millis(50);
 
 /// What asks the terminal for the mouse: presses, releases and the wheel
 /// (1000), drags (1002), in SGR's coordinates (1006), which a column past
-/// 223 does not break. Not every move of the pointer (1003), which
-/// crossterm's `EnableMouseCapture` asks for as well: nothing here
-/// answers a hover, and over SSH or through tmux each move is a write.
+/// 223 does not break. A drag is how text was selected before pando took
+/// the mouse, and its first step says how to select it now: worth the
+/// write each step costs while a button is held.
+/// Not every move of the pointer (1003), which crossterm's
+/// `EnableMouseCapture` asks for as well: nothing here answers a hover,
+/// and over SSH or through tmux each move is a write.
 const MOUSE_ON: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
 
 /// What gives the mouse back, in the reverse order.
