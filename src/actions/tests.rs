@@ -14321,7 +14321,13 @@ fn new_says_installing_only_once_its_git_work_is_done() {
         if m != INSTALLING {
             return;
         }
-        let lock_free = state::try_lock(&fx.paths.lock_file()).unwrap().is_some();
+        // Asked again for a moment: a child another test forks in this
+        // process can hold a copy of the lock's descriptor until it execs.
+        // `new` holding the lock itself would hold it through this whole
+        // call, which it is blocked in, so the wait cannot hide that.
+        let lock_free = crate::testutil::wait_until(std::time::Duration::from_secs(2), || {
+            state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+        });
         let recorded = fx.state().worktrees.contains_key("feat+one");
         let branch = Command::new("git")
             .arg("-C")
