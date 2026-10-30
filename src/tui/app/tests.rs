@@ -3977,7 +3977,7 @@ fn a_list_every_key_can_act_on() -> (tempfile::TempDir, App) {
 /// What a key press can visibly change on the list.
 fn list_fingerprint(app: &App) -> String {
     format!(
-        "{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}|{:?}|{:?}|{}|{}|{}|{:?}|{}",
+        "{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}|{:?}|{:?}|{}|{}|{}|{:?}|{}|{:?}",
         app.modal.as_ref().map(std::mem::discriminant),
         app.mode,
         app.status.as_ref().map(|s| s.message.clone()),
@@ -3992,6 +3992,7 @@ fn list_fingerprint(app: &App) -> String {
         app.filter,
         app.launch,
         app.leader,
+        app.marks,
     )
 }
 
@@ -10269,4 +10270,126 @@ fn every_theme_reads_the_same_hints_as_the_default_and_nothing_else() {
             }
         }
     }
+}
+
+// ---- marks -----------------------------------------------------------------
+
+/// The marked worktrees, in the list's order.
+fn marked(app: &App) -> Vec<String> {
+    app.marked()
+}
+
+// `+` marks the row under the cursor and moves down, as a file manager's
+// selection key does; on a marked row it unmarks it.
+#[test]
+fn plus_marks_a_row_and_moves_down_and_unmarks_it_again() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    press(&mut app, KeyCode::Char('+'));
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["feat+one", "feat+two"]);
+    assert_eq!(app.selected_worktree().unwrap().name, "feat+three");
+    press(&mut app, KeyCode::Char('k'));
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["feat+one"], "+ again unmarks it");
+    // On the last row it stays there.
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(app.selected_worktree().unwrap().name, "feat+three");
+    assert_eq!(marked(&app), vec!["feat+one", "feat+three"]);
+}
+
+// Marks are names, not rows: a discovery that lists the same worktrees,
+// one that reorders them, and `,` re-sorting the list keep every mark on
+// its worktree. One that no longer lists a worktree drops its mark.
+#[test]
+fn marks_survive_a_refresh_and_a_re_sort_and_go_with_their_worktree() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    app.apply_snapshot(listing(&app, &["feat+one", "feat+two", "feat+three"]));
+    app.marks = ["feat+one", "feat+three"].map(String::from).into();
+    app.apply_snapshot(listing(&app, &["feat+three", "feat+one", "feat+two"]));
+    assert_eq!(marked(&app), vec!["feat+three", "feat+one"]);
+    for _ in ListSort::ALL {
+        press(&mut app, KeyCode::Char(','));
+        let mut names = marked(&app);
+        names.sort();
+        assert_eq!(names, vec!["feat+one", "feat+three"], "{:?}", app.sort);
+    }
+    app.apply_snapshot(listing(&app, &["feat+one", "feat+two"]));
+    assert_eq!(marked(&app), vec!["feat+one"], "feat+three went");
+    assert!(!app.marks.contains("feat+three"));
+}
+
+// esc unwinds a filter first, keeping the marks made under it; then it
+// unmarks every row; only then does it quit.
+#[test]
+fn esc_clears_the_filter_then_the_marks_then_quits() {
+    let mut app = test_app(&["feat+one", "fix+two", "fix+three"]);
+    press(&mut app, KeyCode::Char('/'));
+    type_str(&mut app, "fix");
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Char('+'));
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["fix+two", "fix+three"]);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.filter.is_empty(), "the filter went first");
+    assert_eq!(marked(&app), vec!["fix+two", "fix+three"]);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.marks.is_empty(), "then the marks");
+    assert!(!app.should_quit);
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("unmarked 2 worktrees".to_string())
+    );
+    press(&mut app, KeyCode::Esc);
+    assert!(app.should_quit, "then esc quits");
+}
+
+// The main checkout can be marked: it starts, stops and restarts as any
+// row does. Only a removal skips it.
+#[test]
+fn the_main_checkout_can_be_marked() {
+    let mut app = test_app(&["feat+one"]);
+    app.apply_snapshot(listing(&app, &["feat+one"]));
+    press(&mut app, KeyCode::Char('g'));
+    assert_eq!(app.selected_worktree().unwrap().name, "acme-shop");
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["acme-shop"]);
+}
+
+// A marked row has `+` before the cursor's column, the list's title says
+// how many are marked and how many a filter hides, and so does the
+// footer.
+#[test]
+fn a_marked_row_shows_its_mark_and_the_list_counts_them() {
+    let mut app = test_app(&["feat+one", "fix+two", "fix+three"]);
+    press(&mut app, KeyCode::Char('+'));
+    press(&mut app, KeyCode::Char('+'));
+    let rows = frame(&mut app, 140, 24);
+    for row in ["│+  ○ feat/one", "│+  ○ fix/two", "│ ▸ ○ fix/three"] {
+        assert!(
+            rows.iter().any(|r| r.starts_with(row)),
+            "{row:?} is not on screen:\n{}",
+            rows.join("\n")
+        );
+    }
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("worktrees (3) · 2 marked · by PR")),
+        "{}",
+        rows.join("\n")
+    );
+    assert!(
+        rows.last().unwrap().starts_with(" 2 marked · "),
+        "{}",
+        rows.last().unwrap()
+    );
+    press(&mut app, KeyCode::Char('/'));
+    type_str(&mut app, "fix");
+    press(&mut app, KeyCode::Enter);
+    let rows = frame(&mut app, 140, 24);
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("worktrees (2/3) · 2 marked, 1 hidden · by PR")),
+        "{}",
+        rows.join("\n")
+    );
 }

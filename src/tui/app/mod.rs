@@ -20,6 +20,7 @@ mod keymap;
 mod launch;
 mod log_keys;
 mod log_view;
+mod marks;
 mod merged;
 mod mouse;
 mod operations;
@@ -58,7 +59,7 @@ pub use themes::ThemeState;
 use anyhow::Result;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::ListState;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -291,6 +292,9 @@ pub struct App {
     pub sort: ListSort,
     pub filter: String,
     pub filtered_indices: Vec<usize>,
+    /// The worktrees `+` marked, by name: `s` `x` `r` and `d` act on all
+    /// of them while there are any. Dropped when a worktree goes.
+    pub marks: BTreeSet<String>,
     pub mode: Mode,
     pub modal: Option<Modal>,
     /// The first press of a key that asks for a second.
@@ -433,6 +437,7 @@ impl App {
             sort,
             filter: String::new(),
             filtered_indices: Vec::new(),
+            marks: BTreeSet::new(),
             mode: Mode::Normal,
             modal: None,
             armed: None,
@@ -937,10 +942,12 @@ impl App {
         match key.code {
             // Esc unwinds a kept filter before it quits: the filter line
             // says `esc clears`, and quitting instead loses the session.
+            // The marks next, so an esc meant for the filter keeps them.
             KeyCode::Esc if !self.filter.is_empty() => {
                 self.filter.clear();
                 self.refilter();
             }
+            KeyCode::Esc if !self.marks.is_empty() => self.clear_marks(),
             KeyCode::Char('q') | KeyCode::Esc => self.quit(key.code),
             KeyCode::Char('j') | KeyCode::Down => self.move_cursor(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_cursor(-1),
@@ -952,6 +959,7 @@ impl App {
             KeyCode::Char('n') => self.open_create(),
             KeyCode::Char('p') => self.open_pull_requests(),
             KeyCode::Char('d') => self.open_remove(),
+            KeyCode::Char('+') => self.toggle_mark(),
             // The leader, as in neovim: everything that moves the branch
             // is `space g`, and the menu shows the commands before any run.
             KeyCode::Char(' ') => self.leader = true,
@@ -1750,6 +1758,7 @@ impl App {
             sort,
             filter: String::new(),
             filtered_indices: Vec::new(),
+            marks: BTreeSet::new(),
             mode: Mode::Normal,
             modal: None,
             armed: None,
