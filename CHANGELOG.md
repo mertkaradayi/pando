@@ -102,6 +102,10 @@ may change behaviour.
   while one was being removed said `already busy removing …`. A removal
   keeps the branch and writes no ref, so it runs beside another
   removal, a new worktree being made, or a git move elsewhere.
+- A worktree being made in the TUI holds up git moves only while git
+  checks it out, not through the minutes its install takes, and `X`
+  goes ahead while one is being made: a create starts nothing a stop
+  of everything would stop.
 
 ## 0.11.1 — 2026-10-26
 

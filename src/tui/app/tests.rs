@@ -10788,3 +10788,76 @@ fn removing_the_marks_leaves_a_busy_one_and_says_so_once() {
     assert_eq!(marked(&app), vec!["feat+one"], "still marked");
     drop(hold);
 }
+
+// A create held the repository's refs through its whole install, so a
+// git move waited the minutes `npm install` took. Its git work is done
+// once its worker says the install began: from then on a git move goes
+// ahead beside it.
+#[test]
+fn a_create_lets_a_git_move_go_once_its_install_begins() {
+    let mut app = test_app(&["feat+one"]);
+    let (hold, held) = mpsc::channel::<()>();
+    let (say, said) = mpsc::channel::<String>();
+    app.spawn_pending("feat+new".into(), PendingKind::Create, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.pending.last_mut().unwrap().progress_rx = Some(said);
+    let fetch = || -> Result<PendingOutcome, String> { Err("let go".to_string()) };
+    say.send("checking out feat/new".into()).unwrap();
+    app.poll_pending();
+    assert!(
+        !app.spawn_pending(
+            "feat+one".into(),
+            PendingKind::Git(crate::actions::git::GitAction::Fetch),
+            fetch,
+        ),
+        "git is still checking it out"
+    );
+    say.send(crate::actions::INSTALLING.into()).unwrap();
+    app.poll_pending();
+    assert!(app.spawn_pending(
+        "feat+one".into(),
+        PendingKind::Git(crate::actions::git::GitAction::Fetch),
+        fetch,
+    ));
+    // Its own worktree is still its own.
+    assert!(
+        !app.spawn_pending("feat+new".into(), PendingKind::Start, fetch),
+        "one action per worktree"
+    );
+    drop(hold);
+}
+
+// A create starts nothing a stop-all stops: `X` goes ahead while a
+// worktree is being made, and `n` while everything is being stopped.
+#[test]
+fn a_stop_all_and_a_create_run_beside_each_other() {
+    let mut app = test_app(&["feat+one"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+new".into(), PendingKind::Create, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.stop_everything(vec!["feat+one".into()]);
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+new".to_string(), PendingKind::Create),
+            (String::new(), PendingKind::StopAll),
+        ]
+    );
+    drop(hold);
+
+    // Nothing is polled, so the stop-all is in flight however soon its
+    // worker gives up on paths that do not exist.
+    let mut app = test_app(&["feat+one"]);
+    app.stop_everything(vec!["feat+one".into()]);
+    assert!(app.spawn_create("feat/pay".into(), None));
+    // Everything else still waits for it.
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("already busy stopping everything".to_string())
+    );
+}

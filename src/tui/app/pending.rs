@@ -228,6 +228,9 @@ pub struct PendingAction {
     /// What the messages call it: the branch, which is what a developer
     /// knows it by, rather than the directory name derived from it.
     pub label: String,
+    /// A create whose worker has said [`actions::INSTALLING`]: every ref
+    /// it writes is written, and what is left, the install, writes none.
+    pub refs_written: bool,
 }
 
 impl PendingAction {
@@ -236,10 +239,15 @@ impl PendingAction {
     /// Two on one worktree always do. A stop-all runs alone: it stops
     /// what is live when it takes the lock, and a worktree halfway
     /// through an isolated start is not live yet, so its services would
-    /// be stopped under the start. And the actions that write the
-    /// repository's own refs — a create, a git move — run one at a time:
-    /// git refuses a ref another process holds the lock of rather than
-    /// waiting for it.
+    /// be stopped under the start. A create is the exception: it starts
+    /// nothing, so neither waits for the other. And the actions that
+    /// write the repository's own refs — a create, a git move — run one
+    /// at a time: git refuses a ref another process holds the lock of
+    /// rather than waiting for it.
+    ///
+    /// A create holds that turn only while git runs. Its install takes
+    /// minutes and writes no ref, so once its worker says the install has
+    /// begun, a git move or another create goes ahead beside it.
     ///
     /// A removal writes no ref: it keeps the branch, and `git worktree
     /// remove` deletes only that worktree's own entry under
@@ -247,11 +255,12 @@ impl PendingAction {
     /// create or a git move on another worktree, the state lock ordering
     /// their bookkeeping as it orders two `pando rm` in two panes.
     pub(super) fn conflicts(&self, kind: PendingKind, covers: &[String]) -> bool {
-        let repo = |k: PendingKind| matches!(k, PendingKind::Create | PendingKind::Git(_));
         let all = |k: PendingKind| k == PendingKind::StopAll;
-        all(self.kind)
-            || all(kind)
-            || (repo(self.kind) && repo(kind))
+        let create = |k: PendingKind| k == PendingKind::Create;
+        let alone = (all(self.kind) && !create(kind)) || (all(kind) && !create(self.kind));
+        let repo = |k: PendingKind| matches!(k, PendingKind::Create | PendingKind::Git(_));
+        alone
+            || (repo(self.kind) && !self.refs_written && repo(kind))
             || self.covers.iter().any(|n| covers.contains(n))
     }
 
@@ -261,6 +270,9 @@ impl PendingAction {
             return;
         };
         while let Ok(line) = prx.try_recv() {
+            if self.kind == PendingKind::Create && line == actions::INSTALLING {
+                self.refs_written = true;
+            }
             self.stage = Some(line.clone());
             self.said.push(line);
         }
@@ -401,6 +413,7 @@ impl App {
             progress_rx: None,
             stage: None,
             said: Vec::new(),
+            refs_written: false,
         });
         true
     }
