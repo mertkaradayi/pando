@@ -81,6 +81,15 @@ may change behaviour.
   install, and the check sat until the install ended by itself. Now no
   hook starts once pando has been told to stop, and outside a terminal
   a running one leads a process group of its own, which pando stops.
+- Removing a worktree no longer holds up every other command. `rm`
+  stops what runs and marks the worktree as being removed under the
+  state lock, then takes its containers, its tree and its namespaces
+  down without it, so several removals — from the TUI, or from several
+  terminals — run side by side, and nothing else waits for one. A
+  worktree being removed refuses a start, a share, a second `rm` and a
+  `new` of its name; a removal stopped half way, by Ctrl-C or a crash,
+  is finished by the next `pando rm` of it, containers and namespaces
+  included.
 
 ## 0.11.1 — 2026-10-26
 

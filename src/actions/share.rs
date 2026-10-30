@@ -23,7 +23,7 @@ use super::services::{
     UrlOwner, observed_port_for_role, resolved_env, share_owner, share_owner_not_running,
     share_role,
 };
-use super::worktree::find_worktree;
+use super::worktree::{find_worktree, refuse_while_removed, refuse_while_removed_now};
 
 /// Signals both halves of a worktree's share and drops the record, as part
 /// of stopping it. Returns whether there was one.
@@ -90,6 +90,9 @@ pub struct ShareOutcome {
     pub already: bool,
 }
 
+/// What a share refused over a removal says it did not do.
+const SHARED_NOTHING: &str = "nothing was shared";
+
 /// Publishes a running worktree at a public URL.
 ///
 /// The lock is held for the refusals and for recording the result, and
@@ -140,6 +143,9 @@ pub fn share_with(
     let worktree = find_worktree(paths, name)?;
     let canonical = std::fs::canonicalize(&worktree.path).unwrap_or_else(|_| worktree.path.clone());
     let shown = worktree.display_name();
+    // Before the share's own lock, which is made in the worktree's logs: a
+    // removal deletes those, and would leave the one made after.
+    refuse_while_removed_now(paths, name, &shown, SHARED_NOTHING)?;
 
     // One share of a worktree at a time, for the whole of it. Each tunnel
     // of a worktree writes the same log, and two opening at once both read
@@ -282,6 +288,13 @@ pub fn share_with(
         let _ = tunnel::stop_share(&record);
         bail!("{shown} was removed while its tunnel was starting; the tunnel was closed again");
     };
+    if let Err(e) = refuse_while_removed(paths, &store, name, &shown, SHARED_NOTHING) {
+        let _ = tunnel::stop_share(&record);
+        let _ = state::save(&paths.state_file(), &store);
+        return Err(anyhow::anyhow!(
+            "{e:#}; the tunnel that was starting was closed again"
+        ));
+    }
     if let Some(won) = &existing_record.share {
         let public_url = won.public_url.clone();
         let pre_authed = won.proxy_pid.is_some();

@@ -33,7 +33,11 @@ use super::share::{share_closed, share_target_is_up, sweep_dead_shares_with, tak
 use super::share::sweep_dead_shares;
 use super::worktree::{
     Checkout, MAIN_RUNS_ONLY, find_live_checkout, find_worktree, provision_at_start,
+    refuse_while_removed, refuse_while_removed_now,
 };
+
+/// What a start refused over a removal says it did not do.
+const STARTED_NOTHING: &str = "nothing was started";
 
 /// How long a process group gets to exit on its own before SIGKILL.
 pub(super) const STOP_GRACE: Duration = Duration::from_secs(5);
@@ -271,6 +275,9 @@ fn start_checked(
         restarting,
         skip_after_services,
     } = preflight;
+    // Before anything is read of the tree, or made for it: a worktree an
+    // `rm` is removing is going, and its directory may be half gone.
+    refuse_while_removed_now(paths, name, name, STARTED_NOTHING)?;
     let Checkout { worktree, main } = find_live_checkout(paths, name)?;
     if main {
         refuse_main_mode(name, mode)?;
@@ -354,6 +361,9 @@ fn start_checked(
     paths.ensure_home()?;
     let _lock = state::lock(&paths.lock_file())?;
     let mut store = state::load(&paths.state_file())?;
+    // Again, where it is decided. Namespaces made above are recorded in
+    // the removal's record by now, and its `rm` drops them with the rest.
+    refuse_while_removed(paths, &store, name, name, STARTED_NOTHING)?;
 
     // A record only vouches for the worktree it was written for; a stale
     // one at another path is replaced rather than inherited. Every group it
@@ -971,6 +981,14 @@ fn start_checked(
             return Err(undo(e));
         }
     };
+    // And once more before anything is spawned: an `rm` that began while
+    // the services came up has stopped what was recorded and is deleting
+    // the tree, and a process spawned now would run in it with a record
+    // that `rm` then drops.
+    if let Err(e) = refuse_while_removed(paths, &store, name, name, STARTED_NOTHING) {
+        drop(_lock);
+        return Err(undo(e));
+    }
     // The record this call left behind, unless something removed the
     // worktree while the services were coming up.
     let record = store
