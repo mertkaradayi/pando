@@ -187,6 +187,9 @@ pub struct WorktreeRecord {
     /// on with the lock let go. See [`StopMark`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stopping: Vec<StopMark>,
+    /// A removal of this worktree has begun. See [`Removal`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removing: Option<Removal>,
 }
 
 /// A process group a `stop` is taking down, written before it waits.
@@ -216,6 +219,45 @@ impl StopMark {
         is_alive(self.by)
             && Utc::now().signed_duration_since(self.since).num_seconds() < STOP_MARK_LIFETIME_SECS
     }
+}
+
+/// `rm`'s mark on a worktree it is removing, written under the lock
+/// before it lets go of it for the slow part — the containers, git's
+/// deletion of the tree, the namespaces — and gone with the record once
+/// that is done, or taken off again by a removal that failed and kept the
+/// worktree.
+///
+/// While the `rm` that wrote it runs, it holds the worktree's removal
+/// lock ([`crate::paths::PandoPaths::removal_lock_file`]), and every
+/// start, share and `new` of the name is refused: they would run in, or
+/// make, a tree being deleted. Once that lock is free the removal was
+/// interrupted — a Ctrl-C, a crash, a TUI quit — and the record stays,
+/// marked, for the next `rm` to finish: it names the containers and
+/// namespaces nothing else could find. A lock, not this pid, says which:
+/// the kernel lets go of a dead process's, and a pid can be anyone's by
+/// the time it is read.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Removal {
+    /// The pando that began it, for the message that says so.
+    pub owner_pid: u32,
+    pub since: DateTime<Utc>,
+}
+
+/// Whether something holds the lock at `lock_path` now: another pando, or
+/// this one on another thread, still inside what it locked. A file that
+/// is not there is held by nobody, and is not made by asking. One that
+/// cannot be asked is taken as held — the answer refuses, never deletes.
+///
+/// Asked under the state lock, by everything that asks it of a removal:
+/// the moment this holds the lock to find out, a removal claiming it would
+/// find it taken.
+pub fn is_held(lock_path: &Path) -> bool {
+    let file = match std::fs::OpenOptions::new().write(true).open(lock_path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(_) => return true,
+    };
+    !matches!(crate::platform::files::try_lock_exclusive(&file), Ok(true))
 }
 
 impl WorktreeRecord {
@@ -259,6 +301,7 @@ impl WorktreeRecord {
             base: None,
             bases: BTreeMap::new(),
             stopping: Vec::new(),
+            removing: None,
         }
     }
 

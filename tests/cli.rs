@@ -607,6 +607,97 @@ fn removing_a_worktree_pando_did_not_create_needs_yes() {
     assert!(!adopted.exists());
 }
 
+// A `pando rm` killed half way — here while its containers go down — lets
+// go of its removal lock as it dies, and leaves its record marked: a start
+// of the worktree is refused with the command that finishes it, and that
+// command takes the containers down again and removes the rest.
+#[test]
+fn an_rm_killed_half_way_is_finished_by_the_next_one() {
+    use std::os::unix::fs::PermissionsExt;
+    let e = env();
+    e.write_config(SLEEPER);
+    assert_eq!(code(&e.pando(&["new", "feat/one"])), EXIT_OK);
+    let state_file = e.project_dir().join("state.json");
+    let mut store = pando::state::load(&state_file).unwrap();
+    store
+        .worktrees
+        .get_mut("feat+one")
+        .expect("new recorded it")
+        .services
+        .push(pando::state::ServiceRecord {
+            name: "db".to_string(),
+            kind: pando::state::ServiceKind::Compose,
+            port: None,
+            pid: None,
+            pgid: None,
+            compose_project: Some("pando-plain-feat-one".to_string()),
+        });
+    pando::state::save(&state_file, &store).unwrap();
+    let gate = e.home.parent().unwrap().join("gate");
+    std::fs::create_dir_all(&gate).unwrap();
+    let docker = e.home.join("bin").join("docker");
+    std::fs::create_dir_all(docker.parent().unwrap()).unwrap();
+    std::fs::write(
+        &docker,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{g}/calls'\ncase \"$*\" in\n  *' down -v')\n    \
+             touch '{g}/down'; i=0\n    while [ ! -e '{g}/release' ] && [ $i -lt 600 ]; do sleep \
+             0.05; i=$((i+1)); done ;;\nesac\nexit 0\n",
+            g = gate.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut removal = Command::new(env!("CARGO_BIN_EXE_pando"))
+        .env("PANDO_HOME", &e.home)
+        .current_dir(&e.root)
+        .args(["rm", "feat/one"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("run pando");
+    let reached = (0..400).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        gate.join("down").exists()
+    });
+    removal.kill().unwrap();
+    removal.wait().unwrap();
+    assert!(reached, "the removal never reached its containers");
+    let marked = pando::state::load(&state_file).unwrap();
+    assert!(
+        marked.worktrees["feat+one"].removing.is_some(),
+        "{marked:?}"
+    );
+
+    let out = e.pando(&["start", "feat/one"]);
+    assert_eq!(code(&out), EXIT_ERROR, "stdout: {}", stdout(&out));
+    assert!(
+        stderr(&out).contains("was interrupted") && stderr(&out).contains("`pando rm feat/one`"),
+        "{}",
+        stderr(&out)
+    );
+
+    std::fs::write(gate.join("release"), "").unwrap();
+    let out = e.pando(&["rm", "feat/one"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("was interrupted — finishing it"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(stdout(&out), "removed feat+one\n");
+    let calls = std::fs::read_to_string(gate.join("calls")).unwrap();
+    assert_eq!(
+        calls.lines().filter(|l| l.ends_with(" down -v")).count(),
+        2,
+        "{calls}"
+    );
+    let after = pando::state::load(&state_file).unwrap();
+    assert!(!after.worktrees.contains_key("feat+one"), "{after:?}");
+    assert_eq!(status_porcelain(&e.root), "", "the fixture must stay clean");
+}
+
 // A fixture with a real origin is what makes the tracking rules testable:
 // a forked branch must not end up with the base as its upstream.
 #[test]

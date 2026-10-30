@@ -156,6 +156,16 @@ impl PandoPaths {
         self.logs_dir(name).join("share.lock")
     }
 
+    /// Held by an `rm` of the worktree from its mark to the end, which is
+    /// how anything else tells a removal under way from an interrupted
+    /// one: see [`crate::state::Removal`]. Not in the worktree's logs or
+    /// data, which the removal deletes while it holds it.
+    pub fn removal_lock_file(&self, name: &str) -> PathBuf {
+        self.project_dir()
+            .join("removing")
+            .join(format!("{name}.lock"))
+    }
+
     pub fn data_dir(&self, name: &str) -> PathBuf {
         self.project_dir().join("data").join(name)
     }
