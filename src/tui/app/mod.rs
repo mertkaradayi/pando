@@ -46,6 +46,7 @@ pub use launch::{
     Launch, LaunchEnv, LaunchRequest, is_terminal_editor, plan_editor, plan_shell, said_after,
 };
 pub use log_view::{LOG_VIEWER_CAPACITY, LineInspect, LogFilter, LogView, SearchMode, SearchState};
+pub use marks::MarkedRemoval;
 pub use merged::{ALL_SOURCE, MergedTail, SOURCE_SEPARATOR, ViewTail, strip_source};
 pub use mouse::{Clicked, Hits};
 pub use pending::{AwaitingReady, PendingAction, PendingKind, PendingOutcome, SPINNER_FRAMES};
@@ -829,6 +830,10 @@ impl App {
                 created_by_pando,
             }) => {
                 self.handle_remove_key(key, name, created_by_pando);
+                return;
+            }
+            Some(Modal::RemoveMarked { names }) => {
+                self.handle_remove_marked_key(key, names);
                 return;
             }
             Some(Modal::Create {

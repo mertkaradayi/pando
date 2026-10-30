@@ -35,6 +35,13 @@ pub enum Modal {
         /// Whether pando created it; drives the extra warning line.
         created_by_pando: bool,
     },
+    /// `d` with rows marked: every marked worktree, in one dialog, and one
+    /// confirm removes all it can at once. What each one costs, or why it
+    /// stays, is read off the app at every paint and every key, as the
+    /// single dialog reads its own.
+    RemoveMarked {
+        names: Vec<String>,
+    },
     /// Confirming that a public URL goes away. Somebody may be looking at
     /// it right now, so it is not a bare keypress.
     Unshare {
@@ -161,6 +168,32 @@ impl RemoveBlocker {
                  move it out of the set first",
                 what.join(", ")
             ),
+        }
+    }
+
+    /// The same, in the few words a row of the dialog for every marked
+    /// worktree has room for.
+    pub fn short(&self) -> String {
+        match self {
+            RemoveBlocker::Locked(Some(reason)) => format!("locked ({reason})"),
+            RemoveBlocker::Locked(None) => "locked".to_string(),
+            RemoveBlocker::Dirty(repos) => match repos.as_slice() {
+                [] => "uncommitted changes".to_string(),
+                repos => format!("uncommitted changes in {}", crate::detect::listed(repos)),
+            },
+            RemoveBlocker::DirtyUnknown => "git not read yet".to_string(),
+            RemoveBlocker::Running => "running, stopped first".to_string(),
+            RemoveBlocker::NotOurs => "not made by pando".to_string(),
+            RemoveBlocker::Drops(what) => what.join(", "),
+            RemoveBlocker::Beside(what) => {
+                format!("{} beside its checkouts", what.join(", "))
+            }
+            RemoveBlocker::Foreign(what) => {
+                format!(
+                    "{} in it is not one of the set's checkouts",
+                    what.join(", ")
+                )
+            }
         }
     }
 
@@ -768,12 +801,21 @@ impl App {
         self.spawn_branch_fetch();
     }
 
+    /// `d`: the remove dialog for the row under the cursor, or with rows
+    /// marked, for every one of them.
     pub(super) fn open_remove(&mut self) {
+        if !self.marks.is_empty() {
+            return self.open_remove_marked();
+        }
         let Some(wt) = self.selected_worktree() else {
             self.set_error("nothing selected");
             return;
         };
         let name = wt.name.clone();
+        self.open_remove_named(name);
+    }
+
+    pub(super) fn open_remove_named(&mut self, name: String) {
         // No dialog: there is nothing to confirm.
         if self.is_main(&name) {
             let label = self.label_of(&name);
