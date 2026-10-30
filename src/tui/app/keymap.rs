@@ -46,6 +46,11 @@ pub const LIST_KEYS: &[KeyHelp] = &[
         "first / last",
     ),
     key(
+        "+",
+        &[KeyCode::Char('+')],
+        "mark it, or unmark it, and move down",
+    ),
+    key(
         "⏎",
         &[KeyCode::Enter],
         "choose its mode — shared, namespaced (experimental), isolated — and start it, or \
@@ -158,7 +163,11 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key("T", &[KeyCode::Char('T')], "pick a colour theme"),
     key("R", &[KeyCode::Char('R')], "refresh now"),
     key("?", &[KeyCode::Char('?')], "this help"),
-    key("q esc", &[KeyCode::Char('q'), KeyCode::Esc], "quit"),
+    key(
+        "q esc",
+        &[KeyCode::Char('q'), KeyCode::Esc],
+        "quit — esc first clears the filter, then unmarks every row",
+    ),
     key("ctrl-c", &[], "quit from anywhere"),
 ];
 
@@ -171,6 +180,7 @@ pub const LEADER_KEYS: &[KeyHelp] = &[
 
 /// What the marks in a list row mean, shown under the keys.
 pub const LIST_LEGEND: &[(&str, &str)] = &[
+    ("+", "marked with + — esc unmarks every row"),
     ("●", "running: the dev server is up"),
     ("◌", "starting, or something is being done to it"),
     ("✗", "failed — l shows the log that says why"),

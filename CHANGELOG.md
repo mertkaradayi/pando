@@ -34,6 +34,11 @@ may change behaviour.
   1. A question still open is the whole command's exit 3, and nothing is
   started. Every flag applies to each; one name, or none, reads exactly
   as before.
+- Marks in the TUI: `+` marks the row under the cursor, or unmarks it,
+  and moves down. A marked row has a `+` before the cursor's column,
+  and the list's title and the footer say how many are marked. A mark
+  stays on its worktree through a refresh, a re-sort or a filter, and
+  goes with it; esc unmarks every row, after clearing a filter.
 
 ### Fixed
 

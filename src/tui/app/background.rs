@@ -297,6 +297,7 @@ impl App {
         self.main = Some(snapshot.main);
         self.default_base = snapshot.default_base;
         self.created_by_pando = snapshot.created_by_pando;
+        self.forget_gone_marks();
         // Through the same door as the refresh: the full refresh a
         // discovery runs is as likely as the quick one to be the read
         // that first finds a process dead.
