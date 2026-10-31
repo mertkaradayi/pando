@@ -127,8 +127,8 @@ body.locked { overflow: hidden; }
 /* the name and how it works share one band */
 #story { padding-bottom: 0; }
 #how { padding-top: var(--s-10); }
-/* a section that ends on a line of fine print ends closer to it */
-.sec:has(> .wrap > .install-fine:last-child) { padding-bottom: var(--s-10); }
+/* a section that ends on one line ends closer to it */
+.sec:has(> .wrap > .coda:last-child) { padding-bottom: var(--s-10); }
 .sec-head .links { margin-top: var(--s-4); }
 .sec-head { max-width: var(--w-headline); margin: 0 auto var(--head-gap); text-align: center; display: flex; flex-direction: column; align-items: center; }
 .eyebrow { color: var(--gold); font-size: var(--t-eyebrow); font-weight: 600; line-height: 1.19; letter-spacing: 0.011em; margin-bottom: 8px; }
@@ -466,10 +466,9 @@ pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
 .then { display: grid; gap: var(--s-5) var(--gap); margin: var(--s-8) auto 0; max-width: 760px; }
 @media (min-width: 735px) { .then { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .then p { margin-bottom: 8px; color: var(--text-3); font-size: var(--t-caption); }
-.install-fine { margin: var(--s-8) auto 0; text-align: center; }
-/* where it stands: one line, the rest is in the docs */
-.standing { margin: var(--s-8) auto 0; max-width: var(--w-text); color: var(--text-2); text-align: center; }
-.standing .more { margin: 0 0 0 4px; }
+/* one closing line under a section's content */
+.coda { margin: var(--s-8) auto 0; max-width: var(--w-text); color: var(--text-2); text-align: center; }
+.coda .more { margin: 0 0 0 4px; }
 
 /* ---------- closing band and footer ---------- */
 .sec#install { padding-bottom: var(--s-9); }

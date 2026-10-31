@@ -250,7 +250,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <div class="svg"><svg viewBox="0 0 160 92" aria-hidden="true"><path class="gd" d="M8 44h144"/><path d="M52 44V10M52 22l-7-8M52 18l6-7M108 44V14M108 26l-6-7M108 22l6-6"/><rect x="30" y="54" width="76" height="34" rx="7"/><ellipse cx="52" cy="64" rx="9" ry="3"/><path d="M43 64v11a9 3 0 0 0 18 0V64M52 44v16"/><ellipse class="gr" cx="84" cy="64" rx="9" ry="3"/><path class="gr" d="M75 64v11a9 3 0 0 0 18 0V64M108 44c0 10-16 12-24 16"/></svg></div>
         <h3>Namespaced <span class="tag gold">Experimental</span></h3>
         <p class="how"><span><kbd>⏎</kbd> then choose</span><span aria-hidden="true">·</span><code>--namespaced</code></p>
-        <p>A database of its own inside the server you already run: <code>shop__feat_x</code> next to <code>shop</code>, or a Redis slot next to slot 0. The branch’s migrations build it; main’s data is never touched.</p>
+        <p>A database of its own in the server you already run: <code>shop__feat_x</code> next to <code>shop</code>. The branch’s migrations build it; main’s data is never touched.</p>
       </article>
       <article class="card mode">
         <div class="svg"><svg viewBox="0 0 160 92" aria-hidden="true"><path class="gd" d="M8 44h144"/><path d="M52 44V10M52 22l-7-8M52 18l6-7M108 44V14M108 26l-6-7M108 22l6-6"/><ellipse cx="52" cy="66" rx="13" ry="4"/><path d="M39 66v13a13 4 0 0 0 26 0V66M52 44v18"/><ellipse class="gr" cx="108" cy="66" rx="13" ry="4"/><path class="gr" d="M95 66v13a13 4 0 0 0 26 0V66M108 44v18"/></svg></div>
@@ -259,11 +259,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <p>Servers of its own, on ports of its own: your compose file’s containers, or native Postgres, MariaDB, Redis or MongoDB without Docker.</p>
       </article>
     </div>
-    <div class="qa">
-      <div><h3>One key to choose.</h3><p>Press <kbd>⏎</kbd> on a worktree to pick a mode, or to switch one that is running, and pando remembers it. On the main checkout, <kbd>⏎</kbd> just starts it.</p></div>
-      <div><h3>How does the app find its database?</h3><p>Through its environment: pando takes the address your <code>.env</code> has and changes only the port, the database name or the slot.</p></div>
-    </div>
-    <p class="fine center install-fine">Namespaced mode is opt-in and careful: every name it makes begins with your main database’s name, and <code>pando rm</code> drops only what pando’s records say it made.</p>
+    <p class="coda">Your app finds its database through its environment: pando takes the address in your <code>.env</code> and changes only the port, the database name or the slot.</p>
   </div>
 </section>
 
@@ -401,7 +397,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       <div><p>Then, in your project</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando</code><button class="copy" type="button" data-copy></button></div></div>
       <div><p>Later, to update it</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando update</code><button class="copy" type="button" data-copy></button></div></div>
     </div>
-    <p class="standing">pando is pre-release. If it breaks on your project, <a href="https://github.com/mertkaradayi/pando/issues">open an issue</a>. <a class="more" href="docs.html#status">Where it stands</a></p>
+    <p class="coda">pando is pre-release. If it breaks on your project, <a href="https://github.com/mertkaradayi/pando/issues">open an issue</a>. <a class="more" href="docs.html#status">Where it stands</a></p>
   </div>
 </section>
 
