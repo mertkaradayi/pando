@@ -243,9 +243,14 @@ fn row_cells(app: &App, wt: &Worktree) -> RowCells {
     let phase = app.phase_of(&wt.name);
     let pending = app.pending_on(&wt.name);
     let (glyph, color) = row_marker(app, &wt.name);
+    let removal = app.removal_elsewhere(&wt.name);
     let word = match pending {
         Some(_) if app.awaiting_answer() => Some("waiting"),
         Some(pending) => Some(pending.doing()),
+        // A removal another pando runs, as one of this TUI's would read;
+        // one stopped half way, until `d` finishes it.
+        None if matches!(removal, Some(actions::RemovalState::UnderWay(_))) => Some("removing"),
+        None if removal.is_some() => Some("rm interrupted"),
         // Running and stopped are the glyph's to say; the rest have
         // something worth reading.
         None => match &phase {
@@ -262,8 +267,13 @@ fn row_cells(app: &App, wt: &Worktree) -> RowCells {
             Some(Aggregate::Starting { .. } | Aggregate::Failed { .. })
         )
         && wt.in_progress.is_some();
+    let interrupted = matches!(removal, Some(actions::RemovalState::Interrupted(_)));
     let status = word.map(|word| {
-        let color = if halfway { orange() } else { color };
+        let color = if halfway || interrupted {
+            orange()
+        } else {
+            color
+        };
         let mut style = Style::new().fg(color);
         if matches!(phase, Some(Aggregate::Failed { .. })) && pending.is_none() {
             style = style.add_modifier(Modifier::BOLD);
@@ -318,7 +328,7 @@ fn row_cells(app: &App, wt: &Worktree) -> RowCells {
         },
         status,
         git: git_parts(app, wt),
-        live: phase.is_some() || pending.is_some(),
+        live: phase.is_some() || pending.is_some() || removal.is_some(),
         marked: app.is_marked(&wt.name),
         cells,
     }
@@ -635,6 +645,13 @@ pub(super) fn row_marker(app: &App, name: &str) -> (&'static str, Color) {
     match app.pending_on(name) {
         Some(_) if app.awaiting_answer() => ("? ", orange()),
         Some(_) => ("◌ ", yellow()),
+        None if matches!(
+            app.removal_elsewhere(name),
+            Some(actions::RemovalState::UnderWay(_))
+        ) =>
+        {
+            ("◌ ", yellow())
+        }
         None => run_marker(app.phase_of(name).as_ref()),
     }
 }

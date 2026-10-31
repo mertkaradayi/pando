@@ -816,6 +816,9 @@ impl App {
     }
 
     pub(super) fn open_remove_named(&mut self, name: String) {
+        if self.refuse_removed(&name, super::removing::Asked::Remove) {
+            return;
+        }
         // No dialog: there is nothing to confirm.
         if self.is_main(&name) {
             let label = self.label_of(&name);

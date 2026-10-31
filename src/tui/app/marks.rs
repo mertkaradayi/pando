@@ -12,6 +12,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use super::App;
 use super::dialogs::{Modal, RemoveBlocker};
 use super::pending::PendingKind;
+use super::removing::Asked;
 use crate::actions;
 
 /// What `x` and `r` arm on with rows marked. No worktree is called this,
@@ -133,6 +134,12 @@ impl App {
     pub fn marked_removal(&self, name: &str) -> MarkedRemoval {
         if !self.worktrees.iter().any(|w| w.name == name) {
             return MarkedRemoval::Skipped("gone already".to_string());
+        }
+        if let Some(actions::RemovalState::UnderWay(mark)) = self.removal_elsewhere(name) {
+            return MarkedRemoval::Skipped(format!(
+                "already being removed (pid {})",
+                mark.owner_pid
+            ));
         }
         if self.is_main(name) {
             return MarkedRemoval::Skipped("the main checkout, never removed".to_string());
@@ -278,7 +285,9 @@ impl App {
         let mut left = Vec::new();
         for name in self.marked() {
             let label = self.label_of(&name);
-            if self.is_up(&name) {
+            if let Some(why) = self.removal_refusal(&name, Asked::Start) {
+                left.push(why);
+            } else if self.is_up(&name) {
                 left.push(format!("{label} is up already"));
             } else if let Some(busy) = self.busy_with(PendingKind::Start, &name) {
                 left.push(format!("{label} waits for {busy}"));
@@ -302,12 +311,20 @@ impl App {
             .filter(|name| self.start_to_cancel(name))
             .cloned()
             .collect();
+        let removed: Vec<String> = marked
+            .iter()
+            .filter_map(|name| self.removal_refusal(name, Asked::Stop))
+            .collect();
         let targets: Vec<String> = marked
             .iter()
             .filter(|name| !starting.contains(name))
+            .filter(|name| self.removal_refusal(name, Asked::Stop).is_none())
             .filter(|name| self.phase_of(name).is_some() || self.is_live(name))
             .cloned()
             .collect();
+        if targets.is_empty() && starting.is_empty() && !removed.is_empty() {
+            return self.set_error(removed.join(" · "));
+        }
         if targets.is_empty() && starting.is_empty() {
             let message = match marked.as_slice() {
                 [one] => format!("{} is not running", self.label_of(one)),
@@ -329,7 +346,7 @@ impl App {
             self.set_status(format!("cancelling {}…", cancelled.join(", ")));
         }
         let mut started = 0;
-        let mut left = Vec::new();
+        let mut left = removed;
         for name in targets {
             match self.busy_with(PendingKind::Stop, &name) {
                 Some(busy) => left.push(format!("{} waits for {busy}", self.label_of(&name))),
@@ -355,6 +372,10 @@ impl App {
         let mut started = 0;
         let mut left = Vec::new();
         for name in marked {
+            if let Some(why) = self.removal_refusal(&name, Asked::Start) {
+                left.push(why);
+                continue;
+            }
             if let Some(busy) = self.busy_with(PendingKind::Restart, &name) {
                 left.push(format!("{} waits for {busy}", self.label_of(&name)));
                 continue;

@@ -82,6 +82,11 @@ may change behaviour.
   worktree ends stopped. `q` twice with a start in flight cancels it
   and quits once it is undone, rather than leaving it half up; `q`
   again quits at once.
+- The TUI shows a worktree another pando is removing — `pando rm` in
+  another pane — as `◌ removing`, as it shows its own, and `s`, `x`,
+  `r`, `d` and sharing leave it alone, saying it is being removed. One
+  whose removal was stopped half way reads `rm interrupted`: nothing
+  starts it, and `d` finishes the removal.
 
 ### Fixed
 

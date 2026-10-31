@@ -14,6 +14,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use super::background::{AppEvent, ask_through_ui, config_now};
 use super::dialogs::Modal;
 use super::pending::{PendingKind, PendingOutcome};
+use super::removing::Asked;
 use super::{ARM_TTL, App, Armed};
 
 /// What `o` and `c` say of a URL whose own process is stopped, in the
@@ -310,7 +311,7 @@ impl App {
     }
 
     pub(super) fn start_named(&mut self, name: String, mode: actions::Mode) {
-        if self.refuses_nothing_to_run() {
+        if self.refuses_nothing_to_run() || self.refuse_removed(&name, Asked::Start) {
             return;
         }
         let paths = self.paths.clone();
@@ -360,6 +361,9 @@ impl App {
         // not waited for, and the worktree is stopped once it is undone.
         if let Some(what) = self.cancel_start(&name) {
             return self.set_status(format!("cancelling {what}…"));
+        }
+        if self.refuse_removed(&name, Asked::Stop) {
+            return;
         }
         let label = self.label_of(&name);
         if self.pressed_twice('x', &name, &format!("stop {label}")) {
@@ -473,6 +477,11 @@ impl App {
         let Some(name) = self.selected_name() else {
             return;
         };
+        // Sharing one a removal has begun on is refused; unsharing it is
+        // `unshare`'s to decide.
+        if self.public_url_of(&name).is_none() && self.refuse_removed(&name, Asked::Share) {
+            return;
+        }
         self.modal = Some(match self.public_url_of(&name) {
             Some(url) => Modal::Unshare { name, url },
             None => Modal::Share { name },
@@ -568,7 +577,9 @@ impl App {
         mode: actions::Mode,
         only: Option<String>,
     ) {
-        if self.phase_of(&name).is_none() && self.refuses_nothing_to_run() {
+        if self.phase_of(&name).is_none() && self.refuses_nothing_to_run()
+            || self.refuse_removed(&name, Asked::Start)
+        {
             return;
         }
         let label = only

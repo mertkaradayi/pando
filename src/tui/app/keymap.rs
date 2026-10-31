@@ -195,6 +195,14 @@ pub const LIST_LEGEND: &[(&str, &str)] = &[
     ("●", "running: the dev server is up"),
     ("◌", "starting, or something is being done to it"),
     ("✗", "failed — l shows the log that says why"),
+    (
+        "removing",
+        "another pando is removing it — s x r d leave it alone until it is gone",
+    ),
+    (
+        "rm interrupted",
+        "a removal stopped half way — d finishes it; nothing starts it meanwhile",
+    ),
     ("○", "stopped — s starts it"),
     (
         "◍ #n",

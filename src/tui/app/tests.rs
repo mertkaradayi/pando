@@ -11166,3 +11166,178 @@ fn a_removal_that_finishes_leaves_a_fresh_error_on_the_header() {
     );
     assert!(app.messages.iter().any(|m| m.message == "removed feat/one"));
 }
+
+// ---- removals another pando runs ---------------------------------------
+
+/// The mark `rm` leaves on a worktree it is removing, as pid 4242's.
+fn a_removal_mark() -> crate::state::Removal {
+    crate::state::Removal {
+        owner_pid: 4242,
+        since: Utc::now(),
+    }
+}
+
+/// `app` as a refresh would leave it with `name` being removed by another
+/// pando: under way, or interrupted.
+fn removed_elsewhere(app: &mut App, name: &str, under_way: bool) {
+    let state = match under_way {
+        true => actions::RemovalState::UnderWay(a_removal_mark()),
+        false => actions::RemovalState::Interrupted(a_removal_mark()),
+    };
+    let removals = BTreeMap::from([(name.to_string(), state)]);
+    assert!(app.handle_event(AppEvent::Removals(Box::new(removals))));
+}
+
+// `pando rm feat/one` in another pane: its row reads as a removal of this
+// TUI's own does, `◌ removing`, and the detail pane says whose.
+#[test]
+fn a_worktree_another_pando_removes_reads_as_removing() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    removed_elsewhere(&mut app, "feat+one", true);
+    let rows = frame(&mut app, 140, 24);
+    let row = rows
+        .iter()
+        .find(|r| r.starts_with('│') && r.contains("◌ feat/one"))
+        .unwrap_or_else(|| panic!("{}", rows.join("\n")));
+    assert!(row.contains("removing"), "{row}");
+    on_frame(&rows, "◌ removing…  by another pando (pid 4242)");
+}
+
+// Every key that would start, stop or remove it again is refused in the
+// words `rm`'s own refusals use, and no worker is sent.
+#[test]
+fn the_keys_leave_a_worktree_another_pando_removes_alone() {
+    for (key, nothing) in [
+        (KeyCode::Char('s'), "nothing was started"),
+        (KeyCode::Char('r'), "nothing was started"),
+        (KeyCode::Char('i'), "nothing was started"),
+        (KeyCode::Char('x'), "it stops what runs itself"),
+        (KeyCode::Char('d'), "it is going already"),
+        (KeyCode::Char('t'), "nothing was shared"),
+    ] {
+        let mut app = test_app(&["feat+one"]);
+        removed_elsewhere(&mut app, "feat+one", true);
+        press(&mut app, key);
+        assert!(app.pending.is_empty(), "{key:?} sent a worker");
+        assert!(app.modal.is_none(), "{key:?} opened {:?}", app.modal);
+        assert_eq!(
+            app.active_status(),
+            Some((
+                format!("feat/one {} (pid 4242) — {nothing}", actions::BEING_REMOVED).as_str(),
+                true
+            )),
+            "{key:?}"
+        );
+    }
+}
+
+// A removal stopped half way refuses a start until `d` finishes it, and
+// `d` is what finishes it.
+#[test]
+fn an_interrupted_removal_refuses_a_start_and_d_finishes_it() {
+    let mut app = test_app(&["feat+one"]);
+    removed_elsewhere(&mut app, "feat+one", false);
+    let rows = frame(&mut app, 140, 24);
+    assert!(
+        rows.iter()
+            .any(|r| r.starts_with('│') && r.contains("feat/one") && r.contains("rm interrupted")),
+        "{}",
+        rows.join("\n")
+    );
+    press(&mut app, KeyCode::Char('s'));
+    assert!(app.pending.is_empty());
+    assert_eq!(
+        app.active_status(),
+        Some((
+            "a removal of feat/one was interrupted — nothing was started; d finishes it",
+            true
+        ))
+    );
+    press(&mut app, KeyCode::Char('d'));
+    assert!(
+        matches!(app.modal, Some(Modal::Remove { .. })),
+        "{:?}",
+        app.modal
+    );
+}
+
+// The marks leave it alone too: a start of the set says so once, and the
+// dialog that removes the marks lists it as staying.
+#[test]
+fn the_marks_leave_a_worktree_another_pando_removes_alone() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    removed_elsewhere(&mut app, "feat+one", true);
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(
+        in_flight(&app),
+        vec![("feat+two".to_string(), PendingKind::Start)]
+    );
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some(format!(
+            "left alone: feat/one {} (pid 4242) — nothing was started",
+            actions::BEING_REMOVED
+        ))
+    );
+
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    removed_elsewhere(&mut app, "feat+one", true);
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    on_frame(
+        &rows,
+        "– feat/one — stays: already being removed (pid 4242)",
+    );
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(removing(&app), vec!["feat+two"]);
+}
+
+// The refresh worker asks where each marked removal stands after its
+// refresh, and only when the state marks one: under way while the
+// removal's lock is held, interrupted once it is free.
+#[test]
+fn the_refresh_reads_where_each_marked_removal_stands() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("acme-shop");
+    crate::testutil::init_repo(&root);
+    let paths = PandoPaths::new(
+        dir.path().join("pando-home"),
+        ProjectRef::from_root(&root).unwrap(),
+    );
+    paths.ensure_home().unwrap();
+    let mut store = State::new();
+    let mut record = WorktreeRecord::new(root.join("gone"), true);
+    assert!(super::removing::removals_in(&paths, &store).is_empty());
+    record.removing = Some(a_removal_mark());
+    store.worktrees.insert("feat+one".into(), record);
+    crate::state::save(&paths.state_file(), &store).unwrap();
+
+    let held = crate::state::try_lock(&paths.removal_lock_file("feat+one"))
+        .unwrap()
+        .expect("nobody holds it");
+    assert!(matches!(
+        super::removing::removals_in(&paths, &store).get("feat+one"),
+        Some(actions::RemovalState::UnderWay(_))
+    ));
+    drop(held);
+    assert!(matches!(
+        super::removing::removals_in(&paths, &store).get("feat+one"),
+        Some(actions::RemovalState::Interrupted(_))
+    ));
+
+    // And it reaches the app from the refresh worker itself.
+    let mut app = App::new_for_test(paths, Config::default(), Vec::new());
+    let rx = app.event_rx.take().unwrap();
+    app.spawn_refresh();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !app.removals.contains_key("feat+one") {
+        let left = deadline
+            .checked_duration_since(Instant::now())
+            .expect("the refresh sends where the removal stands");
+        if let Ok(event) = rx.recv_timeout(left) {
+            app.handle_event(event);
+        }
+    }
+}

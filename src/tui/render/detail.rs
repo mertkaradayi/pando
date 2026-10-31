@@ -684,6 +684,30 @@ fn status_row<'a>(app: &App, name: &str, width: usize) -> Line<'a> {
             ],
         );
     }
+    // A removal another pando runs, or one stopped half way: what the
+    // keys would say when refused.
+    if let Some(removal) = app.removal_elsewhere(name) {
+        let (word, rest, colour) = match removal {
+            crate::actions::RemovalState::UnderWay(mark) => (
+                "◌ removing…".to_string(),
+                format!("  by another pando (pid {})", mark.owner_pid),
+                yellow(),
+            ),
+            crate::actions::RemovalState::Interrupted(_) => (
+                "✗ removal interrupted".to_string(),
+                "  d finishes it".to_string(),
+                orange(),
+            ),
+        };
+        let room = width.saturating_sub(LABEL_WIDTH + text_width(&word));
+        return detail_row(
+            "status",
+            vec![
+                Span::styled(word, Style::new().fg(colour).add_modifier(Modifier::BOLD)),
+                Span::styled(truncate(&rest, room), Style::new().fg(text_muted())),
+            ],
+        );
+    }
     let Some(phase) = app.phase_of(name) else {
         // With nothing to run there is no key that starts it; the rows
         // below say where to add something. Otherwise the same words the
