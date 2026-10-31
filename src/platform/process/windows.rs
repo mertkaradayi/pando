@@ -31,6 +31,10 @@ pub(super) fn is_alive(_: u32) -> bool {
     false
 }
 
+pub(super) fn started(_: u32) -> Option<u64> {
+    None
+}
+
 pub(super) fn group_alive(_: Group) -> bool {
     false
 }

@@ -69,11 +69,16 @@
 //! pump's pid — [`forget_dead_native_services`] neither forgets nor
 //! reports the server, the orphan sweep leaves it alone, and neither share
 //! sweep closes the worktree's share. The stop settles them, and removes
-//! a native server's socket directory by its record. A mark is void once the pando that wrote it is gone, or after
-//! [`STOP_MARK_LIFETIME_SECS`]. A stop that dies mid-wait leaves its
-//! marks, void, and its records, which read as what they are; a group it
-//! had ended reads as failed until the next `stop`, `start` or `rm` of the
-//! worktree clears it. Nothing prunes a void mark.
+//! a native server's socket directory by its record.
+//!
+//! A mark is void once the pando that wrote it is gone — a process handed
+//! its pid since is not it, for the mark says when that pando started —
+//! or after [`STOP_MARK_LIFETIME_SECS`]. A stop that dies mid-wait leaves
+//! its marks, void, and its records, which read as what they are; a group
+//! it had ended reads as failed until the next `stop`, `start` or `rm` of
+//! the worktree clears it. [`load`] forgets a void mark, as it forgets an
+//! earlier boot's marks with its pids, so the next save under the lock
+//! drops it.
 //!
 //! [`WorktreeRecord::removing`] holds the [`Removal`] `claim_removal`
 //! writes. It goes with the record in `finish_removal`, or comes off in
@@ -308,12 +313,19 @@ pub struct WorktreeRecord {
 /// group dying is its doing: nothing calls that death a failure, sweeps
 /// the group as an orphan, drops its record or closes its share, and the
 /// stop settles all of it under the lock when it is done. A mark whose
-/// pando is gone, or older than [`STOP_MARK_LIFETIME_SECS`], is no mark.
+/// pando is gone, or older than [`STOP_MARK_LIFETIME_SECS`], is no mark,
+/// and [`load`] forgets it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StopMark {
     pub pgid: Group,
     /// The pando stopping it.
     pub by: u32,
+    /// When that pando started ([`crate::platform::process::started`]),
+    /// so a process handed its pid once it is gone is not taken for it.
+    /// `None` where the system does not say, or in a mark written before
+    /// it was kept: the pid alone then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_started: Option<u64>,
     pub since: DateTime<Utc>,
 }
 
@@ -322,9 +334,24 @@ pub struct StopMark {
 pub const STOP_MARK_LIFETIME_SECS: i64 = 120;
 
 impl StopMark {
-    /// Whether the stop that wrote this is still waiting on it.
+    /// This pando's mark on `pgid`, written `since`.
+    pub fn ours(pgid: Group, since: DateTime<Utc>) -> Self {
+        let by = std::process::id();
+        Self {
+            pgid,
+            by,
+            by_started: crate::platform::process::started(by),
+            since,
+        }
+    }
+
+    /// Whether the stop that wrote this is still waiting on it: its pando
+    /// is alive, is the process that wrote it, and wrote it lately.
     pub fn live(&self, is_alive: &impl Fn(u32) -> bool) -> bool {
         is_alive(self.by)
+            && self.by_started.is_none_or(|then| {
+                crate::platform::process::started(self.by).is_none_or(|now| now == then)
+            })
             && Utc::now().signed_duration_since(self.since).num_seconds() < STOP_MARK_LIFETIME_SECS
     }
 }
@@ -768,7 +795,19 @@ pub fn load(path: &Path) -> Result<State> {
         pids_since: boot_pids_since,
     });
     forget_previous_boot(&mut state, written, crate::platform::boot::now());
+    forget_void_marks(&mut state, crate::platform::process::is_alive);
     Ok(state)
+}
+
+/// Drops every [`StopMark`] that is no longer live: a stop that died
+/// mid-wait, or ran past [`STOP_MARK_LIFETIME_SECS`], left it, and nothing
+/// reads it. Forgotten as it is read, so the next save under the lock
+/// drops it — and a process handed its pando's pid later, where the
+/// system cannot say when a process started, cannot bring it back.
+fn forget_void_marks(state: &mut State, is_alive: impl Fn(u32) -> bool) {
+    for record in state.worktrees.values_mut() {
+        record.stopping.retain(|mark| mark.live(&is_alive));
+    }
 }
 
 /// The state file as it is written: the state, and the boot it was
@@ -806,7 +845,7 @@ struct Saving<'a> {
 /// written during another boot keeps what outlives a restart — ports,
 /// roles, hooks, the compose projects that name containers and volumes,
 /// the mode — and loses every pid, the process groups of a share still
-/// coming up among them.
+/// coming up and the marks of a stop among them.
 ///
 /// A file with no boot recorded, or a system that cannot say, keeps them:
 /// not knowing is not evidence of a restart.
@@ -822,6 +861,7 @@ fn forget_previous_boot(state: &mut State, written: Option<Boot<'_>>, now: Optio
         record.observed_ports.clear();
         record.share = None;
         record.pending_shares.clear();
+        record.stopping.clear();
         for service in record.services.iter_mut() {
             service.pid = None;
             service.pgid = None;
@@ -2006,9 +2046,14 @@ mod tests {
             })
         };
         let mut state = full_state();
+        // A mark is a pid too, and a restart within its lifetime — a
+        // distro's takes seconds — hands that pid to someone else.
+        state.worktrees.get_mut("feat+x").unwrap().stopping =
+            vec![StopMark::ours(Group::from_raw(4242), Utc::now())];
         forget_previous_boot(&mut state, boot(Some(100)), boot(Some(250)));
         let rec = &state.worktrees["feat+x"];
         assert!(rec.processes.is_empty(), "{:?}", rec.processes);
+        assert!(rec.stopping.is_empty(), "{:?}", rec.stopping);
         assert!(rec.share.is_none());
         assert!(
             rec.services
@@ -2173,6 +2218,61 @@ mod tests {
         );
     }
 
+    // A stop that died mid-wait left its marks in the file, and nothing
+    // took them off: void, but a pid handed to another process brought
+    // one back for the rest of its lifetime. Every load forgets a void
+    // one, so the next save under the lock drops it.
+    #[test]
+    fn a_load_forgets_every_stop_mark_that_is_void() {
+        let mut gone = std::process::Command::new("git")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        gone.wait().unwrap();
+        let mark = |pgid, by, by_started, ago| StopMark {
+            pgid: Group::from_raw(pgid),
+            by,
+            by_started,
+            since: Utc::now() - chrono::Duration::seconds(ago),
+        };
+        let ours = StopMark::ours(Group::from_raw(1), Utc::now());
+        let me = std::process::id();
+        let mut rec = WorktreeRecord::new("/abs/w", true);
+        rec.stopping = vec![
+            ours.clone(),
+            // Written before a mark said when its pando started.
+            mark(2, me, None, 0),
+            // Its pando is gone.
+            mark(3, gone.id(), None, 0),
+            // Past its lifetime.
+            mark(4, me, ours.by_started, STOP_MARK_LIFETIME_SECS + 1),
+            // Its pid is held by another process than the one that wrote it.
+            mark(5, me, ours.by_started.map(|s| s + 1), 0),
+        ];
+        let mut state = State::new();
+        state.worktrees.insert("w".into(), rec);
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        save(&path, &state).unwrap();
+
+        let kept: Vec<i32> = load(&path).unwrap().worktrees["w"]
+            .stopping
+            .iter()
+            .map(|mark| mark.pgid.as_raw())
+            .collect();
+        let started_known = ours.by_started.is_some();
+        assert_eq!(
+            kept,
+            if started_known {
+                vec![1, 2]
+            } else {
+                vec![1, 2, 5]
+            },
+            "{started_known}"
+        );
+    }
+
     // A stop signals a native server's group with the rest and waits for
     // it with the lock let go. That death is the stop's: neither sweep may
     // forget the record, or report the server as exited, before the stop
@@ -2183,6 +2283,7 @@ mod tests {
         state.worktrees.get_mut("feat+x").unwrap().stopping = vec![StopMark {
             pgid: Group::from_raw(5150),
             by: 1234,
+            by_started: None,
             since: Utc::now(),
         }];
         let stopper_alive = |pid| pid == 1234;

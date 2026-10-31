@@ -53,6 +53,14 @@ pub fn is_alive(pid: u32) -> bool {
     imp::is_alive(pid)
 }
 
+/// When `pid` started, as a token only ever compared with another this
+/// gives: the same for one process however often it is asked, and another
+/// for a process handed the same number later. `None` where the system
+/// does not say, which is no evidence either way.
+pub fn started(pid: u32) -> Option<u64> {
+    imp::started(pid)
+}
+
 /// Whether anything is left in `group`: the leader, a child it forked, or
 /// a grandchild. False for any group that could never be one of pando's.
 pub fn group_alive(group: Group) -> bool {
