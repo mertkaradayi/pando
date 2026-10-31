@@ -26,6 +26,7 @@ mod mouse;
 mod operations;
 mod pending;
 mod remedies;
+mod removing;
 mod setup;
 mod setup_row;
 mod sort;
@@ -321,6 +322,10 @@ pub struct App {
     pub queued_questions: VecDeque<QueuedQuestion>,
     /// The actions in flight, oldest first, at most one per worktree.
     pub pending: Vec<PendingAction>,
+    /// Where each removal the last refresh found marked stands — `pando
+    /// rm` in another pane, or one a quit interrupted — read on the
+    /// refresh worker, never in a paint.
+    pub removals: BTreeMap<String, actions::RemovalState>,
     /// Announced reads of git state in flight: the first, and one for the
     /// worktrees each discovery finds, which can overlap. The header says
     /// `reading git` while there is one.
@@ -453,6 +458,7 @@ impl App {
             select_on_arrival: None,
             queued_questions: VecDeque::new(),
             pending: Vec::new(),
+            removals: BTreeMap::new(),
             enriching: 0,
             git_refreshing: false,
             commit_seen: HashMap::new(),
@@ -693,6 +699,11 @@ impl App {
                 // just given.
                 self.adopt_config(*config);
                 false
+            }
+            AppEvent::Removals(removals) => {
+                let changed = *removals != self.removals;
+                self.removals = *removals;
+                changed
             }
             AppEvent::GitRead(read) => {
                 let (name, read) = *read;
@@ -1822,6 +1833,7 @@ impl App {
             select_on_arrival: None,
             queued_questions: VecDeque::new(),
             pending: Vec::new(),
+            removals: BTreeMap::new(),
             enriching: 0,
             git_refreshing: false,
             commit_seen: HashMap::new(),
