@@ -207,7 +207,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       <a class="more" href="docs.html#worktrees">How a worktree is made, step by step</a>
     </div>
     <ol class="steps">
-      <li class="step"><span class="n">1</span><h3>Its own checkout.</h3><p>A real git worktree, with your <code>.env</code> linked in and dependencies installed.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando new feat/checkout</code></div></li>
+      <li class="step"><span class="n">1</span><h3>Its own checkout.</h3><p>A real git worktree with your <code>.env</code> linked in, its dependencies installed.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando new feat/checkout</code></div></li>
       <li class="step"><span class="n">2</span><h3>Its own ports.</h3><p>Processes run in the background on ports no other branch uses. Quit pando and they keep running.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando start feat/checkout</code></div></li>
       <li class="step"><span class="n">3</span><h3>Its own URL.</h3><p>It keeps its address across restarts and opens in your browser.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando open feat/checkout</code></div></li>
     </ol>
@@ -311,11 +311,12 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <p>No config file, no gitignore line, no lockfile change. Everything pando learns and runs lives in <code>~/.pando</code>, and its tests check that <code>git status</code> stays clean.</p>
         <p class="fine">Three things fall outside it by design, each with rules of its own: <a href="docs.html#not-covered">namespaced mode, the git menu and the <span class="nw">copy-on-write</span> checkout</a>.</p>
         <div class="vis">
-<pre aria-label="Where pando keeps everything"><span class="w">~/.pando/projects/acme-shop-2bdf70d7/</span>
-├── pando.toml
-├── worktrees/feat+login/
-├── logs/feat+login/
-└── data/feat+login/
+<pre aria-label="Where pando keeps everything"><span class="w">~/.pando/</span>
+└── projects/acme-shop-2bdf70d7/
+    ├── pando.toml
+    ├── worktrees/feat+login/
+    ├── logs/feat+login/
+    └── data/feat+login/
 
 <span class="w">~/code/acme-shop/</span>   <span class="ok">untouched</span></pre>
         </div>
