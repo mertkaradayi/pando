@@ -2841,6 +2841,71 @@ fn a_stop_waits_without_the_lock_and_nothing_calls_its_process_failed() {
     assert!(saved.worktrees[&name].stopping.is_empty());
 }
 
+// A native server is signalled with the rest and dies under the wait as
+// they do. The read path called that a crash — "its redis exited" — and
+// forgot the record; another mutation's reconcile forgot it too, and the
+// stop then had no record to find the server's socket directory by.
+#[test]
+fn a_native_server_a_stop_waits_on_is_neither_reported_nor_forgotten() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    live_dev(&fx, &name, 4_000_421);
+    let server = crate::testutil::spawn_guarded(
+        "exec sleep 30",
+        &std::env::temp_dir(),
+        &fx.paths.log_file(&name, "redis"),
+    );
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().services = vec![state::ServiceRecord {
+        name: "redis".to_string(),
+        kind: state::ServiceKind::Native,
+        port: Some(4_321),
+        pid: Some(server.pid),
+        pgid: Some(server.pgid),
+        compose_project: None,
+    }];
+    state::save(&fx.paths.state_file(), &store).unwrap();
+    let sockets = fx.paths.service_socket_dir(&name, "redis");
+    std::fs::create_dir_all(&sockets).unwrap();
+
+    let seen = std::sync::Mutex::new(Vec::new());
+    super::lifecycle::stop_with(
+        &fx.paths,
+        &name,
+        None,
+        |pgid| {
+            if pgid != server.pgid {
+                return Ok(());
+            }
+            crate::process::stop(pgid, Duration::from_secs(5))?;
+            let read = refresh(&fx.paths);
+            // Another mutation, under its lock: a start of a sibling.
+            let _lock = state::lock(&fx.paths.lock_file()).unwrap();
+            let mut other = fx.state();
+            advance_before_reconcile(&mut other);
+            state::reconcile(&mut other, proc::is_alive, proc::group_alive);
+            state::save(&fx.paths.state_file(), &other).unwrap();
+            let kept = |s: &state::State| !s.worktrees[&name].services.is_empty();
+            *seen.lock().unwrap() = vec![
+                (read.notices.join("; "), kept(&read.state)),
+                (String::new(), kept(&other)),
+            ];
+            Ok(())
+        },
+        &noop,
+    )
+    .unwrap();
+    for (notices, kept) in seen.into_inner().unwrap() {
+        assert!(notices.is_empty(), "{notices}");
+        assert!(kept, "the server's record was forgotten under the stop");
+    }
+    let saved = fx.state();
+    let redis = &saved.worktrees[&name].services[0];
+    assert_eq!((redis.pid, redis.pgid), (None, None), "{redis:?}");
+    assert_eq!(redis.port, Some(4_321), "a stopped server keeps its port");
+    assert!(!sockets.exists(), "the stop left the socket directory");
+}
+
 // A start of the worktree in the meantime — its processes died under the
 // wait, and it spawned new ones — is not the stop's to undo.
 #[test]
