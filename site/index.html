@@ -208,23 +208,16 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       <a class="more" href="docs.html#worktrees">How a worktree is made, step by step</a>
     </div>
     <ol class="grid g3 steps list-s">
-      <li class="step card"><span class="n">1</span><h3>Its own checkout.</h3><p>A real git worktree in pando’s own folder, with your <code>.env</code> linked in and its dependencies installed. Your main checkout is untouched.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando new feat/checkout</code></div></li>
-      <li class="step card"><span class="n">2</span><h3>Its own ports.</h3><p>Every process starts in the background, on ports no other branch uses, kept across restarts. pando waits until each is ready.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando start feat/checkout</code></div></li>
+      <li class="step card"><span class="n">1</span><h3>Its own checkout.</h3><p>A real git worktree in pando’s own folder, with your <code>.env</code> linked in and its dependencies installed.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando new feat/checkout</code></div></li>
+      <li class="step card"><span class="n">2</span><h3>Its own ports.</h3><p>Every process starts in the background, on ports no other branch uses, kept across restarts. Quit pando and they keep running.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando start feat/checkout</code></div></li>
       <li class="step card"><span class="n">3</span><h3>Its own URL.</h3><p>It opens in your browser, and <code>pando share</code> gives a teammate a public link.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando open feat/checkout</code></div></li>
     </ol>
-    <div class="grid g4 cards-after list-s">
-      <div class="card"><h3>It keeps running.</h3><p>Close the terminal or quit pando, and your servers stay up. No daemon.</p></div>
-      <div class="card"><h3>Environment, never files.</h3><p>Ports and addresses reach your app as environment variables. pando never edits a <code>.env</code> or a config file.</p>
-      </div>
-      <div class="card"><h3>Your main checkout too.</h3><p>Always the first row. pando runs its processes on ports it gives them, nothing more.</p></div>
-      <div class="card"><h3>Worktrees made by hand.</h3><p>Every worktree git knows about is listed and run. pando adds no file to one it did not make.</p></div>
-    </div>
-
     <div class="disk" id="disk">
       <div class="disk-text">
         <p class="eyebrow">Light on disk</p>
         <h3 class="title">A whole checkout, for the price of what changed.</h3>
         <p>Where the disk can clone (APFS on macOS; btrfs, XFS or bcachefs on Linux), a new worktree’s files are copy-on-write clones of your main checkout’s, so git writes only what your branch changed.</p>
+        <p><code>clone</code> does the same for your <code>node_modules</code>, or a Rust crate’s <code>target</code>, before the install runs. A passing <code>pando check</code> measures what is left.</p>
         <p class="fine"><code>du</code> still counts each worktree in full. The saving shows up as free space.</p>
         <a class="more" href="docs.html#disk">Copy-on-write, clone and the disk report</a>
       </div>
@@ -235,11 +228,6 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <figcaption>Say your branch changes 40 of a 300 MB checkout’s 4,000 files. A plain worktree writes all 300 MB again; pando’s writes those 40.</figcaption>
       </figure>
     </div>
-    <ul class="grid g3 points list-s">
-        <li class="card"><h3>Dependencies, cloned.</h3><p><code>clone</code> gives a new worktree your main checkout’s <code>node_modules</code> before the install, so the install fixes only what differs.</p></li>
-        <li class="card"><h3>Rust builds, cloned.</h3><p><code>clone</code> can take a crate’s <code>target</code> too, so a branch compiles only its own crates.</p></li>
-        <li class="card"><h3>Measured, not guessed.</h3><p>A passing <code>pando check</code> reports what a worktree costs on disk and what could still be shared. What to share is your call.</p></li>
-      </ul>
   </div>
 </section>
 
@@ -315,23 +303,9 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <li><span class="n">4</span><div><h3><code>pando check</code> proves it.</h3><p>pando builds a throwaway worktree, starts it, asks for its first page and removes it. When it passes, the screen turns green.</p></div></li>
       </ol>
     </div>
-    <div class="check-row">
-      <figure class="code"><figcaption class="code-h">Example project</figcaption>
-<pre class="hang"><span class="l"><span class="p">$</span> pando check</span>
-<span class="l"><span class="d">pando: testing acme-shop's setup at a1b2c3d (origin/main), in a throwaway worktree (no branch)</span></span>
-<span class="l"><span class="d">pando: installing</span></span>
-<span class="l"><span class="d">pando: starting api, web</span></span>
-<span class="l"><span class="d">pando: waiting for api, web to be ready</span></span>
-<span class="l"><span class="d">pando: asking web for its first page on :29849</span></span>
-<span class="l"><span class="d">pando: installed 14.2s · api ready :29848 · web ready :29849 (HTTP 200)</span></span>
-<span class="l"><span class="d">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: …</span></span>
-<span class="l"><span class="d">pando: removed the test worktree; nothing left behind</span></span>
-<span class="l"><span class="ok">✓</span> acme-shop is ready: `pando` opens it</span></pre>
-      </figure>
-      <div class="notes">
-        <div><h3>No agent?</h3><p>Press <kbd>⏎</kbd> and pando makes its own guess, tested the same way. Press <kbd>esc</kbd> to skip setup and just manage worktrees.</p></div>
-        <div><h3>What it reads.</h3><p>Your lockfile, scripts, env example, version files and compose file. Every decision lands in <code>~/.pando</code>, with its reason.</p></div>
-      </div>
+    <div class="qa">
+      <div><h3>No agent?</h3><p>Press <kbd>⏎</kbd> and pando makes its own guess, tested the same way. Press <kbd>esc</kbd> to skip setup and just manage worktrees.</p></div>
+      <div><h3>What it reads.</h3><p>Your lockfile, scripts, env example, version files and compose file. Every decision lands in <code>~/.pando</code>, with its reason.</p></div>
     </div>
   </div>
 </section>
