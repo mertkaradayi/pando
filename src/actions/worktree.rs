@@ -1571,7 +1571,7 @@ const GIT_LOCK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(3)
 /// ([`git_lock_busy`]), for up to [`GIT_LOCK_PATIENCE`]. git waits for
 /// none of them, so two steps that would each have passed alone fail side
 /// by side: a create beside another's install, whose `husky install` sets
-/// `core.hooksPath`.
+/// `core.hooksPath`, or beside a `pando rm` of the only other worktree.
 ///
 /// `undo` runs after each such failure, before the step is tried again,
 /// and says whether it left nothing behind: only then is it. The failure
@@ -1597,15 +1597,18 @@ pub(super) fn retrying_git_locks(
 }
 
 /// Whether git failed for a lock another git held a moment, in git's own
-/// words: the config's, a ref's or an index's lock file already there, or
-/// a ref another git moved under it. Never a lock git could not take for
-/// any other reason.
+/// words: the config's, a ref's or an index's lock file already there, a
+/// ref another git moved under it, or `.git/worktrees` removed by another
+/// worktree's removal between an add making it and making its own entry
+/// in it. Never a lock git could not take for any other reason.
 pub(super) fn git_lock_busy(out: &std::process::Output) -> bool {
     String::from_utf8_lossy(&out.stderr).lines().any(|line| {
         let held = line.contains("File exists");
         (line.contains("could not lock config file") && held)
             || (line.contains("Unable to create '") && line.contains(".lock'") && held)
             || (line.contains("cannot lock ref") && line.contains("but expected"))
+            || (line.contains("could not create directory of '")
+                && line.contains("No such file or directory"))
     })
 }
 
@@ -2115,7 +2118,9 @@ fn take_down(
     // Two at once, of two worktrees, are safe: each deletes its own tree
     // and its own `.git/worktrees/<id>`, and the one shared write — the
     // rmdir of `.git/worktrees` once it is empty — is one git tolerates
-    // failing.
+    // failing. Beside a create, an add that has just made `.git/worktrees`
+    // and not yet its own entry in it dies on that rmdir; it leaves
+    // nothing, and the create tries again (`retrying_git_locks`).
     if let Some(target) = target {
         remove_checkouts(paths, target, force, &claim.stopped)?;
         if target.is_set() {
