@@ -1858,14 +1858,17 @@ impl Claim {
     }
 
     /// Whether `store`'s record of this worktree still carries this
-    /// removal's mark.
+    /// removal's mark — with whatever projects a racing start has added to
+    /// it ([`state::Removal::raced`]).
     fn still_ours(&self, store: &state::State) -> bool {
-        let mark = self.record().and_then(|record| record.removing.as_ref());
-        mark.is_some()
-            && store
-                .worktrees
-                .get(&self.name)
-                .is_some_and(|record| record.removing.as_ref() == mark)
+        let Some(mark) = self.record().and_then(|record| record.removing.as_ref()) else {
+            return false;
+        };
+        store
+            .worktrees
+            .get(&self.name)
+            .and_then(|record| record.removing.as_ref())
+            .is_some_and(|now| now.same_claim(mark))
     }
 }
 
@@ -1987,6 +1990,7 @@ fn claim_removal(
         .removing = Some(state::Removal {
         owner_pid: std::process::id(),
         since: chrono::Utc::now(),
+        raced: Vec::new(),
     });
     state::save(&paths.state_file(), &store)?;
     Ok(Claim {
@@ -2156,6 +2160,18 @@ fn finish_removal(paths: &PandoPaths, claim: Claim, progress: &dyn Fn(&str)) -> 
 /// What was recorded for the worktree after its mark: a process or a
 /// share a start spawned, stopped; a compose project it named, taken down
 /// with its volumes; a namespace it made, dropped through the guard.
+///
+/// And a compose project the claim named that a start brought up again
+/// after `take_down`'s `down -v`: one whose first hold recorded it before
+/// the mark, and whose `up` — pulling an image, say — outlasted the
+/// removal's. Such a start, refused at its second hold while this removal
+/// is under way, names the project in the mark ([`state::Removal::raced`])
+/// once its `up` is done, under the state lock. This step reads the mark
+/// under the same lock, and it is the step that takes the mark off: so it
+/// runs after that write, after that `up`, and its `down -v` removes what
+/// the `up` made, whichever `down -v` ran first. A start that loses after
+/// this step finds no record, and takes its project down itself
+/// ([`leave_to_removal`]).
 fn take_down_since(
     paths: &PandoPaths,
     store: &mut state::State,
@@ -2163,9 +2179,20 @@ fn take_down_since(
     progress: &dyn Fn(&str),
 ) -> Result<()> {
     let name = claim.name.as_str();
+    let raced: Vec<String> = store
+        .worktrees
+        .get(name)
+        .and_then(|record| record.removing.as_ref())
+        .map(|mark| mark.raced.clone())
+        .unwrap_or_default();
     let mut projects = Vec::new();
     stop_recorded(store, name, None, &mut projects)?;
-    projects.retain(|project| !claim.projects.contains(project));
+    projects.retain(|project| !claim.projects.contains(project) || raced.contains(project));
+    for project in raced {
+        if !projects.contains(&project) {
+            projects.push(project);
+        }
+    }
     remove_containers(paths, &projects, progress)?;
     let dropped = claim
         .record()
@@ -2363,6 +2390,73 @@ pub(super) fn refuse_while_removed_now(
     let _lock = state::lock(&paths.lock_file())?;
     let store = state::load(&paths.state_file())?;
     refuse_while_removed(paths, &store, name, shown, nothing)
+}
+
+/// What an isolated start that brought `projects` up does with them when
+/// it ends without spawning — refused, or failed — and its worktree was
+/// removed, or began to be, since its first hold recorded them. Called
+/// with no lock held, once the start's `up` has returned; takes the lock.
+///
+/// A removal's `down -v` may have run before that `up` made its
+/// containers and volumes, and the removal then forgets the record that
+/// names them. So, by where the removal stands now, under the lock:
+///
+/// - Under way: the projects go into its mark ([`state::Removal::raced`]),
+///   and its last step, which reads the mark under this lock after this,
+///   takes them down again. Not here: its own `down -v` of them may be
+///   running, and two at once can fail the removal.
+/// - Finished, the record gone: taken down here, with `-v`, still under
+///   the lock — no `new` and start of the name can bring the same project
+///   up meanwhile — since nothing else will ever name them again.
+/// - Interrupted, or none: the record names them, and the `rm` that
+///   finishes it takes them down after this.
+///
+/// Best effort: the error being reported is the start's. A down that
+/// fails says how to finish it by hand.
+pub(super) fn leave_to_removal(
+    paths: &PandoPaths,
+    name: &str,
+    projects: &[String],
+    progress: &dyn Fn(&str),
+) {
+    if projects.is_empty() {
+        return;
+    }
+    let Ok(_lock) = state::lock(&paths.lock_file()) else {
+        return;
+    };
+    let Ok(mut store) = state::load(&paths.state_file()) else {
+        return;
+    };
+    let under_way = matches!(
+        removal_of(paths, &store, name),
+        Some(RemovalState::UnderWay(_))
+    );
+    match store.worktrees.get_mut(name) {
+        None => {
+            if let Err(e) = remove_containers(paths, projects, progress) {
+                for project in projects {
+                    progress(&format!(
+                        "{name} was removed while this start brought {project} up, and it \
+                         could not be taken down ({e:#}) — `docker compose -p {project} down -v` \
+                         removes it"
+                    ));
+                }
+            }
+        }
+        Some(record) if under_way => {
+            let Some(mark) = record.removing.as_mut() else {
+                return;
+            };
+            for project in projects {
+                if !mark.raced.contains(project) {
+                    mark.raced.push(project.clone());
+                }
+            }
+            let _ = state::save(&paths.state_file(), &store);
+        }
+        Some(_) => {}
+    }
 }
 
 /// A checkout pando can run: a worktree, or the main checkout itself.

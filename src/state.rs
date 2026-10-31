@@ -41,7 +41,9 @@
 //! (`sweep_orphaned_groups`) and the share sweep signal and wait
 //! wherever they run; a failed `new` unwinds its checkout under it; and
 //! `finish_removal` takes down whatever a racing start recorded after the
-//! mark, which is almost always nothing.
+//! mark or named in it ([`Removal::raced`]), which is almost always
+//! nothing, as `leave_to_removal` does for a start whose worktree's
+//! removal has finished.
 //!
 //! # Readers
 //!
@@ -95,6 +97,21 @@
 //! share and a `new` are still refused, and the next `rm` finishes it from
 //! the containers and namespaces the record still names. Nor does
 //! `drop_stale_worktree_records` drop a marked record.
+//!
+//! An isolated start that recorded its compose project before the mark
+//! may run its `up` after the removal's `down -v`. Nothing it brings up
+//! outlives the removal, whichever finishes first: no `up` begins once a
+//! removal has begun or the record is gone (`name_compose_project`
+//! refuses), and a start that brought one up and then ends without
+//! spawning — refused at its second hold, or failed — does so after its
+//! `up` returned, and hands the projects on under the lock
+//! (`leave_to_removal`). To a removal under way it adds them to the mark
+//! ([`Removal::raced`]), and `finish_removal`, the step that takes the mark
+//! off under the same lock and so runs after, takes them down again; for a
+//! removal finished it takes them down itself, the record being gone; an
+//! interrupted one's record names them for the `rm` that finishes it.
+//! `Claim::still_ours` asks [`Removal::same_claim`], so the projects a
+//! start adds do not make the mark another removal's.
 //!
 //! # The removal lock
 //!
@@ -391,6 +408,21 @@ pub struct Removal {
     /// The pando that began it, for the message that says so.
     pub owner_pid: u32,
     pub since: DateTime<Utc>,
+    /// Compose projects a start brought up while this removal was under
+    /// way, once its own `down -v` may have run: a start that began before
+    /// the mark, refused at its second hold, writes them here under the
+    /// lock once its `up` is done, and `finish_removal` takes them down
+    /// again. Almost always empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub raced: Vec<String>,
+}
+
+impl Removal {
+    /// Whether `other` is this same removal's mark — the same `rm`'s claim
+    /// — whatever a racing start has written into it since.
+    pub fn same_claim(&self, other: &Removal) -> bool {
+        self.owner_pid == other.owner_pid && self.since == other.since
+    }
 }
 
 /// Whether something holds the lock at `lock_path` now: another pando, or

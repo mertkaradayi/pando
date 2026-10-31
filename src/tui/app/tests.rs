@@ -11174,6 +11174,7 @@ fn a_removal_mark() -> crate::state::Removal {
     crate::state::Removal {
         owner_pid: 4242,
         since: Utc::now(),
+        raced: Vec::new(),
     }
 }
 
