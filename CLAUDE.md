@@ -319,6 +319,18 @@ fixture of a made-up tool pando has no row for. A Go rule that forced
 changes a program's behaviour is the project's call, made from the
 measurement.
 
+The same day the concurrency pass was merged (#23), from a user's report
+that several worktrees could not be removed at once: `rm` takes several,
+`start` and `stop` act on several without waiting on each other, and
+nothing waits for a lock it does not need. An audit agent and three
+fixers built it on `feat/concurrency`, an independent review of its
+locking found what `plans/open-follow-ups.md` records as fixed and left,
+and `src/state.rs`'s module doc holds the lock protocol in one place. An
+`update` fix from 2026-10-08 that had never been merged went in with it:
+a Homebrew upgrade that installed the release and then failed in its own
+`brew cleanup` is an update, not a failure. 0.11.2 was built and tagged
+with all of it, kept a patch release at the maintainer's word.
+
 What is left is not a phase. `plans/open-follow-ups.md` carries the known
 edges, each with who found it and where it belongs, and the rest of the
 launch checklist in `docs/08-roadmap.md` is open: no published crate on

@@ -7,6 +7,8 @@ may change behaviour.
 
 ## Unreleased
 
+## 0.11.2 — 2026-10-31
+
 ### Added
 
 - `clone` takes a Rust crate's `target`. pando proposes it beside a
