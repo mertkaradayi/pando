@@ -37,9 +37,12 @@
     d.addEventListener('keydown', e => {
       if (!open()) return;
       if (e.key === 'Escape') set(false, true);
-      else if (e.key === 'Tab') { // Tab stays inside: the button, then the sheet's links
+      else if (e.key === 'Tab') { // Tab stays inside: the button, then the sheet's links, round
+        // Every Tab is ours: the button comes after the links in the page, so
+        // the browser's own next stop from it is the content behind the sheet.
         const f = [btn].concat($$('a', panel)), i = f.indexOf(d.activeElement);
-        if (e.shiftKey ? i <= 0 : i === f.length - 1) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0].focus(); }
+        e.preventDefault();
+        f[i < 0 ? 0 : (i + (e.shiftKey ? f.length - 1 : 1)) % f.length].focus();
       }
     });
     addEventListener('resize', () => { if (open() && !btn.offsetParent) set(false, false); });
