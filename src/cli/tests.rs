@@ -5517,7 +5517,7 @@ fn the_job_carries_the_briefs_first_run_section_and_only_that() {
         // A developer keeps many worktrees, so what one costs is theirs
         // to hear, with what was shared to make it less.
         (
-            "what the check's `disk` line says a worktree costs, and what you shared",
+            "the `disk` line's cost of a worktree, and what you shared",
             "that the report says what a worktree costs on disk",
         ),
     ] {

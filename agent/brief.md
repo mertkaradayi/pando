@@ -26,15 +26,13 @@ own, inside `.git`, removed when it is done.
    Every open question is yours; step 7 reports what you decided.
 2. **Save pando's choices in one step: `pando init --yes`.** It takes
    pando's first choice for every open question and writes it under
-   `~/.pando`, never into the repository. pando runs every app it found a
-   command for. (The last block's "never add `--yes`" is for later
-   sessions, not this setup.)
+   `~/.pando`. pando runs every app it found a command for. (The last
+   block's "never add `--yes`" is for later sessions.)
 3. **A question with no option is yours to answer.** When
    `pando init --yes` leaves one open (exit 3, the question on stderr),
    answer it from `pando signals` and `pando doctor --json`. Do not
    re-derive what they report. Answer through stdin, never an answers
-   file, which in the project would be a file in the developer's
-   repository:
+   file, which would be a file in their repository:
 
    ```bash
    pando init --answers - --dry-run    # JSON on stdin; writes nothing
@@ -79,15 +77,14 @@ own, inside `.git`, removed when it is done.
      check again.
    - Stop after three changed attempts, and report what is wrong in
      pando's own words.
-6. **Remember how to run it, when the developer tells you to.** The block
-   at the end of the job says how the project runs with pando;
+6. **Remember how to run it, when the developer tells you to.** The
+   job's last block says how the project runs with pando;
    `pando init --agent --reference memory` prints it alone. It belongs in
    your own persistent memory — Claude Code: `~/.claude/CLAUDE.md`;
    Codex: `~/.codex/AGENTS.md`. That file is
    the developer's, read in every session, so write nothing to it
-   without their yes; the report offers it. When they say to, save the
-   block there, replacing an earlier pando block for the same project
-   root. Until then, write nothing. Never a `CLAUDE.md`, `AGENTS.md` or
+   without their yes; the report offers it. On their yes, save it there,
+   replacing an earlier pando block for the same project root. Until then, write nothing. Never a `CLAUDE.md`, `AGENTS.md` or
    any other file inside the repository.
 7. **Tell the developer it is done, what you set, and how to change it:**
 
@@ -105,12 +102,11 @@ own, inside `.git`, removed when it is done.
    what `pando init` reported, marking what you decided. Add a line for each that applies: a machine
    failure's command; the schema step untested until the first
    `pando start --namespaced`; the job's phone or tablet line; doctor's
-   queue-worker note; pando's `[isolation] prefer` line; what the
-   check's `disk` line says a worktree costs, and what you shared.
-   Never end on a question.
+   queue-worker note; pando's `[isolation] prefer` line; the `disk`
+   line's cost of a worktree, and what you shared. Never end on a
+   question.
 
-The rest of this brief is for a failure, or a `disk` line, that sends
-you to it.
+The rest of this brief is for what sends you to it.
 
 ---
 
