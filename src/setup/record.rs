@@ -77,6 +77,42 @@ pub struct CheckRecord {
     /// it skipped.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    /// What the check's worktree cost on disk, measured once it passed and
+    /// before it was taken down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk: Option<DiskCost>,
+}
+
+/// What one worktree costs on disk beyond its tracked files, whatever the
+/// project's tools are: the gitignored trees its install and processes
+/// left in it, and what they wrote outside it. A check never clones, so
+/// every tree is the one a worktree builds from nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiskCost {
+    /// The gitignored directories it ended with, biggest first, the small
+    /// ones left out.
+    #[serde(default)]
+    pub trees: Vec<DiskTree>,
+    /// The free space the disk lost while the check ran beyond what the
+    /// trees hold: what the tools wrote outside the worktree, such as a
+    /// build cache, give or take whatever else the machine wrote then.
+    /// `None` where the OS was not asked.
+    #[serde(default)]
+    pub outside_bytes: Option<u64>,
+}
+
+/// One gitignored directory of the check's worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiskTree {
+    /// Relative to the worktree, as `clone` names a path.
+    pub path: String,
+    /// Its blocks on disk.
+    pub bytes: u64,
+    /// The main checkout has a directory there too, which `clone` could
+    /// share with every new worktree.
+    pub main_has: bool,
+    /// `clone` already names it.
+    pub cloned: bool,
 }
 
 /// How a check ended, or that it has not yet.
@@ -177,6 +213,7 @@ impl CheckRecord {
             ran_by,
             mode: CheckMode::Shared,
             notes: Vec::new(),
+            disk: None,
         }
     }
 

@@ -386,3 +386,129 @@ fn a_folders_shared_service_down_is_started_from_its_repositorys_compose_file() 
         down.reason
     );
 }
+
+// What a worktree costs on disk, whatever made it: the trees git ignores,
+// the small ones and the provisioned links left out, each marked by
+// whether the main checkout has one `clone` could share.
+#[test]
+fn a_checks_disk_cost_is_every_ignored_tree_it_built_whatever_built_it() {
+    use super::disk::{Before, MIN_TREE_BYTES, measure, summary};
+    let dir = TempDir::new().unwrap();
+    let main = dir.path().join("main");
+    crate::testutil::init_repo(&main);
+    let ignore = "target/\nnode_modules/\n.cache/\nlinked/\n";
+    std::fs::write(main.join(".gitignore"), ignore).unwrap();
+    git(&main, &["add", "."]);
+    git(&main, &["commit", "--quiet", "-m", "ignore"]);
+    std::fs::create_dir_all(main.join("target")).unwrap();
+    let worktree = dir.path().join("worktree");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "--detach",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    let before = Before::read(&main);
+    let big = vec![7u8; (MIN_TREE_BYTES * 2) as usize];
+    for (tree, bytes) in [
+        ("target/debug", &big[..]),
+        ("node_modules/x", &big[..]),
+        (".cache/y", &[1u8; 10][..]),
+    ] {
+        std::fs::create_dir_all(worktree.join(tree)).unwrap();
+        std::fs::write(worktree.join(tree).join("blob"), bytes).unwrap();
+    }
+    std::fs::create_dir_all(main.join("linked")).unwrap();
+    std::fs::write(main.join("linked/blob"), &big).unwrap();
+    crate::platform::files::symlink(&main.join("linked"), &worktree.join("linked")).unwrap();
+
+    let cost = measure(
+        &before,
+        &main,
+        &worktree,
+        &[],
+        &["node_modules".to_string()],
+    );
+    let trees: Vec<(&str, bool, bool)> = cost
+        .trees
+        .iter()
+        .map(|t| (t.path.as_str(), t.main_has, t.cloned))
+        .collect();
+    assert_eq!(
+        trees,
+        [("node_modules", false, true), ("target", true, false)]
+    );
+    assert!(cost.trees.iter().all(|t| t.bytes >= MIN_TREE_BYTES * 2));
+    if cfg!(unix) {
+        assert!(cost.outside_bytes.is_some(), "free space is read on Unix");
+    }
+    let line = summary(&cost).unwrap();
+    assert!(
+        line.contains("target 2 MB (the main checkout has one: `clone` could share it)"),
+        "{line}"
+    );
+    assert!(!line.contains("node_modules 2 MB (the main"), "{line}");
+    assert!(
+        line.ends_with(super::disk::WHAT_TO_DO),
+        "a tree to share: {line}"
+    );
+
+    // Nothing to share and nothing outside: the numbers, and no pointer.
+    let mut quiet = cost.clone();
+    quiet.trees.retain(|tree| tree.cloned);
+    quiet.outside_bytes = Some(0);
+    let line = summary(&quiet).unwrap();
+    assert!(!line.contains(super::disk::WHAT_TO_DO), "{line}");
+    // A cache outside is worth the pointer on its own.
+    quiet.outside_bytes = Some(super::disk::OUTSIDE_WORTH_A_LINE);
+    let line = summary(&quiet).unwrap();
+    assert!(line.contains("about 52 MB written outside it"), "{line}");
+    assert!(line.ends_with(super::disk::WHAT_TO_DO), "{line}");
+}
+
+// The check's line sends its reader to a heading the brief has.
+#[test]
+fn the_disk_line_points_at_a_heading_the_brief_has() {
+    let brief = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("agent/brief.md"),
+    )
+    .unwrap();
+    let heading = super::disk::WHAT_TO_DO
+        .split('"')
+        .nth(1)
+        .expect("the line quotes a heading");
+    assert!(
+        brief
+            .lines()
+            .any(|line| line.starts_with("## ") && line.contains(heading)),
+        "agent/brief.md has no heading {heading:?}"
+    );
+}
+
+#[test]
+fn sizes_read_as_a_disk_is_sold() {
+    use super::disk::size;
+    assert_eq!(size(512_000), "512 KB");
+    assert_eq!(size(48_000_000), "48 MB");
+    assert_eq!(size(1_234_000_000), "1.2 GB");
+}
+
+// The limits `agent/json.md` gives a program are the ones the check keeps.
+#[test]
+fn the_disk_limits_the_contract_names_are_the_checks_own() {
+    use super::disk::{MAX_TREES, MIN_TREE_BYTES};
+    let doc = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("agent/json.md"),
+    )
+    .unwrap();
+    // As a person reads it: a line break is a space.
+    let doc = doc.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert_eq!(MAX_TREES, 12);
+    assert!(doc.contains("twelve at most"));
+    assert_eq!(MIN_TREE_BYTES, 1 << 20);
+    assert!(doc.contains("a megabyte or more"));
+}

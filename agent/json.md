@@ -736,9 +736,31 @@ tested, and why.
   "pando_version": "0.5.0",
   "started_at": "2026-09-27T10:00:00Z",
   "finished_at": "2026-09-27T10:01:12Z",
-  "settings_changed": false        // the settings changed while it ran
+  "settings_changed": false,       // the settings changed while it ran
+  "disk": {                        // what one worktree costs on disk; null unless "passed"
+    "trees": [                     // the gitignored directories it ended with, biggest first
+      { "path": "target",          // as `clone` names a path
+        "bytes": 1200000000,       // its blocks on disk
+        "main_has": true,          // the main checkout has one there too
+        "cloned": false }          // `clone` already names it
+    ],
+    "outside_bytes": 412000000     // free space lost beyond the trees; null where not read
+  }
 }
 ```
+
+`disk` is measured once the check passed, before its worktree is taken
+down, and knows no ecosystem: a tree is whatever git ignores that the
+install and the processes left there, a megabyte or more, twelve at
+most; `outside_bytes` is the free space the disk lost while the check
+ran, less what the trees hold. A check never clones, so each tree is
+what every new worktree builds from nothing. A tree with `main_has` and
+not `cloned` is one `clone` could share, if the tool that wrote it checks
+what it reuses rather than trusting the checkout's path. A large
+`outside_bytes` is the tools writing outside the worktree — a build cache
+keyed by the checkout's path fills again for every worktree — but it is
+approximate: anything else on the machine that wrote meanwhile counts
+too, so a surprising number is worth a second check before acting on it.
 
 `kind` says who fixes a failure. `settings` is pando's settings for the
 project — a dev command that exits, an install that fails, a schema step

@@ -655,6 +655,39 @@ page = false                          # no browser opens it; Metro's is the defa
   `npx expo run:ios --port <port>` and `npx expo run:android --port
   <port>` that make one on Metro's port, reusing the Metro pando runs.
 
+## 10. What a worktree costs on disk: `disk`
+
+A developer keeps many worktrees, so what one costs is paid many times
+over. A passing check measures it (`agent/json.md` has the shape), and
+pando knows no ecosystem here: you do. Read it, judge each line by what
+the project's own tools do, and change only what you can explain.
+
+- **A tree with `main_has` and not `cloned`** is built from nothing in
+  every worktree while the main checkout already has one. Add it to
+  `clone` (the whole list, through `--answers`) when the tool that wrote
+  it checks what it reuses: a package manager's tree, a build output
+  keyed by content or fingerprints (cargo's `target`, Gradle's caches, a
+  bundler cache keyed by hashes). Never a tree that records the main
+  checkout's own path, which a clone would keep pointing at: a
+  virtualenv, a CMake or Meson build directory, anything whose files
+  name that path. When in doubt, leave it out and say why in the report.
+  An install that deletes the tree first (`npm ci`) makes the clone
+  work thrown away.
+- **A large `outside_bytes`** is the tools writing outside the worktree.
+  A cache shared by content costs it once; one keyed by the checkout's
+  path fills again for every worktree. Find the tool's own setting that
+  makes it independent of the path and give it to the process that
+  writes the cache through that process's `env` (§9): Go's
+  `GOFLAGS=-trimpath`, ccache's `CCACHE_BASEDIR`, whatever the project's
+  toolchain documents. Weigh what the setting changes — `-trimpath`
+  takes the source paths out of stack traces, which a program reading
+  files by its own source path (`runtime.Caller`) depends on — and
+  report it either way.
+- **Check again** after changing either, and compare: the number is
+  approximate, since anything else writing on the machine meanwhile
+  counts, so act on what holds across two runs. Report what you changed
+  and what a worktree costs now.
+
 ---
 
 # Worked examples

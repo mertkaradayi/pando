@@ -306,7 +306,12 @@ pando: process list: using "npm run dev" (package.json scripts.dev, which starts
 That file is the whole configuration; edit any line, or delete one and
 run `pando init`, which puts every open question to you instead of taking
 a default. `pando doctor` says what was detected and from where, and
-`pando check` tests the setup again at any time. A question pando has no
+`pando check` tests the setup again at any time, and says what each
+worktree costs on disk: the gitignored trees it builds from nothing, the
+ones `clone` could share instead, and what the project's tools wrote
+outside it, such as a build cache that fills again for every worktree.
+Which of those to share, and how, is the project's own to decide, so
+pando measures and your agent, or you, chooses. A question pando has no
 option for at all is still asked, and so is the one real choice
 isolation brings — which services to run private copies of.
 

@@ -5222,6 +5222,15 @@ fn full_check_record() -> crate::setup::CheckRecord {
     record.failed_process = Some("web".to_string());
     record.failed_tail = vec!["Error: boom".to_string()];
     record.notes = vec!["skipped the hooks that run after services (migrate)".to_string()];
+    record.disk = Some(crate::setup::DiskCost {
+        trees: vec![crate::setup::DiskTree {
+            path: "target".to_string(),
+            bytes: 1_200_000_000,
+            main_has: true,
+            cloned: false,
+        }],
+        outside_bytes: Some(412_000_000),
+    });
     record
 }
 
@@ -5234,7 +5243,9 @@ fn agent_json_documents_every_check_key() {
     let record = full_check_record();
     let printed = serde_json::to_value(super::check::check_json(&fx.paths, &record)).unwrap();
     let process = printed["processes"][0].clone();
-    for object in [&printed, &process] {
+    let disk = printed["disk"].clone();
+    let tree = disk["trees"][0].clone();
+    for object in [&printed, &process, &disk, &tree] {
         for key in object.as_object().unwrap().keys() {
             assert!(
                 section.contains(&format!("\"{key}\"")),

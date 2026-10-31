@@ -18,7 +18,8 @@ mod state;
 
 pub use fingerprint::{FINGERPRINT_VERSION, fingerprint};
 pub use record::{
-    CheckMode, CheckOutcome, CheckRecord, FailureKind, ProcessResult, RanBy, SetupMemory,
+    CheckMode, CheckOutcome, CheckRecord, DiskCost, DiskTree, FailureKind, ProcessResult, RanBy,
+    SetupMemory,
 };
 pub use redact::redact_line;
 pub use remember::{MEMORY_FILE_HEADER, device_note, memory_block, write_memory_files};

@@ -918,6 +918,19 @@ fn ignored_files(ignored: &Ignored) -> Vec<String> {
     found
 }
 
+/// Every gitignored directory under `root` as git lists it — the topmost
+/// ignored one on each path, `target`, `apps/web/.next` — without its
+/// trailing slash, each repository's under its name in a folder of them.
+/// What a worktree came to hold beside its tracked files, whatever made it.
+pub fn ignored_dirs(root: &Path, repos: &[String]) -> Vec<String> {
+    Ignored::read(root, repos)
+        .entries
+        .iter()
+        .filter_map(|entry| entry.strip_suffix('/'))
+        .map(str::to_string)
+        .collect()
+}
+
 /// The ignored directories among them that a package manager installs or
 /// builds into, sorted: the root's, then each app's. Three components at
 /// most — `apps/api/node_modules` — and none hidden, so a worktree kept

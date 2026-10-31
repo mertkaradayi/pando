@@ -16,7 +16,16 @@ may change behaviour.
   finds every one fresh and builds only the workspace's own crates,
   where before each worktree built every dependency again on disk of
   its own.
-
+- `pando check` says what a worktree costs on disk, for any project:
+  the gitignored trees its install and processes built from nothing,
+  each marked when the main checkout has one `clone` could share, and
+  the space the tools took outside it, such as a build cache keyed by
+  the checkout's path that fills again for every worktree. It prints a
+  line, and `check --json` has it as `disk`. pando judges none of it:
+  the agent brief says how to read it — which trees are safe to clone,
+  how to find a tool's setting that makes its cache independent of the
+  path and give it to the process through its `env` — and to check
+  again to see the difference.
 - The TUI takes the mouse. A click selects a worktree, a dialog's
   option or a line of the log viewer, and a second click is `⏎` on it;
   a click on a key hint presses its key, `esc cancel` cancelling; a

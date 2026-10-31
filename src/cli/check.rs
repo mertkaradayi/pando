@@ -164,6 +164,7 @@ pub(super) struct CheckOut<'a> {
     started_at: String,
     finished_at: Option<String>,
     settings_changed: bool,
+    disk: Option<&'a crate::setup::DiskCost>,
 }
 
 #[derive(Serialize)]
@@ -221,6 +222,7 @@ pub(super) fn check_json<'a>(paths: &PandoPaths, record: &'a CheckRecord) -> Che
             .finished_at
             .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
         settings_changed: record.changed_while_running(),
+        disk: record.disk.as_ref(),
     }
 }
 

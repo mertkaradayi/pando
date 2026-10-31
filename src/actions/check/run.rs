@@ -617,6 +617,7 @@ impl<'a> Run<'a> {
         if installs {
             self.step("installing");
         }
+        let free_before = super::disk::Before::read(self.paths.root());
         let began = Instant::now();
         if let Err(e) = new_detached(self.paths, config, commits, self.say.detail) {
             // A Ctrl-C reaches the install too, which then fails: that is
@@ -725,6 +726,19 @@ impl<'a> Run<'a> {
             summary.push(line);
         }
         self.step(&summary.join(" · "));
+        // What this worktree cost, while it still stands: every new one
+        // costs the same, less what `clone` shares.
+        let cost = super::disk::measure(
+            &free_before,
+            self.paths.root(),
+            &record.path,
+            &self.paths.project.repos,
+            config.project.clones(),
+        );
+        if let Some(line) = super::disk::summary(&cost) {
+            self.step(&line);
+        }
+        self.record.disk = Some(cost);
         CheckOutcome::Passed
     }
 

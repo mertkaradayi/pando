@@ -85,6 +85,18 @@ pub fn path_bytes(path: &Path) -> Cow<'_, [u8]> {
     imp::path_bytes(path)
 }
 
+/// The bytes the file `meta` describes takes on disk: its blocks, where the
+/// OS counts them, which a directory of small files outgrows its length by.
+pub fn allocated_bytes(meta: &Metadata) -> u64 {
+    imp::allocated_bytes(meta)
+}
+
+/// The bytes free to this user on the filesystem holding `path`; `None`
+/// where the OS is not asked.
+pub fn free_bytes(path: &Path) -> Option<u64> {
+    imp::free_bytes(path)
+}
+
 #[cfg(unix)]
 mod imp {
     use super::FileId;
@@ -158,6 +170,27 @@ mod imp {
     pub(super) fn path_bytes(path: &Path) -> Cow<'_, [u8]> {
         Cow::Borrowed(path.as_os_str().as_bytes())
     }
+
+    /// `st_blocks` counts 512-byte units on every Unix pando builds for.
+    pub(super) fn allocated_bytes(meta: &Metadata) -> u64 {
+        meta.blocks().saturating_mul(512)
+    }
+
+    /// `statvfs(3)`: the blocks free to an unprivileged user, in the
+    /// filesystem's fragment size.
+    pub(super) fn free_bytes(path: &Path) -> Option<u64> {
+        let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+        let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+        // SAFETY: a NUL-terminated path, and a buffer statvfs fills on
+        // success, read only then.
+        if unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        // SAFETY: statvfs returned 0, so it filled the buffer.
+        let stat = unsafe { stat.assume_init() };
+        #[allow(clippy::unnecessary_cast)] // the field widths differ by OS
+        Some((stat.f_bavail as u64).saturating_mul(stat.f_frsize as u64))
+    }
 }
 
 #[cfg(windows)]
@@ -229,5 +262,16 @@ mod imp {
     /// own to hash.
     pub(super) fn path_bytes(path: &Path) -> Cow<'_, [u8]> {
         Cow::Owned(path.to_string_lossy().into_owned().into_bytes())
+    }
+
+    /// Its length: the allocation needs the file open.
+    pub(super) fn allocated_bytes(meta: &Metadata) -> u64 {
+        meta.len()
+    }
+
+    /// Not asked yet: `GetDiskFreeSpaceExW` is a dependency pando does not
+    /// take for one number.
+    pub(super) fn free_bytes(_: &Path) -> Option<u64> {
+        None
     }
 }

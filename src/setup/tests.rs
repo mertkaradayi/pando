@@ -374,6 +374,15 @@ fn a_check_record_round_trips_with_every_field() {
         ran_by: RanBy::Terminal,
         mode: CheckMode::Namespaced,
         notes: vec!["hooks after services were skipped".to_string()],
+        disk: Some(crate::setup::DiskCost {
+            trees: vec![crate::setup::DiskTree {
+                path: "target".to_string(),
+                bytes: 1_200_000_000,
+                main_has: true,
+                cloned: false,
+            }],
+            outside_bytes: Some(400_000_000),
+        }),
     };
     record.save(&f.paths).unwrap();
     assert_eq!(CheckRecord::load(&f.paths), Some(record));
