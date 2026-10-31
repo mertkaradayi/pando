@@ -272,7 +272,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       </article>
     </div>
     <div class="qa">
-      <div><h3>One key to choose.</h3><p>Press <kbd>⏎</kbd> on any worktree to pick a mode, or to switch one that is running. pando remembers your choice.</p></div>
+      <div><h3>One key to choose.</h3><p>Press <kbd>⏎</kbd> on a worktree to pick a mode, or to switch one that is running, and pando remembers it. On the main checkout, <kbd>⏎</kbd> just starts it.</p></div>
       <div><h3>How does the app find its database?</h3><p>Through its environment: pando takes the address your <code>.env</code> has and changes only the port, the database name or the slot.</p></div>
     </div>
     <p class="fine center install-fine">Namespaced mode is opt-in and careful: every name it makes begins with your main database’s name, and <code>pando rm</code> drops only what pando’s records say it made.</p>
@@ -366,8 +366,8 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       <article class="tile">
         <p class="k">Promise 2</p>
         <h3 class="title">No AI at runtime.</h3>
-        <p>An agent may help set pando up. Starting, stopping, sharing and removing only read a file you can edit, so a wrong guess costs one edit, never a mystery. No telemetry, no account.</p>
-        <div class="vis flow"><div><b>Detection</b>rules and data, once</div><i aria-hidden="true">↓</i><div><b>pando.toml</b>a file you can read and edit</div><i aria-hidden="true">↓</i><div><b>start · stop · share · rm</b>read that file, and nothing else</div></div>
+        <p>An agent may help set pando up, but what pando runs comes from rules and a file you can edit, never a model. A wrong guess costs one edit, never a mystery. No telemetry, no account.</p>
+        <div class="vis flow"><div><b>Detection</b>rules, never a model</div><i aria-hidden="true">↓</i><div><b>pando.toml</b>a file you can read and edit</div><i aria-hidden="true">↓</i><div><b>start · stop · share · rm</b>do what that file says</div></div>
       </article>
     </div>
   </div>
@@ -401,7 +401,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="sec-head">
       <p class="eyebrow">Install</p>
       <h2 class="display" id="install-h"><span>Install it.</span> <span>Run it in your project.</span></h2>
-      <p class="lede">A ready-made binary for macOS (Apple silicon and Intel) and Linux (x86_64 and arm64), and inside WSL 2 on Windows. No Rust needed.</p>
+      <p class="lede">A ready-made binary for macOS (Apple silicon and Intel) and Linux (x86_64 and arm64), and inside WSL 2 on Windows. Homebrew and the script need no Rust.</p>
     </div>
     <div class="tabs">
       <div class="seg" role="tablist" aria-label="Ways to install">
