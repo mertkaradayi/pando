@@ -8,6 +8,22 @@
   const $ = (s, el) => (el || d).querySelector(s), $$ = (s, el) => Array.from((el || d).querySelectorAll(s));
   const idle = window.requestIdleCallback || (f => setTimeout(f, 200));
 
+  /* ---------- in-page links glide; a link from another page lands at once ----------
+   * Not `scroll-behavior: smooth` on html: browsers apply it to the fragment a
+   * page opens on too, and a docs link from the landing flew through the whole
+   * docs page to get there. */
+  const still = matchMedia('(prefers-reduced-motion: reduce)');
+  d.addEventListener('click', e => {
+    const a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (!a || a.classList.contains('skip') || e.defaultPrevented || e.button !== 0 ||
+        e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || still.matches) return;
+    const id = decodeURIComponent(a.hash.slice(1)), target = id && d.getElementById(id);
+    if (!target) return;
+    e.preventDefault();
+    history.pushState(null, '', a.hash);
+    target.scrollIntoView({ behavior: 'smooth' });
+  });
+
   /* ---------- a sheet: the menu on a phone, the docs' contents ---------- */
   function sheet(btn, host, cls, panel) {
     if (!btn || !host || !panel) return;

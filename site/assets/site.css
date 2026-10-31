@@ -42,7 +42,6 @@
 /* ---------- base ---------- */
 *, *::before, *::after { box-sizing: border-box; }
 html { background: var(--bg); scroll-padding-top: 72px; -webkit-text-size-adjust: 100%; }
-@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 body { margin: 0; background: var(--bg); color: var(--text); font: 400 var(--t-body)/1.47 var(--font-sans); letter-spacing: -0.016em;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; font-feature-settings: "kern"; font-optical-sizing: auto; }
 ::selection { background: rgba(242, 184, 75, 0.35); color: #fff; }
