@@ -635,7 +635,7 @@ slots = 16</pre></figure>
 <p>Every drop goes through one check. A record must say pando made that database for that worktree, on that server. The name must never be main's, must carry the <code>__</code> marker, and must not be named by any other record. <code>pando doctor</code> lists a leftover with the command that drops it, and never drops it itself.</p>
 
 <h3 id="ns-config">When pando cannot tell</h3>
-<p>What pando cannot tell by itself is written in its own config for the project, under <code>[namespaced.&lt;service&gt;]</code>, usually by the setup agent through <code>pando init --answers</code>. None of it is a secret, so a committed <code>pando.toml</code> may carry it too.</p>
+<p>What pando cannot tell by itself is written in its own config for the project, under <code>[namespaced.&lt;service&gt;]</code>, usually by the setup agent through <code>pando init --answers</code>. None of these keys is a secret, so a committed <code>pando.toml</code> may carry them too. A login, <code>user</code> and <code>password</code>, is read from pando's own file only.</p>
 <div class="code"><pre><span class="k">[namespaced.redis]</span>
 db_env = ["REDIS_DB"]          <span class="c"># one REDIS_DB that three Redis roles share</span>
 
@@ -1073,7 +1073,7 @@ password = "…"</pre></div></details>
 <h2 id="machine">Machine config and themes</h2>
 <p><code>~/.pando/config.toml</code> holds what belongs to the machine rather than to a project: the runtime prelude, which isolation to prefer, and how the TUI looks and behaves.</p>
 <figure class="code"><figcaption class="code-h">~/.pando/config.toml</figcaption><pre><span class="k">[runtime]</span>
-prelude = ""             <span class="c"># this machine needs nothing; else a line run before every command</span>
+prelude = ""             <span class="c"># a line run before every command; "" for none</span>
 
 <span class="k">[isolation]</span>
 prefer = "native"        <span class="c"># or "compose"</span>
