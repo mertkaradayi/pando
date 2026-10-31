@@ -65,11 +65,11 @@
 //! waiting on: written by `mark_stop`, for `stop` and `rm`, and taken off
 //! by `unmark_stop` when the stop settles or fails. While one is live the
 //! group's death is the stop's doing: [`advance_phases`] leaves its phase,
-//! [`reconcile`] keeps its process record, the orphan sweep leaves it
-//! alone, and neither share sweep closes the worktree's share. Only
-//! process records are kept: a native server that dies under a mark is
-//! still forgotten by [`reconcile`] and [`forget_dead_native_services`].
-//! A mark is void once the pando that wrote it is gone, or after
+//! [`reconcile`] keeps its record — a process's, a native server's, a log
+//! pump's pid — [`forget_dead_native_services`] neither forgets nor
+//! reports the server, the orphan sweep leaves it alone, and neither share
+//! sweep closes the worktree's share. The stop settles them, and removes
+//! a native server's socket directory by its record. A mark is void once the pando that wrote it is gone, or after
 //! [`STOP_MARK_LIFETIME_SECS`]. A stop that dies mid-wait leaves its
 //! marks, void, and its records, which read as what they are; a group it
 //! had ended reads as failed until the next `stop`, `start` or `rm` of the
@@ -947,12 +947,21 @@ pub fn reconcile(
         // because the pump died would leave a running container — with its
         // volume — that nothing in pando could ever find again, let alone
         // take down. So the pump is forgotten and the service is kept.
+        //
+        // And a service whose group a stop in flight signalled is that
+        // stop's to settle, as a process is: it clears the record's pid,
+        // keeps a native server's record for its port, and removes the
+        // server's socket directory, which it finds by that record.
+        let marked = |s: &ServiceRecord| s.pgid.is_some_and(|pgid| stopping.contains(&pgid));
         let before = rec.services.len();
-        rec.services
-            .retain(|s| s.kind != ServiceKind::Native || s.pid.map(&is_alive).unwrap_or(true));
+        rec.services.retain(|s| {
+            s.kind != ServiceKind::Native || s.pid.map(&is_alive).unwrap_or(true) || marked(s)
+        });
         changed |= rec.services.len() != before;
         for service in rec.services.iter_mut() {
-            if service.kind == ServiceKind::Compose && service.pid.is_some_and(|pid| !is_alive(pid))
+            if service.kind == ServiceKind::Compose
+                && service.pid.is_some_and(|pid| !is_alive(pid))
+                && !marked(service)
             {
                 service.pid = None;
                 service.pgid = None;
@@ -991,6 +1000,10 @@ pub fn reconcile(
 /// lives on — a database's own children still holding the socket — is the
 /// orphan sweep's to signal, on the next mutation, and dropping the record
 /// here would leave that group with nothing able to find it again.
+///
+/// Never one a stop in flight is taking down ([`StopMark`]): that death is
+/// the stop's doing, not a crash to report, and the stop settles the
+/// record and removes the socket directory by it.
 pub fn forget_dead_native_services(
     state: &mut State,
     is_alive: impl Fn(u32) -> bool,
@@ -998,10 +1011,12 @@ pub fn forget_dead_native_services(
 ) -> Vec<(String, String)> {
     let mut forgotten = Vec::new();
     for (name, rec) in state.worktrees.iter_mut() {
+        let stopping = rec.groups_being_stopped(&is_alive);
         rec.services.retain(|service| {
             let gone = service.kind == ServiceKind::Native
                 && service.pid.is_some_and(|pid| !is_alive(pid))
-                && !service.pgid.is_some_and(&group_alive);
+                && !service.pgid.is_some_and(&group_alive)
+                && !service.pgid.is_some_and(|pgid| stopping.contains(&pgid));
             if gone {
                 forgotten.push((name.clone(), service.name.clone()));
             }
@@ -2156,6 +2171,33 @@ mod tests {
             vec!["postgres"],
             "a compose record is a container, not a process, and stays"
         );
+    }
+
+    // A stop signals a native server's group with the rest and waits for
+    // it with the lock let go. That death is the stop's: neither sweep may
+    // forget the record, or report the server as exited, before the stop
+    // settles it and removes its socket directory by it.
+    #[test]
+    fn a_native_server_a_stop_is_taking_down_is_kept_by_both_sweeps() {
+        let mut state = full_state();
+        state.worktrees.get_mut("feat+x").unwrap().stopping = vec![StopMark {
+            pgid: Group::from_raw(5150),
+            by: 1234,
+            since: Utc::now(),
+        }];
+        let stopper_alive = |pid| pid == 1234;
+        assert!(forget_dead_native_services(&mut state, stopper_alive, |_| false).is_empty());
+        reconcile(&mut state, stopper_alive, |_| false);
+        let redis = state.worktrees["feat+x"]
+            .services
+            .iter()
+            .find(|s| s.name == "redis")
+            .expect("the stop's to settle");
+        assert_eq!(redis.pid, Some(5150), "{redis:?}");
+
+        // Its pando gone, the mark is void, and the death is a crash again.
+        let forgotten = forget_dead_native_services(&mut state, |_| false, |_| false);
+        assert_eq!(forgotten, vec![("feat+x".to_string(), "redis".to_string())]);
     }
 
     #[test]
