@@ -105,11 +105,18 @@
     sel(tabs[0]);
   });
 
-  /* ---------- code that scrolls sideways can be reached by keyboard ---------- */
+  /* ---------- code that scrolls sideways: reached by keyboard, faded where it goes on ---------- */
+  const edges = el => {
+    const more = el.scrollWidth - el.clientWidth - el.scrollLeft;
+    el.classList.toggle('sx-r', more > 2); el.classList.toggle('sx-l', el.scrollLeft > 2);
+  };
   const scrollers = () => $$('pre, .tbl-wrap').forEach(el => {
     if (el.closest('.tui, .screen')) return;
-    if (el.scrollWidth > el.clientWidth + 1) { el.tabIndex = 0; if (!el.hasAttribute('aria-label')) el.setAttribute('aria-label', 'Scrollable code'); }
-    else el.removeAttribute('tabindex');
+    if (el.scrollWidth > el.clientWidth + 1) {
+      el.tabIndex = 0; if (!el.hasAttribute('aria-label')) el.setAttribute('aria-label', 'Scrollable code');
+      if (!el._edges) { el._edges = true; el.addEventListener('scroll', () => edges(el), { passive: true }); }
+    } else el.removeAttribute('tabindex');
+    edges(el);
   });
   idle(scrollers);
   let rt;

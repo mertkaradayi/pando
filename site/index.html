@@ -110,10 +110,10 @@ document.documentElement.classList.add('js');
 <pre><span class="p">$</span> pando new fix/login
 <span class="p">$</span> pando start fix/login
 <span class="p">$</span> pando ls
-<span class="d">NAME           STATUS   URL</span>
-main           <span class="ok">running</span>  localhost:20177
-feat/checkout  <span class="ok">running</span>  localhost:23001
-fix/login      <span class="ok">running</span>  localhost:23249</pre>
+<span class="d">NAME       STATUS   URL</span>
+main       <span class="ok">running</span>  http://localhost:20177
+feat/cart  <span class="ok">running</span>  http://localhost:23001
+fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <p>Each branch gets a checkout of its own, already running, on its own ports. You see all of them on one screen.</p>
       </div>
     </div>
@@ -312,16 +312,16 @@ fix/login      <span class="ok">running</span>  localhost:23249</pre>
     </div>
     <div class="check-row">
       <figure class="code"><figcaption class="code-h">Example project</figcaption>
-<pre class="wrapl"><span class="p">$</span> pando check
-<span class="d">pando: testing acme-shop's setup at a1b2c3d (origin/main), in a throwaway worktree (no branch)
-pando: installing
-pando: starting api, web
-pando: waiting for api, web to be ready
-pando: asking web for its first page on :29849
-pando: installed 14.2s · api ready :29848 · web ready :29849 (HTTP 200)
-pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: …
-pando: removed the test worktree; nothing left behind</span>
-<span class="ok">✓</span> acme-shop is ready: `pando` opens it</pre>
+<pre class="hang"><span class="l"><span class="p">$</span> pando check</span>
+<span class="l"><span class="d">pando: testing acme-shop's setup at a1b2c3d (origin/main), in a throwaway worktree (no branch)</span></span>
+<span class="l"><span class="d">pando: installing</span></span>
+<span class="l"><span class="d">pando: starting api, web</span></span>
+<span class="l"><span class="d">pando: waiting for api, web to be ready</span></span>
+<span class="l"><span class="d">pando: asking web for its first page on :29849</span></span>
+<span class="l"><span class="d">pando: installed 14.2s · api ready :29848 · web ready :29849 (HTTP 200)</span></span>
+<span class="l"><span class="d">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: …</span></span>
+<span class="l"><span class="d">pando: removed the test worktree; nothing left behind</span></span>
+<span class="l"><span class="ok">✓</span> acme-shop is ready: `pando` opens it</span></pre>
       </figure>
       <div class="notes">
         <div><h3>No agent?</h3><p>Press <kbd>⏎</kbd> and pando makes its own guess, tested the same way. Press <kbd>esc</kbd> to skip setup and just manage worktrees.</p></div>
