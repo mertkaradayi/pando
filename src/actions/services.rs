@@ -17,7 +17,7 @@ use crate::state::{self, Phase, WorktreeRecord};
 use crate::template;
 
 use super::lifecycle::{DEFAULT_READY_ROLE, STOP_GRACE, process_env, reset_log};
-use super::worktree::find_worktree;
+use super::worktree::{find_worktree, refuse_while_removed};
 
 /// Stops the containers of every compose project named, leaving their
 /// volumes.
@@ -331,6 +331,19 @@ fn compose_entries(config: &Config) -> Vec<ComposeEntry<'_>> {
             config::ServiceConfig::Native { .. } => None,
         })
         .collect()
+}
+
+/// The compose project an isolated start of `name` brings up, when this
+/// project has compose services at all: the name `plan_compose` gives it.
+pub(super) fn compose_project_of(
+    paths: &PandoPaths,
+    config: &Config,
+    name: &str,
+) -> Option<String> {
+    compose_entries(config)
+        .iter()
+        .any(|entry| !entry.include.is_empty())
+        .then(|| crate::compose::project_name(paths.project_id(), name))
 }
 
 /// Every service this project can run a private copy of, in config order.
@@ -946,6 +959,11 @@ fn bring_up_compose_services(
 
 /// Records the compose project on the service records it is about to
 /// create containers for.
+///
+/// And refuses, so nothing is brought up, where a removal of the worktree
+/// has begun since the start's first hold, or has finished and taken the
+/// record: an `up` now would make containers and a volume for a worktree
+/// that is going, with nothing left to name them once it is gone.
 fn name_compose_project(
     paths: &PandoPaths,
     name: &str,
@@ -954,8 +972,9 @@ fn name_compose_project(
 ) -> Result<()> {
     let _lock = state::lock(&paths.lock_file())?;
     let mut store = state::load(&paths.state_file())?;
+    refuse_while_removed(paths, &store, name, name, "its services were not started")?;
     let Some(record) = store.worktrees.get_mut(name) else {
-        return Ok(());
+        bail!("{name} was removed while this start was starting — its services were not started");
     };
     let mut changed = false;
     for service in record.services.iter_mut() {

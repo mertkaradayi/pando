@@ -11568,6 +11568,7 @@ fn an_interrupted_removal_is_finished_by_the_next_rm() {
     store.worktrees.get_mut(&name).unwrap().removing = Some(state::Removal {
         owner_pid: 4_000_002,
         since: Utc::now(),
+        raced: Vec::new(),
     });
     state::save(&fx.paths.state_file(), &store).unwrap();
 
@@ -11620,6 +11621,7 @@ fn removals_says_where_each_removal_stands_and_asks_under_the_state_lock() {
     let mark = state::Removal {
         owner_pid: 4_000_021,
         since: Utc::now(),
+        raced: Vec::new(),
     };
     let mut store = fx.state();
     store.worktrees.get_mut(&name).unwrap().removing = Some(mark.clone());
@@ -14127,6 +14129,14 @@ fn a_compose_ps_that_fails_starts_nothing_and_stops_nothing() {
     )
     .unwrap();
     fx.paths.ensure_home().unwrap();
+    // The record the start's first hold leaves, which a bring-up refuses
+    // without: its worktree was removed meanwhile.
+    let mut store = state::State::default();
+    store.worktrees.insert(
+        "feat+one".to_string(),
+        WorktreeRecord::new(fx.root.clone(), false),
+    );
+    state::save(&fx.paths.state_file(), &store).unwrap();
     let calls = fx.paths.home.join("docker-calls");
     let bin = fx.paths.home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -20584,6 +20594,7 @@ fn with_removal_mark(fx: &Fx, name: &str) -> state::Removal {
     let mark = state::Removal {
         owner_pid: 4_000_031,
         since: Utc::now(),
+        raced: Vec::new(),
     };
     store.worktrees.get_mut(name).unwrap().removing = Some(mark.clone());
     state::save(&fx.paths.state_file(), &store).unwrap();
@@ -20778,4 +20789,144 @@ fn a_stop_between_a_starts_two_locks_is_waited_out_and_what_it_ended_is_started(
     );
     assert!(is_running(&fx, &name, "api"), "{said:?}");
     assert!(report.already_running.is_empty(), "{said:?}");
+}
+
+/// A worktree isolated on one compose service, `db`, whose project name
+/// it returns, and a stand-in `docker` that holds a start's `up` and a
+/// removal's `down -v` where a test says: an `up` touches `up-waiting` in
+/// `gate` and waits for `up-go` there; a `down -v` touches `down-done` and
+/// waits for `rm-go`; `ps` answers that `db` is up and healthy. Every call
+/// is logged, one per line, in the file returned last, and an `up` that
+/// comes back as `up done`.
+fn raced_compose_fixture(gate: &Path) -> (Fx, String, String, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut fx = fixture();
+    with_dev(&mut fx, dev("sleep 30"));
+    std::fs::write(
+        fx.root.join("docker-compose.yml"),
+        "services:\n  db:\n    image: postgres:16\n    ports: [\"5432:5432\"]\n    \
+         healthcheck:\n      test: [\"CMD\", \"pg_isready\"]\n",
+    )
+    .unwrap();
+    git(&fx.root, &["add", "."]);
+    git(&fx.root, &["commit", "--quiet", "-m", "compose"]);
+    let services: Config = toml::from_str(
+        "[[services]]\nkind = \"compose\"\nfile = \"docker-compose.yml\"\ninclude = [\"db\"]\n",
+    )
+    .unwrap();
+    fx.config.services = services.services;
+    let name = worktree_named(&fx, "feat/raced");
+    let project = crate::compose::project_name(fx.paths.project_id(), &name);
+    with_compose_project(&fx, &name, &project);
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().mode = Some(state::ServiceMode::Isolated);
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let bin = fx.paths.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = fx.paths.home.join("docker-calls.log");
+    let g = gate.display();
+    std::fs::write(
+        bin.join("docker"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\n\
+             hold() {{ i=0; while [ ! -e '{g}'/\"$1\" ] && [ $i -lt 400 ]; do sleep 0.05; \
+             i=$((i+1)); done; }}\n\
+             case \"$*\" in\n  \
+             *' up -d '*) touch '{g}/up-waiting'; hold up-go; echo 'up done' >> '{log}' ;;\n  \
+             *' down -v') touch '{g}/down-done'; hold rm-go ;;\n  \
+             *' ps '*) echo '{{\"Service\":\"db\",\"State\":\"running\",\"Health\":\"healthy\"}}' ;;\n\
+             esac\nexit 0\n",
+            log = log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("docker"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    (fx, name, project, log)
+}
+
+/// Asserts the log has a `down -v` of `project` after an `up` came back.
+fn assert_down_after_up(log: &Path, project: &str) {
+    let calls = std::fs::read_to_string(log).unwrap();
+    let lines: Vec<&str> = calls.lines().collect();
+    let up_at = lines
+        .iter()
+        .position(|l| *l == "up done")
+        .unwrap_or_else(|| panic!("no `up` came back:\n{calls}"));
+    assert!(
+        lines[up_at..]
+            .iter()
+            .any(|l| l.contains(&format!("-p {project} ")) && l.ends_with(" down -v")),
+        "containers brought up after the removal's `down -v` were never taken down, and no \
+         record names them now:\n{calls}"
+    );
+}
+
+// An isolated start records its compose project at its first hold and
+// lets the lock go for the `up`. An `rm` that claimed the worktree
+// meanwhile took that project down with `down -v` — and then the start's
+// `up`, still pulling, made its containers and a fresh volume. The start
+// was refused at its second hold, undid nothing for a worktree already
+// isolated, and the removal's last step skipped every project its claim
+// had named: the containers and the volume outlived the worktree, with
+// nothing left to name them.
+#[test]
+fn a_project_a_start_brings_up_after_the_removals_down_is_taken_down_again() {
+    let gate = tempdir().unwrap();
+    let (fx, name, project, log) = raced_compose_fixture(gate.path());
+    let started = std::thread::scope(|scope| {
+        let starting = scope
+            .spawn(|| super::start(&fx.paths, &fx.config, &name, None, Mode::Remembered, &noop));
+        // Past its first hold, in its `up`.
+        assert!(wait_until(Duration::from_secs(10), || gate
+            .path()
+            .join("up-waiting")
+            .exists()));
+        let removal = scope.spawn(|| rm(&fx.paths, &name, false, false));
+        // The removal's `down -v` has run; the start's `up` lands after it.
+        assert!(wait_until(Duration::from_secs(10), || gate
+            .path()
+            .join("down-done")
+            .exists()));
+        std::fs::write(gate.path().join("up-go"), "").unwrap();
+        let started = starting.join().unwrap();
+        std::fs::write(gate.path().join("rm-go"), "").unwrap();
+        removal.join().unwrap().unwrap();
+        started
+    });
+    let err = started.expect_err("a start of a worktree being removed is refused");
+    assert!(format!("{err:#}").contains(BEING_REMOVED), "{err:#}");
+    assert!(
+        !fx.state().worktrees.contains_key(&name),
+        "the record is gone"
+    );
+    assert_down_after_up(&log, &project);
+}
+
+// The same with the removal finished before the start's `up` is done:
+// the record that named the project is gone, and the start takes down
+// what it made itself.
+#[test]
+fn a_project_a_start_brings_up_after_its_worktree_is_removed_is_taken_down() {
+    let gate = tempdir().unwrap();
+    let (fx, name, project, log) = raced_compose_fixture(gate.path());
+    std::fs::write(gate.path().join("rm-go"), "").unwrap();
+    let started = std::thread::scope(|scope| {
+        let starting = scope
+            .spawn(|| super::start(&fx.paths, &fx.config, &name, None, Mode::Remembered, &noop));
+        assert!(wait_until(Duration::from_secs(10), || gate
+            .path()
+            .join("up-waiting")
+            .exists()));
+        rm(&fx.paths, &name, false, false).unwrap();
+        assert!(
+            !fx.state().worktrees.contains_key(&name),
+            "the record is gone"
+        );
+        std::fs::write(gate.path().join("up-go"), "").unwrap();
+        starting.join().unwrap()
+    });
+    started.expect_err("a start of a worktree removed meanwhile spawns nothing");
+    assert!(!fx.state().worktrees.contains_key(&name));
+    assert_down_after_up(&log, &project);
 }

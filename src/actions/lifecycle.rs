@@ -21,7 +21,7 @@ use super::refresh::advance_before_reconcile;
 use super::runtime::with_prelude;
 use super::services::{
     FRESH_DATA_DIR, Fresh, bring_up_services, changed_kinds, clear_native_sockets,
-    compose_projects, forget_hooks_after_services, forget_unstarted_services,
+    compose_project_of, compose_projects, forget_hooks_after_services, forget_unstarted_services,
     has_interrupted_compose, has_live_services, leave_changed_kinds, planned_services,
     preflight_isolation, replace_stopped_containers, resolve_service_env, service_roles,
     shared_service_env, stop_containers, stop_service_containers, stop_service_pumps,
@@ -32,8 +32,8 @@ use super::share::{share_closed, share_target_is_up, sweep_dead_shares_with, tak
 #[cfg(doc)]
 use super::share::sweep_dead_shares;
 use super::worktree::{
-    Checkout, MAIN_RUNS_ONLY, find_live_checkout, find_worktree, provision_at_start,
-    refuse_while_removed, refuse_while_removed_now,
+    Checkout, MAIN_RUNS_ONLY, find_live_checkout, find_worktree, leave_to_removal,
+    provision_at_start, refuse_while_removed, refuse_while_removed_now,
 };
 
 /// What a start refused over a removal says it did not do.
@@ -805,10 +805,32 @@ fn start_checked(
     // freeze `pando ls` and the TUI's tick.
     drop(_lock);
 
+    // The compose projects this start's `up` may make containers and a
+    // volume under, and whether it has asked for them yet. A removal can
+    // claim the worktree while that `up` runs — the record named them at
+    // the hold above, so its `down -v` comes first — and the `up` then
+    // makes them again after it: every way this start ends without
+    // spawning hands them to the removal, or takes them down itself
+    // (`leave_to_removal`).
+    let mut own_projects: Vec<String> = store
+        .worktrees
+        .get(name)
+        .map(compose_projects)
+        .unwrap_or_default();
+    if let Some(project) = compose_project_of(paths, config, name)
+        && !own_projects.contains(&project)
+    {
+        own_projects.push(project);
+    }
+    let brought_up = std::cell::Cell::new(false);
+
     // Every failure between here and the services being up leaves a
     // worktree that is still the shared one it was: nothing of the
     // isolated attempt may outlive it.
     let undo = |e: anyhow::Error| -> anyhow::Error {
+        if brought_up.get() {
+            leave_to_removal(paths, name, &own_projects, progress);
+        }
         if becoming_isolated {
             undo_failed_isolation(paths, config, name, &shared_ports);
         }
@@ -943,6 +965,7 @@ fn start_checked(
     crate::cancel::check().map_err(undo)?;
     let mut fresh = Fresh(false);
     if isolate {
+        brought_up.set(true);
         fresh = bring_up_services(paths, config, name, &canonical, &assignment.ports, progress)
             .map_err(undo)?;
         // A cancelled start: the services are up, and the hooks that run
@@ -1015,10 +1038,22 @@ fn start_checked(
         // And once more before anything is spawned: an `rm` that began
         // while the services came up has stopped what was recorded and is
         // deleting the tree, and a process spawned now would run in it with
-        // a record that `rm` then drops.
+        // a record that `rm` then drops. The undo hands what this start
+        // brought up to that `rm` (`leave_to_removal`): its `down -v` may
+        // have come before this start's `up`.
         if let Err(e) = refuse_while_removed(paths, &store, name, name, STARTED_NOTHING) {
             drop(lock);
             return Err(undo(e));
+        }
+        // And an `rm` that has finished: the first hold saved this record,
+        // and only a removal drops it. Spawning would run in a deleted
+        // tree, and the undo takes down what this start brought up, which
+        // nothing will name again.
+        if !store.worktrees.contains_key(name) {
+            drop(lock);
+            return Err(undo(anyhow::anyhow!(
+                "{name} was removed while this start was starting — {STARTED_NOTHING}"
+            )));
         }
         // A stop of this worktree that began while the hooks ran, waited
         // out as at the first lock; what it ended is started below.
