@@ -56,6 +56,31 @@
     h.appendChild(a);
   });
 
+  /* ---------- a command wraps between its words, and a long URL after a slash: never inside a name ---------- */
+  // A slash ends a piece unless it is part of "//" or ":/", so a URL keeps its host whole;
+  // a word short enough for a phone's line is never split.
+  const pieces = w => {
+    const out = []; let a = 0;
+    for (let i = 1; i < w.length; i++) if (w[i - 1] === '/' && w[i] !== '/' && w[i - 2] !== '/' && w[i - 2] !== ':') { out.push(w.slice(a, i)); a = i; }
+    return out.concat(w.slice(a));
+  };
+  $$('.cmd code').forEach(c => {
+    const texts = [], walk = d.createTreeWalker(c, NodeFilter.SHOW_TEXT);
+    for (let n; (n = walk.nextNode());) texts.push(n);
+    texts.forEach(t => {
+      const f = d.createDocumentFragment();
+      t.data.split(/(\s+)/).forEach(w => {
+        if (!w) return;
+        if (/^\s+$/.test(w)) { f.appendChild(d.createTextNode(w)); return; }
+        (w.length > 24 ? pieces(w) : [w]).forEach((p, i) => {
+          if (i) f.appendChild(d.createElement('wbr'));
+          const s = d.createElement('span'); s.className = 'nw'; s.textContent = p; f.appendChild(s);
+        });
+      });
+      t.replaceWith(f);
+    });
+  });
+
   /* ---------- copy buttons: the text in data-copy, or the code beside them ---------- */
   const live = d.createElement('p');
   live.className = 'sr-only'; live.setAttribute('aria-live', 'polite'); d.body.appendChild(live);

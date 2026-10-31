@@ -629,7 +629,7 @@ slots = 16</pre></figure>
 <p>When all fifteen are held, the start asks which stopped worktree gives its slot up, and only a person may answer.</p>
 
 <h3 id="ns-prefixes">Prefixes for search, queue and cache engines</h3>
-<p>Some servers have no namespace pando could make: an Elasticsearch index, a Kafka topic or a Memcached key belongs to the app. There, a worktree is told a prefix of its own in the key its app already reads one from, such as <code class="lg">ELASTICSEARCH_INDEX_PREFIX=feat_x_1f3c4a__</code>, with main's own prefix first when it has one. pando makes nothing there, so it records and drops nothing, and <code>rm</code> says what it leaves.</p>
+<p>Some servers have no namespace pando could make: an Elasticsearch index, a Kafka topic or a Memcached key belongs to the app. There, a worktree is told a prefix of its own in the key its app already reads one from, such as <code class="lg"><span class="nw">ELASTICSEARCH_INDEX_PREFIX=</span><wbr><span class="nw">feat_x_1f3c4a__</span></code>, with main's own prefix first when it has one. pando makes nothing there, so it records and drops nothing, and <code>rm</code> says what it leaves.</p>
 
 <h3 id="ns-drops">What it drops, and what it never does</h3>
 <p>Every drop goes through one check. A record must say pando made that database for that worktree, on that server. The name must never be main's, must carry the <code>__</code> marker, and must not be named by any other record. <code>pando doctor</code> lists a leftover with the command that drops it, and never drops it itself.</p>
