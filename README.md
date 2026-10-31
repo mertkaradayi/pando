@@ -408,8 +408,9 @@ first press back. `x` on a worktree being started or restarted cancels
 that at once: the start stops at its next safe point, undoes what it
 had brought up, and the worktree ends stopped. `q q` with a start in
 flight cancels it the same way and quits once it is undone. Moving a running worktree between modes with `i` or
-`S`, sharing it, and removing it ask in a dialog instead. On a stopped
-worktree nothing asks.
+`S`, sharing it, and removing it ask in a dialog instead. On a worktree
+with nothing up, stopped or failed, the keys that ask twice act on the
+first press; sharing and removing still open their dialog.
 
 `+` marks the row under the cursor and moves down, and a `+` before
 the cursor's column shows it; `+` again unmarks it, and esc unmarks
@@ -421,16 +422,20 @@ which stay (locked, the main checkout). Every other key still acts on
 the row under the cursor. A mark stays on its worktree through a
 refresh, a re-sort or a filter, and goes with it.
 
-The list is a table with a header row: `branch`, then `changes`
-(`uncommitted` when there are uncommitted changes), `port`, `public` (`◈`
-while it is shared), `mode` (`isolated` when it runs private copies of
+The list is a table with a header row: `branch`, then `PR` (its pull
+request, `◍ #482`), `dir` (the directory, when it is not the branch's
+own name), `port` (the port of its URL while something runs), `other
+ports` (the rest, for a worktree that runs more than one process),
+`public` (`◈` while it is shared) and `git` (behind, ahead and `✎` for
+uncommitted changes; or prunable or locked). A column shows only when
+some row has something in it, and a narrow pane gives up the least
+useful first. The branch cell carries the rest: the glyph before the
+branch says whether it runs — `●` running, `◌` starting, `✗` failed,
+`○` stopped — and the mode (`isolated` when it runs private copies of
 the services, `namespaced` when it runs on a database, a slot or a
-prefix of its own in the main checkout's servers, each in its own colour), `git`
-(commits ahead of and behind the base branch), `PR` and `status`
-(`failed`, or what is being done to it). A column shows only when some
-row has something in it. The glyph before the branch says whether it
-runs: `●` running, `◌` starting, `✗` failed, `○` stopped. The full URL
-and the rest are in the detail pane beside it.
+prefix of its own in the main checkout's servers, each in its own
+colour) and a word such as `failed` follow it. The full URL and the rest
+are in the detail pane beside it.
 
 The main checkout is always the first row, and the worktrees with
 something up come right after it: a start moves a row up and a stop puts
