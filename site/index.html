@@ -34,6 +34,7 @@ document.documentElement.classList.add('js');
   <div class="nav-in">
     <a class="logo" href="#top"><svg viewBox="0 0 64 64" aria-hidden="true"><g stroke="currentColor" stroke-linecap="round" fill="none"><path d="M18 44V24M18 30l-5-6M18 27l5-7" stroke-width="3.4"/><path d="M32 44V16M32 24l-6-7M32 21l6-7M32 30l5-4" stroke-width="3.8"/><path d="M46 44V26M46 31l-5-5M46 29l5-6" stroke-width="3.4"/></g><path d="M8 51c8-3 14 2 24 0s16-4 24 0" stroke="#F2B84B" stroke-width="4" fill="none" stroke-linecap="round"/></svg>pando</a>
     <nav class="nav-links" id="nav-links" aria-label="Site">
+      <a href="#try">Try it</a>
       <a href="#how">How it works</a>
       <a href="#data">Data</a>
       <a href="#setup">Setup</a>
@@ -50,7 +51,6 @@ document.documentElement.classList.add('js');
 <!-- 1 · hero -->
 <section class="hero" id="top" aria-labelledby="hero-h">
   <div class="hero-in">
-    <p class="hero-mark">pando</p>
     <h1 id="hero-h"><span>One repo.</span> <span>Every branch alive.</span></h1>
     <p class="hero-lede">pando runs every branch you are working on at the same time, each with its own checkout, ports, logs and, if you want, database. It all fits on one terminal screen, and nothing is written into your repository.</p>
     <div class="hero-actions">
@@ -66,13 +66,46 @@ document.documentElement.classList.add('js');
   </div>
 </section>
 
-<!-- 1 · the story -->
+<!-- 1 · the problem, and the answer -->
+<section class="sec band" id="why" aria-labelledby="why-h">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2 class="display" id="why-h"><span>In one checkout,</span> <span>branches take turns.</span></h2>
+      <p class="lede">To look at another branch, you stash, switch, reinstall and restart, and the port is still taken. Its migrations land in your database. Then you do it all again to come back.</p>
+    </div>
+    <div class="vs">
+      <div class="card">
+        <h3><span class="dot" aria-hidden="true"></span>In one checkout</h3>
+<pre><span class="p">$</span> git stash
+<span class="p">$</span> git switch fix/login
+<span class="p">$</span> pnpm install
+<span class="p">$</span> pnpm dev
+<span class="er">Error: listen EADDRINUSE :::3000</span></pre>
+        <p>One branch runs at a time, and showing a teammate means deploying to staging first.</p>
+      </div>
+      <div class="card">
+        <h3><span class="dot on" aria-hidden="true"></span>With pando</h3>
+<pre><span class="p">$</span> pando new fix/login
+<span class="p">$</span> pando start fix/login
+<span class="p">$</span> pando ls
+<span class="d">NAME       STATUS   URL</span>
+main       <span class="ok">running</span>  http://localhost:20177
+feat/cart  <span class="ok">running</span>  http://localhost:23001
+fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
+        <p>Every branch runs at once, each in a checkout of its own, on ports of its own. You see all of them on one screen.</p>
+      </div>
+    </div>
+    <p class="sig"><q>So I built pando. For myself.</q><small>Mert Karadayi · <a href="#try">See it</a></small></p>
+  </div>
+</section>
+
+<!-- 1 · the name -->
 <section class="sec band" id="story" aria-labelledby="story-h">
   <div class="wrap">
     <div class="sec-head">
       <p class="eyebrow">Fishlake National Forest, Utah</p>
       <h2 class="display" id="story-h"><span>It looks like a forest.</span> <span>It is one tree.</span></h2>
-      <p class="lede">Pando is a grove of quaking aspen. Its roughly 47,000 trunks all grow from a single root system, which makes it one living thing, and the heaviest known on Earth.</p>
+      <p class="lede">Pando is a grove of quaking aspen. Walk through it and you count trees; dig, and you find only one.</p>
     </div>
     <ul class="stats" aria-label="Pando in four facts">
         <li class="stat"><span class="stat-n">47,000</span><span class="stat-l">trunks, roughly</span></li>
@@ -90,34 +123,6 @@ document.documentElement.classList.add('js');
         <li class="map-row"><b>Trunk</b><i aria-hidden="true">→</i><span>a branch, in a worktree of its own</span></li>
       </ul>
     </div>
-
-    <div class="sub-head" id="why">
-      <h3 class="display"><span>But in one checkout,</span> <span>branches take turns.</span></h3>
-      <p class="lede">To look at another branch, you stash, switch, reinstall and restart, and the port is still taken. Its migrations land in your database. Then you do it all again to come back.</p>
-    </div>
-    <div class="vs">
-      <div class="card">
-        <h3><span class="dot" aria-hidden="true"></span>One checkout</h3>
-<pre><span class="p">$</span> git stash
-<span class="p">$</span> git switch fix/login
-<span class="p">$</span> pnpm install
-<span class="p">$</span> pnpm dev
-<span class="er">Error: listen EADDRINUSE :::3000</span></pre>
-        <p>Branches take turns, and showing a teammate means staging first.</p>
-      </div>
-      <div class="card">
-        <h3><span class="dot on" aria-hidden="true"></span>pando lets every branch run at once.</h3>
-<pre><span class="p">$</span> pando new fix/login
-<span class="p">$</span> pando start fix/login
-<span class="p">$</span> pando ls
-<span class="d">NAME       STATUS   URL</span>
-main       <span class="ok">running</span>  http://localhost:20177
-feat/cart  <span class="ok">running</span>  http://localhost:23001
-fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
-        <p>Each branch gets a checkout of its own, already running, on its own ports. You see all of them on one screen.</p>
-      </div>
-    </div>
-    <p class="sig"><q>So I built pando. For myself.</q><small>Mert Karadayi · <a href="#try">See it</a></small></p>
   </div>
 </section>
 
@@ -441,7 +446,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
 <section class="end" aria-labelledby="end-h">
   <div class="wrap">
     <h2 class="display center" id="end-h">Every branch alive.</h2>
-    <p class="lede">One root system. Forty-seven thousand trunks.</p>
+    <p class="lede">Free and open source. Every branch you work on, one key away.</p>
     <div class="row"><a class="btn btn-primary" href="docs.html">Read the docs</a><a class="btn btn-outline" href="https://github.com/mertkaradayi/pando">View on GitHub</a></div>
   </div>
   <div class="end-grove"><canvas aria-hidden="true"></canvas></div>
@@ -451,8 +456,8 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
 <footer class="foot">
   <div class="wrap">
     <div class="foot-cols">
-      <div><a class="logo" href="#top"><svg viewBox="0 0 64 64" aria-hidden="true"><g stroke="currentColor" stroke-linecap="round" fill="none"><path d="M18 44V24M18 30l-5-6M18 27l5-7" stroke-width="3.4"/><path d="M32 44V16M32 24l-6-7M32 21l6-7M32 30l5-4" stroke-width="3.8"/><path d="M46 44V26M46 31l-5-5M46 29l5-6" stroke-width="3.4"/></g><path d="M8 51c8-3 14 2 24 0s16-4 24 0" stroke="#F2B84B" stroke-width="4" fill="none" stroke-linecap="round"/></svg>pando</a><p>One root system. Forty-seven thousand trunks. Every branch alive.</p></div>
-      <nav aria-labelledby="f-product"><h2 id="f-product">Product</h2><ul><li><a href="#how">How it works</a></li><li><a href="#try">Try it</a></li><li><a href="#data">Data</a></li><li><a href="#setup">Setup</a></li><li><a href="#install">Install</a></li></ul></nav>
+      <div><a class="logo" href="#top"><svg viewBox="0 0 64 64" aria-hidden="true"><g stroke="currentColor" stroke-linecap="round" fill="none"><path d="M18 44V24M18 30l-5-6M18 27l5-7" stroke-width="3.4"/><path d="M32 44V16M32 24l-6-7M32 21l6-7M32 30l5-4" stroke-width="3.8"/><path d="M46 44V26M46 31l-5-5M46 29l5-6" stroke-width="3.4"/></g><path d="M8 51c8-3 14 2 24 0s16-4 24 0" stroke="#F2B84B" stroke-width="4" fill="none" stroke-linecap="round"/></svg>pando</a><p>Every branch alive.</p></div>
+      <nav aria-labelledby="f-product"><h2 id="f-product">Product</h2><ul><li><a href="#try">Try it</a></li><li><a href="#how">How it works</a></li><li><a href="#data">Data</a></li><li><a href="#setup">Setup</a></li><li><a href="#install">Install</a></li></ul></nav>
       <nav aria-labelledby="f-docs"><h2 id="f-docs">Docs</h2><ul><li><a href="docs.html#install">Getting started</a></li><li><a href="docs.html#commands">Commands</a></li><li><a href="docs.html#tui">TUI keys</a></li><li><a href="docs.html#config">pando.toml</a></li><li><a href="docs.html#faq">Questions</a></li></ul></nav>
       <nav aria-labelledby="f-project"><h2 id="f-project">Project</h2><ul><li><a href="https://github.com/mertkaradayi/pando">GitHub</a></li><li><a href="https://github.com/mertkaradayi/pando/issues">Issues</a></li><li><a href="https://github.com/mertkaradayi/pando/blob/main/CHANGELOG.md">Changelog</a></li><li><a href="https://github.com/mertkaradayi/pando/blob/main/CONTRIBUTING.md">Contributing</a></li><li><a href="https://github.com/mertkaradayi/pando/blob/main/SECURITY.md">Security</a></li><li><a href="https://github.com/mertkaradayi/pando/blob/main/LICENSE">Licence</a></li></ul></nav>
     </div>

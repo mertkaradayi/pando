@@ -17,8 +17,11 @@
   p { color: #A1A1A6; font-size: 19px; line-height: 1.38; margin: 16px 0 40px; }
   pre { font: 400 clamp(5px, 1.05vw, 11px)/1.12 "JetBrains Mono", ui-monospace, Menlo, monospace; margin: 0 0 40px; color: rgba(236, 236, 236, 0.28); max-width: 100%; overflow: hidden; }
   pre .rt { color: rgba(242, 184, 75, 0.75); }
-  a { display: inline-flex; align-items: center; height: 48px; padding: 0 24px; border-radius: 980px; background: #F2B84B; color: #050505; font-weight: 600; text-decoration: none; transition: background-color 120ms; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  a { display: inline-flex; align-items: center; height: 48px; padding: 0 24px; border-radius: 980px; background: #F2B84B; color: #050505; border: 1px solid transparent; font-weight: 600; text-decoration: none; transition: background-color 120ms; }
   a:hover { background: #F7C96E; }
+  a.alt { background: transparent; color: #F5F5F7; border-color: rgba(255, 255, 255, 0.18); }
+  a.alt:hover { background: rgba(255, 255, 255, 0.06); }
   a:focus-visible { outline: none; box-shadow: 0 0 0 2px #050505, 0 0 0 4px #F2B84B; }
 </style>
 </head>
@@ -38,12 +41,14 @@
 ░░▒█▒░░░░█░░░░█░▒░▒░▒░█░░░░░▒░█░░░▒░▒░█░░░▒░█░░░▒░░░█░░░░░▒█░░▒░█░░░░░░░█░░░▒█░░░░▒█░░▒░▒░█░░░░░▒░▒░
 <span class="rt">   ┃     ┃    ┃       ┃       ┃       ┃     ┃       ┃      ┃    ┃       ┃    ┃     ┃      ┃
 ╺━━┻━━━━━┻━━━━┻━━━━━━━┻━━━━━━━┻━━━━━━━┻━━━━━┻━━━━━━━┻━━━━━━┻━━━━┻━━━━━━━┻━━━━┻━━━━━┻━━━━━━┻━━━━━━━━╸</span></pre>
-  <a id="home" href="/pando/">Back to the grove</a>
+  <div class="row"><a id="home" href="/pando/">Back to the grove</a><a class="alt" id="docs" href="/pando/docs.html">Read the docs</a></div>
 </main>
 <script>
   // the site lives at /pando/ on GitHub Pages; anywhere else, its root
   var p = location.pathname, i = p.indexOf('/pando/');
-  document.getElementById('home').href = i >= 0 ? p.slice(0, i + 7) : '/';
+  var root = i >= 0 ? p.slice(0, i + 7) : '/';
+  document.getElementById('home').href = root;
+  document.getElementById('docs').href = root + 'docs.html';
 </script>
 </body>
 </html>

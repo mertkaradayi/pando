@@ -125,6 +125,9 @@ body.locked { overflow: hidden; }
 /* ---------- sections ---------- */
 .sec { padding: var(--sec-pad) 0; }
 .band { background: var(--bg-band); }
+/* the problem and the name share one band */
+#why { padding-bottom: 0; }
+#story { padding-top: var(--s-10); }
 .sec-head .links { margin-top: var(--s-4); }
 .sec-head { max-width: var(--w-headline); margin: 0 auto var(--head-gap); text-align: center; display: flex; flex-direction: column; align-items: center; }
 .eyebrow { color: var(--gold); font-size: var(--t-eyebrow); font-weight: 600; line-height: 1.19; letter-spacing: 0.011em; margin-bottom: 8px; }
@@ -134,7 +137,6 @@ body.locked { overflow: hidden; }
 .fine { color: var(--text-3); font-size: var(--t-caption); line-height: 1.43; max-width: var(--w-text); }
 .fine code { font-size: 0.92em; }
 .center { text-align: center; margin-inline: auto; }
-.sub-head { margin: var(--s-10) auto var(--s-8); max-width: var(--w-headline); text-align: center; display: flex; flex-direction: column; align-items: center; }
 @media (min-width: 735px) { .eyebrow { margin-bottom: 12px; } .lede { margin-top: var(--s-5); } }
 
 /* ---------- grids and cards ---------- */
@@ -199,8 +201,7 @@ pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
 /* ---------- 1 · hero ---------- */
 .hero { position: relative; display: flex; flex-direction: column; overflow: hidden; text-align: center; }
 .hero-in { position: relative; z-index: 1; padding: 64px var(--gutter) 0; display: flex; flex-direction: column; align-items: center; }
-.hero-mark { color: var(--gold); font-size: var(--t-eyebrow); font-weight: 600; letter-spacing: 0.011em; }
-.hero h1 { font-size: var(--t-hero); line-height: 1.05; letter-spacing: -0.015em; font-weight: 700; max-width: 18ch; margin-top: 10px; }
+.hero h1 { font-size: var(--t-hero); line-height: 1.05; letter-spacing: -0.015em; font-weight: 700; max-width: 18ch; }
 .hero h1 span { display: inline-block; }
 .hero-lede { color: var(--text-2); font-size: var(--t-lede); line-height: 1.381; letter-spacing: 0.011em; max-width: 680px; margin-top: var(--s-5); }
 .hero-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px 16px; margin-top: var(--s-8); width: 100%; }
@@ -579,7 +580,7 @@ h2:hover .anchor, h3:hover .anchor { opacity: 1; }
   .list-s .card { padding: 20px 0; background: none; border: 0; border-bottom: 1px solid var(--hairline); border-radius: 0; }
   .bento.list-s a.card::after { top: 22px; right: 0; }
   .screen, .tile .flow { display: none; }
-  .sub-head { margin-top: var(--s-9); }
+  #story { padding-top: var(--s-9); }
   .sig { margin-top: var(--s-6); }
   .vs .card { padding: 20px; }
   .vs .card pre { padding: 14px 12px; font-size: 11px; }
