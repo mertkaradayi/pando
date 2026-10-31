@@ -272,7 +272,12 @@ impl PendingAction {
     ///
     /// A create holds that turn only while git runs. Its install takes
     /// minutes and writes no ref, so once its worker says the install has
-    /// begun, a git move or another create goes ahead beside it.
+    /// begun, a git move or another create goes ahead beside it. An
+    /// install can write the repository's config — `husky install` sets
+    /// `core.hooksPath` — which a create of a remote branch writes too;
+    /// git holds that lock for a moment and waits for nobody's, so the
+    /// create's own git steps try again a moment later
+    /// (`retrying_git_locks`, in `actions`).
     ///
     /// A removal writes no ref: it keeps the branch, and `git worktree
     /// remove` deletes only that worktree's own entry under

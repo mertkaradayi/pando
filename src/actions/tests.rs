@@ -8904,6 +8904,95 @@ fn new_with_a_remote_only_branch_tracks_the_remote() {
     );
 }
 
+// An install beside it can hold the repository's config lock — npm's
+// `prepare` runs `husky install`, which sets `core.hooksPath` — and a
+// create of a remote branch writes its upstream there. git waits for no
+// lock: the add failed with "could not lock config file" where a moment
+// later it would have passed, and the TUI runs a create beside another's
+// install.
+#[test]
+fn a_create_waits_out_a_config_lock_another_git_holds_a_moment() {
+    let fx = fixture_with_origin(&["feat/remote"]);
+    let lock = fx.root.join(".git").join("config.lock");
+    std::fs::write(&lock, "").unwrap();
+    let (adding, added) = std::sync::mpsc::channel();
+    let held = lock.clone();
+    let releaser = std::thread::spawn(move || {
+        // Held until the add is under way, and a while into it.
+        let _ = added.recv_timeout(Duration::from_secs(30));
+        std::thread::sleep(Duration::from_millis(500));
+        std::fs::remove_file(&held).unwrap();
+    });
+    let said = |line: &str| {
+        if line.starts_with("checking out") {
+            let _ = adding.send(());
+        }
+    };
+    let created = new(&fx.paths, &fx.config, "feat/remote", None, &said);
+    releaser.join().unwrap();
+    assert_eq!(created.unwrap(), "feat+remote");
+    assert_eq!(
+        upstream_of(&fx.root, "feat/remote").as_deref(),
+        Some("origin/feat/remote")
+    );
+}
+
+// git's lock errors, each a moment's: the step is tried again once the
+// failure is undone.
+#[test]
+fn a_git_step_tries_again_only_on_a_lock_another_git_held() {
+    let failed = Command::new("git")
+        .arg("--no-such-option")
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    let saying = |stderr: &str| std::process::Output {
+        status: failed.status,
+        stdout: Vec::new(),
+        stderr: format!("Preparing worktree (new branch 'x')\n{stderr}\nhint: a hint\n")
+            .into_bytes(),
+    };
+    let ok = Command::new("git").arg("--version").output().unwrap();
+    let tries = |first: std::process::Output, cleaned: bool| {
+        let (mut runs, mut undone) = (0, 0);
+        let out = retrying_git_locks(
+            || {
+                runs += 1;
+                Ok(if runs == 1 { first.clone() } else { ok.clone() })
+            },
+            |_| {
+                undone += 1;
+                cleaned
+            },
+        )
+        .unwrap();
+        (out.status.success(), runs, undone)
+    };
+    for busy in [
+        "error: could not lock config file .git/config: File exists",
+        "fatal: Unable to create '/r/.git/index.lock': File exists.",
+        "error: cannot lock ref 'refs/heads/x': Unable to create '/r/.git/refs/heads/x.lock': \
+         File exists.",
+        "error: cannot lock ref 'refs/remotes/origin/x': is at 1111 but expected 2222",
+    ] {
+        assert_eq!(tries(saying(busy), true), (true, 2, 1), "{busy}");
+        // A failure whose undo left something: given up on, as it was.
+        assert_eq!(tries(saying(busy), false), (false, 1, 1), "{busy}");
+    }
+    for not_busy in [
+        "error: could not lock config file .git/config: Permission denied",
+        "fatal: a branch named 'x' already exists",
+        "fatal: invalid reference: origin/x",
+    ] {
+        assert_eq!(tries(saying(not_busy), true), (false, 1, 0), "{not_busy}");
+    }
+    assert_eq!(
+        git_failure_reason(&saying("fatal: invalid reference: origin/x")),
+        "invalid reference: origin/x",
+        "a hint after the failure is not its reason"
+    );
+}
+
 // The remote-tracking ref does not exist locally yet: pando has to fetch
 // before it can tell a remote branch from a brand new one.
 #[test]

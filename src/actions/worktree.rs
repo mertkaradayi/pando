@@ -873,7 +873,19 @@ fn add_checkout(
     // download can ask for a password — over the TUI, whose keys then went
     // nowhere, and for ever.
     cmd.env("GIT_TERMINAL_PROMPT", "0");
-    let out = cmd.output().context("spawn git worktree add")?;
+    // Again while another git holds the config or a ref a moment — the
+    // upstream `--track` writes, beside an install's `husky install` — once
+    // the failed add is undone: git kept the branch `-b` made.
+    let out = retrying_git_locks(
+        || cmd.output(),
+        |_| {
+            !is_registered(root, at)
+                && made
+                    .as_deref()
+                    .is_none_or(|start| delete_made_branch(root, branch, start) != Some(false))
+        },
+    )
+    .context("spawn git worktree add")?;
     // git removes a worktree whose checkout failed, but keeps the branch
     // `-b` made for it; and it keeps the worktree itself when only its
     // `post-checkout` hook failed. A worktree still there is the caller's
@@ -1530,17 +1542,71 @@ fn drop_made_branch(
     let Some(start) = made else {
         return err;
     };
-    let refname = format!("refs/heads/{branch}");
-    if !ref_exists(root, &refname) {
-        return err;
-    }
-    match git_succeeds(root, &["update-ref", "-d", &refname, start]) {
-        true => anyhow::anyhow!("{err:#} — the new branch {branch} was removed"),
-        false => anyhow::anyhow!(
+    match delete_made_branch(root, branch, start) {
+        None => err,
+        Some(true) => anyhow::anyhow!("{err:#} — the new branch {branch} was removed"),
+        Some(false) => anyhow::anyhow!(
             "{err:#} — the new branch {branch} is still there; delete it with `git branch -D \
              {branch}`"
         ),
     }
+}
+
+/// Deletes `branch` while it is still at `start`, the commit a failed
+/// `git worktree add -b` made it at: `None` when there is no such branch,
+/// else whether it went.
+fn delete_made_branch(root: &Path, branch: &str, start: &str) -> Option<bool> {
+    let refname = format!("refs/heads/{branch}");
+    ref_exists(root, &refname).then(|| git_succeeds(root, &["update-ref", "-d", &refname, start]))
+}
+
+/// How long a git step that writes the repository's shared config or refs
+/// tries again while another git holds their lock. git holds one for
+/// milliseconds; one held past this is one a git that crashed left, which
+/// git's own message then names.
+const GIT_LOCK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Runs a git step that writes the repository's shared config or refs
+/// again while it fails only because another git held a lock it needed
+/// ([`git_lock_busy`]), for up to [`GIT_LOCK_PATIENCE`]. git waits for
+/// none of them, so two steps that would each have passed alone fail side
+/// by side: a create beside another's install, whose `husky install` sets
+/// `core.hooksPath`.
+///
+/// `undo` runs after each such failure, before the step is tried again,
+/// and says whether it left nothing behind: only then is it. The failure
+/// it gave up on is the one returned.
+pub(super) fn retrying_git_locks(
+    mut run: impl FnMut() -> std::io::Result<std::process::Output>,
+    mut undo: impl FnMut(&std::process::Output) -> bool,
+) -> std::io::Result<std::process::Output> {
+    let began = std::time::Instant::now();
+    let mut pause = std::time::Duration::from_millis(25);
+    loop {
+        let out = run()?;
+        if out.status.success()
+            || !git_lock_busy(&out)
+            || began.elapsed() >= GIT_LOCK_PATIENCE
+            || !undo(&out)
+        {
+            return Ok(out);
+        }
+        std::thread::sleep(pause);
+        pause = (pause * 2).min(std::time::Duration::from_millis(400));
+    }
+}
+
+/// Whether git failed for a lock another git held a moment, in git's own
+/// words: the config's, a ref's or an index's lock file already there, or
+/// a ref another git moved under it. Never a lock git could not take for
+/// any other reason.
+pub(super) fn git_lock_busy(out: &std::process::Output) -> bool {
+    String::from_utf8_lossy(&out.stderr).lines().any(|line| {
+        let held = line.contains("File exists");
+        (line.contains("could not lock config file") && held)
+            || (line.contains("Unable to create '") && line.contains(".lock'") && held)
+            || (line.contains("cannot lock ref") && line.contains("but expected"))
+    })
 }
 
 /// The commit `rev` names, in full.
@@ -2700,13 +2766,16 @@ fn fetch_pr_head(
     timeout: std::time::Duration,
 ) -> Result<()> {
     let refspec = format!("refs/pull/{number}/head:refs/heads/{branch}");
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(root)
-        .args(["fetch", "--quiet", remote, &refspec])
-        .env("GIT_TERMINAL_PROMPT", "0");
-    match crate::platform::process::output_within(command, timeout) {
+    let fetch = || {
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(root)
+            .args(["fetch", "--quiet", remote, &refspec])
+            .env("GIT_TERMINAL_PROMPT", "0");
+        crate::platform::process::output_within(command, timeout)
+    };
+    match retrying_git_locks(fetch, |_| true) {
         Ok(out) if out.status.success() => Ok(()),
         Ok(out) => bail!(
             "could not fetch #{number} from {remote}: {}",
@@ -2826,13 +2895,18 @@ pub(super) fn fetch_branch(
     branch: &str,
     timeout: std::time::Duration,
 ) -> Result<bool> {
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(root)
-        .args(["fetch", "--quiet", "origin", branch])
-        .env("GIT_TERMINAL_PROMPT", "0");
-    match crate::platform::process::output_within(command, timeout) {
+    // A fetch another git's lock failed is no answer either, and would
+    // read as "not on the remote": tried again a moment later.
+    let fetch = || {
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(root)
+            .args(["fetch", "--quiet", "origin", branch])
+            .env("GIT_TERMINAL_PROMPT", "0");
+        crate::platform::process::output_within(command, timeout)
+    };
+    match retrying_git_locks(fetch, |_| true) {
         Ok(out) => Ok(out.status.success()),
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => bail!(
             "`git fetch origin {branch}` did not answer in {}s, so pando cannot tell whether \
@@ -3218,11 +3292,17 @@ fn remotes(root: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The last non-empty stderr line: git narrates before it fails, so the
-/// closing line is the reason and everything above it is progress noise.
-fn git_failure_reason(out: &std::process::Output) -> String {
+/// The last non-empty stderr line that is not a hint: git narrates before
+/// it fails, so the closing line is the reason and everything above it is
+/// progress noise — and the hints it can print after it, a branch whose
+/// upstream could not be written, are advice for git's own command line.
+pub(super) fn git_failure_reason(out: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&out.stderr);
-    match stderr.lines().rev().find(|l| !l.trim().is_empty()) {
+    match stderr
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty() && !l.starts_with("hint:"))
+    {
         Some(line) => line.trim().trim_start_matches("fatal: ").to_string(),
         None => format!("exit {}", out.status.code().unwrap_or(-1)),
     }
