@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>pando, the worktree tool · One repo. Every branch alive.</title>
-<meta name="description" content="pando runs every git branch you work on at once, each in its own worktree with its own ports, logs and database. Nothing written into your repo.">
+<meta name="description" content="pando runs every git branch you work on at once, each in its own worktree with its own ports, logs and, if you want, database. Its config lives outside your repository.">
 <meta name="theme-color" content="#050505">
 <meta property="og:title" content="pando · One repo. Every branch alive.">
-<meta property="og:description" content="Every branch you work on, running side by side: its own checkout, ports, logs and, if you want, database. Never a byte written into your repository.">
+<meta property="og:description" content="Every branch you work on, running side by side: its own checkout, ports, logs and, if you want, database. No config file in your repository, and no AI at runtime.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://mertkaradayi.github.io/pando/">
 <meta property="og:image" content="https://mertkaradayi.github.io/pando/assets/og.png">
@@ -203,7 +203,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     </div>
     <ol class="grid g3 steps list-s">
       <li class="step card"><span class="n">1</span><h3>Its own checkout.</h3><p>A real git worktree in pando’s own folder, with your <code>.env</code> linked in and its dependencies installed. Your main checkout is untouched.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando new feat/checkout</code></div></li>
-      <li class="step card"><span class="n">2</span><h3>Its own ports.</h3><p>Every process starts in the background, on ports no other branch uses, kept across restarts. pando waits until each is listening.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando start feat/checkout</code></div></li>
+      <li class="step card"><span class="n">2</span><h3>Its own ports.</h3><p>Every process starts in the background, on ports no other branch uses, kept across restarts. pando waits until each is ready.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando start feat/checkout</code></div></li>
       <li class="step card"><span class="n">3</span><h3>Its own URL.</h3><p>It opens in your browser, and <code>pando share</code> gives a teammate a public link.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando open feat/checkout</code></div></li>
     </ol>
     <div class="grid g4 cards-after list-s">
@@ -211,7 +211,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       <div class="card"><h3>Environment, never files.</h3><p>Ports and addresses reach your app as environment variables. pando never edits a <code>.env</code> or a config file.</p>
       </div>
       <div class="card"><h3>Your main checkout too.</h3><p>Always the first row. pando runs its processes on ports it gives them, nothing more.</p></div>
-      <div class="card"><h3>Worktrees made by hand.</h3><p>Every worktree git knows about is listed and run, and never written into.</p></div>
+      <div class="card"><h3>Worktrees made by hand.</h3><p>Every worktree git knows about is listed and run. pando adds no file to one it did not make.</p></div>
     </div>
 <p class="fine center envline">Every process also gets <code>PANDO_NAME</code>, <code>PANDO_BRANCH</code>, <code>PANDO_WORKTREE</code>, <code>PANDO_ROOT</code> and <code>PANDO_PROJECT</code>; what <code>pando check</code> runs also gets <code>PANDO_CHECK=1</code>, and a namespaced worktree's get <code>PANDO_NAMESPACE</code>.</p>
 
@@ -232,7 +232,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     </div>
     <ul class="grid g3 points list-s">
         <li class="card"><h3>Dependencies, cloned.</h3><p><code>clone</code> gives a new worktree your main checkout’s <code>node_modules</code> before the install, so the install fixes only what differs.</p></li>
-        <li class="card"><h3>Rust builds, cloned.</h3><p>A crate’s <code>target</code> comes along too, so a branch compiles only its own crates.</p></li>
+        <li class="card"><h3>Rust builds, cloned.</h3><p><code>clone</code> can take a crate’s <code>target</code> too, so a branch compiles only its own crates.</p></li>
         <li class="card"><h3>Measured, not guessed.</h3><p>A passing <code>pando check</code> reports what a worktree costs on disk and what could still be shared. What to share is your call.</p></li>
       </ul>
   </div>
@@ -251,19 +251,19 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       <article class="card mode">
         <div class="svg"><svg viewBox="0 0 160 92" aria-hidden="true"><path class="gd" d="M8 44h144"/><path d="M52 44V10M52 22l-7-8M52 18l6-7M108 44V14M108 26l-6-7M108 22l6-6"/><ellipse cx="52" cy="66" rx="13" ry="4"/><path d="M39 66v13a13 4 0 0 0 26 0V66M52 44v18"/><path stroke-dasharray="3 4" d="M108 44c0 14-30 16-42 22"/></svg></div>
         <h3>Shared <span class="tag">Default</span></h3>
-        <p class="how"><kbd>S</kbd><code>--shared</code></p>
+        <p class="how"><kbd>S</kbd><span aria-hidden="true">·</span><code>--shared</code></p>
         <p>It uses your main checkout’s database and cache. Nothing to start, nothing to wait for: right for most changes.</p>
       </article>
       <article class="card mode">
         <div class="svg"><svg viewBox="0 0 160 92" aria-hidden="true"><path class="gd" d="M8 44h144"/><path d="M52 44V10M52 22l-7-8M52 18l6-7M108 44V14M108 26l-6-7M108 22l6-6"/><rect x="30" y="54" width="76" height="34" rx="7"/><ellipse cx="52" cy="64" rx="9" ry="3"/><path d="M43 64v11a9 3 0 0 0 18 0V64M52 44v16"/><ellipse class="gr" cx="84" cy="64" rx="9" ry="3"/><path class="gr" d="M75 64v11a9 3 0 0 0 18 0V64M108 44c0 10-16 12-24 16"/></svg></div>
         <h3>Namespaced <span class="tag gold">Experimental</span></h3>
-        <p class="how"><kbd>⏎</kbd><code>--namespaced</code></p>
+        <p class="how"><span><kbd>⏎</kbd> then choose</span><span aria-hidden="true">·</span><code>--namespaced</code></p>
         <p>A database of its own inside the server you already run: <code>shop__feat_x</code> next to <code>shop</code>, or a Redis slot next to slot 0. The branch’s migrations build it; main’s data is never touched.</p>
       </article>
       <article class="card mode">
         <div class="svg"><svg viewBox="0 0 160 92" aria-hidden="true"><path class="gd" d="M8 44h144"/><path d="M52 44V10M52 22l-7-8M52 18l6-7M108 44V14M108 26l-6-7M108 22l6-6"/><ellipse cx="52" cy="66" rx="13" ry="4"/><path d="M39 66v13a13 4 0 0 0 26 0V66M52 44v18"/><ellipse class="gr" cx="108" cy="66" rx="13" ry="4"/><path class="gr" d="M95 66v13a13 4 0 0 0 26 0V66M108 44v18"/></svg></div>
         <h3>Isolated</h3>
-        <p class="how"><kbd>i</kbd><code>--isolated</code></p>
+        <p class="how"><kbd>i</kbd><span aria-hidden="true">·</span><code>--isolated</code></p>
         <p>Servers of its own, on ports of its own: your compose file’s containers, or native Postgres, MariaDB, Redis or MongoDB without Docker.</p>
       </article>
     </div>
@@ -325,7 +325,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       </figure>
       <div class="notes">
         <div><h3>No agent?</h3><p>Press <kbd>⏎</kbd> and pando makes its own guess, tested the same way. Press <kbd>esc</kbd> to skip setup and just manage worktrees.</p></div>
-        <div><h3>What it reads.</h3><p>Your lockfile, scripts, env example, version files and compose file. Every decision lands in one file in <code>~/.pando</code>, with its reason.</p></div>
+        <div><h3>What it reads.</h3><p>Your lockfile, scripts, env example, version files and compose file. Every decision lands in <code>~/.pando</code>, with its reason.</p></div>
       </div>
     </div>
   </div>
@@ -365,7 +365,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <div class="vis flow"><div><b>Detection</b>rules and data, once</div><i aria-hidden="true">↓</i><div><b>pando.toml</b>a file you can read and edit</div><i aria-hidden="true">↓</i><div><b>start · stop · share · rm</b>read that file, and nothing else</div></div>
       </article>
     </div>
-    <p class="fine center install-fine">One mode reaches outside your repository by design: a namespaced worktree’s database lives in your own server, named after your main database, and only <code>pando rm</code> drops it.</p>
+    <p class="fine center install-fine">Two things you choose reach past this rule, each with rules of its own: namespaced mode makes databases in your own server, and the git menu moves a branch after showing you its commands.</p>
   </div>
 </section>
 
@@ -414,7 +414,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <div class="pane" id="pane-script" role="tabpanel" aria-labelledby="tab-script">
           <h3>Install script</h3>
           <div class="cmd cmd-lg wrapping"><span class="p" aria-hidden="true">$</span><code>curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mertkaradayi/pando/releases/latest/download/pando-cli-installer.sh | sh</code><button class="copy" type="button" data-copy></button></div>
-          <p class="fine">This puts <code>pando</code> in <code>~/.local/bin</code> and adds that folder to your PATH. Set <code>PANDO_CLI_NO_MODIFY_PATH=1</code> to leave your shell files alone.</p>
+          <p class="fine">This puts <code>pando</code> in <code>~/.local/bin</code>, or <code>$XDG_BIN_HOME</code> when that is set, and adds that folder to your PATH. Set <code>PANDO_CLI_NO_MODIFY_PATH=1</code> to leave your shell files alone.</p>
         </div>
         <div class="pane" id="pane-src" role="tabpanel" aria-labelledby="tab-src">
           <h3>From source</h3>

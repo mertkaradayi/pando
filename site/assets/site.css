@@ -532,6 +532,11 @@ h2:hover .anchor, h3:hover .anchor { opacity: 1; }
 .tbl th { color: var(--text-2); font-weight: 600; background: var(--surface-1); }
 .tbl td { color: var(--text-2); }
 .tbl td:first-child { color: var(--text); }
+/* the TUI's marks, drawn in the TUI's face and weight, so a thin one like ◌ stays legible */
+.tbl.marks td:first-child { font-family: var(--font-mono); font-size: 15px; white-space: nowrap; }
+.mk { font-family: var(--font-mono); font-weight: 700; font-size: 1.1em; color: var(--text); }
+.tbl.marks td:first-child .mk { font-size: 20px; line-height: 1; vertical-align: -2px; }
+.mk.on { color: var(--run); } .mk.go { color: var(--gold); } .mk.er { color: var(--err); }
 .kv { margin: 20px 0; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
 .kv > div { display: grid; gap: 4px 16px; padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
 .kv > div:last-child { border-bottom: 0; }
