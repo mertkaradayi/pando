@@ -20574,3 +20574,60 @@ fn a_second_new_of_an_incomplete_set_never_undoes_the_firsts_checkout() {
         "and nothing was made"
     );
 }
+
+// ---- the lock races --------------------------------------------------
+
+/// Marks `name`'s record as a removal an `rm` began, as `claim_removal`
+/// leaves it, and returns the mark.
+fn with_removal_mark(fx: &Fx, name: &str) -> state::Removal {
+    let mut store = fx.state();
+    let mark = state::Removal {
+        owner_pid: 4_000_031,
+        since: Utc::now(),
+    };
+    store.worktrees.get_mut(name).unwrap().removing = Some(mark.clone());
+    state::save(&fx.paths.state_file(), &store).unwrap();
+    std::fs::create_dir_all(fx.paths.removal_lock_file(name).parent().unwrap()).unwrap();
+    mark
+}
+
+// A child another thread of this pando forks holds a copy of every open
+// descriptor until it execs, a look at a removal's lock among them. Asked
+// once, an interrupted removal's lock read as held while such a copy
+// lived, and a start, a share, a `new` or an `rm` of the worktree was
+// refused as if a removal were under way. Asked again for a moment it
+// reads as what it is — and a removal really under way still reads as
+// one, however long it is asked.
+#[test]
+fn a_forked_childs_copy_of_a_removal_lock_is_not_a_removal_under_way() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    let mark = with_removal_mark(&fx, &name);
+    let lock_file = fx.paths.removal_lock_file(&name);
+    let removal = || {
+        let _lock = state::lock(&fx.paths.lock_file()).unwrap();
+        super::worktree::removal_of(&fx.paths, &fx.state(), &name)
+    };
+
+    let (taken, copy_taken) = std::sync::mpsc::channel();
+    let seen = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            // The copy, let go well inside the moment it is asked again.
+            let copy = state::try_lock(&lock_file)
+                .unwrap()
+                .expect("nobody holds it");
+            taken.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(60));
+            drop(copy);
+        });
+        copy_taken.recv().unwrap();
+        removal()
+    });
+    assert_eq!(seen, Some(RemovalState::Interrupted(mark.clone())));
+    let err = start(&fx.paths, &fx.config, &name, None, &noop).unwrap_err();
+    assert!(format!("{err:#}").contains("was interrupted"), "{err:#}");
+
+    let held = state::try_lock(&lock_file).unwrap().unwrap();
+    assert_eq!(removal(), Some(RemovalState::UnderWay(mark)));
+    drop(held);
+}
