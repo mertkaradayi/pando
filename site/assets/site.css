@@ -109,8 +109,11 @@ body.locked { overflow: hidden; }
 .nav.open .menu-btn i:first-child { transform: translateY(3.25px) rotate(45deg); }
 .nav.open .menu-btn i:last-child { transform: translateY(-3.25px) rotate(-45deg); }
 @media (max-width: 734px) {
+  /* A backdrop filter makes the nav the box its fixed children are placed
+     in: the open menu would be a 40 px strip under it, not the screen. */
+  .nav.open { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--bg); }
   .nav.open .nav-links { display: block; position: fixed; top: var(--nav-h); left: 0; right: 0; bottom: 0; padding: 8px 20px 32px; overflow: auto;
-    background: rgba(5, 5, 5, 0.98); animation: sheet var(--dur-3) var(--ease-out); }
+    background: var(--bg); animation: sheet var(--dur-3) var(--ease-out); }
   .nav.open .nav-links a { display: flex; align-items: center; height: 52px; border-bottom: 1px solid var(--hairline); font-size: 17px; font-weight: 600; color: var(--text); }
 }
 @keyframes sheet { from { opacity: 0; transform: translateY(-8px); } }
