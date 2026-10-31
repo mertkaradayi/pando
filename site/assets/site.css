@@ -557,7 +557,8 @@ h2:hover .anchor, h3:hover .anchor { opacity: 1; }
 .modes-svg { display: grid; gap: var(--gap); }
 @media (min-width: 735px) { .modes-svg { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .modes-svg .card { padding: 20px; font-size: var(--t-caption); gap: 6px; }
-.modes-svg .card h4, .modes-svg .card p { margin: 0; }
+.modes-svg .card h3, .modes-svg .card p { margin: 0; }
+.modes-svg .card h3 { font-size: var(--t-body); line-height: 1.47; letter-spacing: -0.016em; }
 .modes-svg .card p { color: var(--text-2); line-height: 1.5; }
 .modes-svg .svg { height: 72px; color: var(--text-3); }
 
