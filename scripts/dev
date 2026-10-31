@@ -117,6 +117,36 @@ build() {
   say "built in $(($(date +%s) - start))s: $wt/target/release/pando"
 }
 
+# The main checkout's `target`, cloned copy-on-write into a new worktree,
+# so the branch builds only pando and finds every dependency already
+# built: their fingerprints name no path of the checkout. Only ever a
+# clone, never a full copy: on macOS `cp -c` falls back to copying where
+# it cannot clone, so it runs only when both sit on one APFS volume;
+# elsewhere `--reflink=always` fails rather than copy, and the partial
+# copy goes. Either way, without a clone cargo builds from nothing.
+clone_target() {
+  local wt=$1 cloned=false
+  [[ -d $main/target && ! -e $wt/target ]] || return 0
+  if [[ $(uname) == Darwin ]]; then
+    one_apfs_volume "$main" "$wt" && cp -c -R "$main/target" "$wt/target" 2>/dev/null &&
+      cloned=true
+  else
+    cp -R --reflink=always "$main/target" "$wt/target" 2>/dev/null && cloned=true
+  fi
+  if $cloned; then
+    say "cloned the main checkout's target/ (copy-on-write): cargo builds only what the branch changed"
+  else
+    rm -rf "$wt/target"
+  fi
+}
+
+# Whether two macOS paths sit on one APFS volume, where clonefile works.
+one_apfs_volume() {
+  [[ $(stat -f %d "$1") == $(stat -f %d "$2") ]] &&
+    diskutil info "$(df "$1" | awk 'NR == 2 { print $1 }')" 2>/dev/null |
+    grep -q 'Type (Bundle): *apfs'
+}
+
 cmd_new() {
   local name=${1:?usage: pando-dev new <name> [<from>]} from=${2:-main}
   # A branch's slashes become `+`, as pando names its own worktrees.
@@ -141,6 +171,7 @@ cmd_new() {
     ln -s "$main/$item" "$wt/$item"
     grep -qxF "/$item" "$exclude" 2>/dev/null || echo "/$item" >>"$exclude"
   done
+  clone_target "$wt"
   say "made $wt on branch $name, from $from"
   say "next: work and commit there; \`pando-dev use $name\` makes it the \`pando\` on PATH"
   echo "$wt"

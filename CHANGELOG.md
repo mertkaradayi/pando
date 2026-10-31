@@ -26,6 +26,12 @@ may change behaviour.
   mouse (option in iTerm2); `[ui] mouse = false` in
   `~/.pando/config.toml` leaves it to the terminal, and the setup
   screen always does, so its prompt can be selected and pasted.
+- `scripts/dev new`, for contributors: a branch's worktree starts with
+  the main checkout's `target`, cloned copy-on-write, so it builds only
+  pando and none of its dependencies again. Only ever a clone: on macOS
+  only where both sit on one APFS volume (`cp -c` would copy
+  elsewhere), on Linux only as a reflink; otherwise cargo builds from
+  nothing, as before.
 - `scripts/dev use release`, for contributors: `pando` is the release
   you installed again, Homebrew's or the install script's, after
   `use <branch>` made it a branch's build. `pando update` on a branch's
