@@ -174,6 +174,7 @@
   const url = wt => `http://localhost:${wt.ports.web}`;
   const age = s => (s < 60 ? `${Math.floor(s)}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`);
   const glyph = wt => (wt.busy || wt.st === 'starting' ? ['◌', 'g'] : wt.st === 'running' ? ['●', 'gr'] : wt.st === 'failed' ? ['✗', 'rd'] : ['○', 'd']);
+  function tell(text) { if (live) live.textContent = text; }
   function say(text, icon = '›', cls = 'g') { S.msg = { text, icon, cls, t: now() }; S.msgs.unshift(text); S.msgs.length = Math.min(S.msgs.length, 50); if (live && AP.user) live.textContent = text; S.dirty = true; }
   function setCap(text, cmd) { S.cap = { text, cmd, t: now() }; }
 
@@ -241,7 +242,15 @@
     // a pending double press
     if (S.armed && S.armed.key !== k) { S.armed = null; if (k === 'esc') { say('cancelled'); return; } }
     if (ov) return overlayKey(ov, k, wt);
+    if (S.leader) {
+      const at = S.leader; S.leader = 0;
+      if (t - at < 3 && k === 'g') return say('space g: the git menu — fetch, pull, rebase or merge, the commands shown first — in the real one');
+      if (t - at < 3 && k === 'p') return say(wt.pr ? `space p opens ${wt.pr.replace('◍ ', '')} on GitHub — in the real one` : `${wt.branch} has no pull request — p lists the open ones`);
+    }
     switch (k) {
+      case ' ': S.leader = t; return say('space g opens the git menu — in the real one');
+      case '+': return say('+ marks rows, and s x r d then act on every marked one — in the real one');
+      case ',': return say(', sorts the list: by PR, newest first, last run first, by name — in the real one');
       case 'j': case '↓': S.sel = Math.min(vis().length - 1, S.sel + 1); break;
       case 'k': case '↑': S.sel = Math.max(0, S.sel - 1); break;
       case 'g': S.sel = 0; break;
@@ -250,6 +259,7 @@
         if (wt.busy) return say(`already busy ${wt.busy.what} ${wt.branch}`);
         if (wt.main) { if (wt.st === 'stopped') start(wt, 'shared'); else say(`${wt.branch} is the main checkout, on the project's own services — r restarts it`); return; }
         S.ov = { type: 'mode', sel: ['shared', 'namespaced', 'isolated'].indexOf(wt.st === 'stopped' ? wt.last : wt.mode) };
+        tell(`Choose a mode for ${wt.branch}: shared, namespaced or isolated. Up and down move, enter starts it`);
         return;
       case 's': if (wt.busy) return; if (wt.st !== 'stopped') return say(`${wt.branch} is already running — ${url(wt)}`); start(wt, wt.last); return;
       case 'i': case 'S': {
@@ -287,8 +297,8 @@
       case 'O': case 'C': if (!wt.public) return say(`${wt.branch} is not shared — t shares it`); if (k === 'C') copy(PUBLIC, `copied ${PUBLIC}`); else say(`opened ${PUBLIC} (in your terminal this opens your browser)`); return;
       case 'c': if (wt.st !== 'running') return say(`${wt.branch} is not running — s starts it`); copy(url(wt), `copied ${url(wt)}`); return;
       case 'y': { const p = wt.main ? ROOT.replace('/Users/you', '~') : `~/.pando/projects/${PID}/worktrees/${wt.dir}`; copy(p, `copied ${p}`); setCap('Where it lives.', `cd "$(pando path ${wt.branch})"`); return; }
-      case 'n': S.ov = { type: 'new', text: '', sel: 0 }; return;
-      case 'p': S.ov = { type: 'prs', q: '', sel: 0 }; return;
+      case 'n': S.ov = { type: 'new', text: '', sel: 0 }; tell('New worktree: type a branch, enter makes it'); return;
+      case 'p': S.ov = { type: 'prs', q: '', sel: 0 }; tell('Open pull requests: type to filter, enter makes a worktree for one, escape cancels'); return;
       case 'd': if (wt.busy) return say(`already busy ${wt.busy.what} ${wt.branch}`); if (wt.main) return say(`${wt.branch} is the main checkout — pando runs it, but never removes it`, '✗', 'rd'); S.ov = { type: 'remove' }; return;
       case 'tab': wt.proc = (wt.proc + 1) % 2; return;
       case '?': S.ov = { type: 'help', scroll: 0 }; return;
@@ -511,10 +521,10 @@
     G.segs(0, 0, [[' pando', 'w b'], [' my-app', ''], [' · ', 'd'], ['main', ''], [' · ', 'd'], [`${n} worktrees  `, ''], ['●', 'gr'], [` ${up} running`, ''], [' · shared: ', 'd'], ['mariadb ', ''], ['●', 'gr'], [' up', 'd']]);
   }
   function footer(G) {
-    const wt = cur(), running = wt && wt.st !== 'stopped';
+    const wt = cur(), running = wt && wt.st !== 'stopped', pr = wt && wt.pr ? [['space p', 'open PR']] : [];
     const H = running
-      ? [['j/k', 'move', 1], ['l', 'logs', 1], ['x', 'stop', 1], ['⏎', 'mode'], ['r', 'restart'], ['o', 'open'], ['c', 'copy url'], ['t', 'share'], ...(wt.public ? [['O', 'public'], ['C', 'copy public']] : []), ['tab', 'process'], ['!', 'shell'], ['e', 'edit'], ['n', 'new'], ['/', 'filter'], ['?', 'help', 1], ['q', 'quit', 1]]
-      : [['j/k', 'move', 1], ['⏎', 'start', 1], ['i', 'isolated'], ['l', 'logs'], ['!', 'shell'], ['e', 'edit'], ['n', 'new'], ['d', 'remove'], ['/', 'filter'], ['?', 'help', 1], ['q', 'quit', 1]];
+      ? [['j/k', 'move', 1], ['l', 'logs', 1], ['x', 'stop', 1], ['⏎', 'mode'], ['r', 'restart'], ['space g', 'git'], ...pr, ['o', 'open'], ['c', 'copy url'], ['t', 'share'], ...(wt.public ? [['O', 'public'], ['C', 'copy public']] : []), ['tab', 'process'], ['!', 'shell'], ['e', 'edit'], ['n', 'new'], ['+', 'mark'], ['/', 'filter'], ['?', 'help', 1], ['q', 'quit', 1]]
+      : [['j/k', 'move', 1], ['⏎', 'start', 1], ['space g', 'git'], ...pr, ['i', 'isolated'], ['l', 'logs'], ['!', 'shell'], ['e', 'edit'], ['n', 'new'], ['d', 'remove'], ['+', 'mark'], ['/', 'filter'], ['?', 'help', 1], ['q', 'quit', 1]];
     const len = arr => arr.reduce((a, h, i) => a + h[0].length + 1 + h[1].length + (i ? 3 : 0), 1);
     const list = H.slice();
     while (len(list) > G.w) { let j = -1; for (let i = list.length - 1; i >= 0; i--) if (!list[i][2]) { j = i; break; } if (j < 0) break; list.splice(j, 1); }
@@ -701,7 +711,8 @@
     ['r', 'restart it: r twice when it runs, once when stopped starts it'], ['P', 'restart only the ▸ process (tab picks it; P twice)'], ['o', 'open its URL in the browser'], ['t', 'share it publicly, or stop sharing (asks first)'],
     ['O', 'open its public URL'], ['c', 'copy its local URL'], ['C', 'copy its public URL'], ['y', 'copy its path'], ['!', 'a shell in it (a tmux window inside tmux)'], ['e', 'open it in $VISUAL / $EDITOR'],
     ['l', 'open the log viewer'], ['PgUp PgDn', 'scroll the log preview'], ['tab', 'preview the next process\'s log'], ['n', 'new worktree'], ['p', 'open pull requests: ⏎ makes a worktree for one'], ['d', 'remove it (never the main checkout)'],
-    ['/', 'filter by branch or name'], ['m', 'messages: what pando said, in full'], ['a', 'copy the setup prompt, for your coding agent'], ['v', 'test the project\'s settings with `pando check`'],
+    ['+', 'mark it, or unmark it, and move down: s x r d then act on every marked row'], ['space g', 'the git menu: fetch, pull, rebase or merge it — shows the commands first'],
+    ['space p', 'open its pull request on GitHub (the row\'s #n)'], ['/', 'filter by branch or name'], [',', 'sort the list: by PR, newest first, last run first, by name (saved)'], ['m', 'messages: what pando said, in full'], ['a', 'copy the setup prompt, for your coding agent'], ['v', 'test the project\'s settings with `pando check`'],
     ['T', 'pick a colour theme'], ['R', 'refresh now'], ['?', 'this help'], ['q esc', 'quit (here: hand the keyboard back)'], ['ctrl-c', 'quit from anywhere']];
   function help(G, ov) {
     const room = G.h - 6;
@@ -853,7 +864,7 @@
     renderMissions();
     if (MISSIONS.every(m => M.done[m.id])) {
       S.celebrate = now();
-      setTimeout(() => showNote(['That’s pando.', 'Five keys here, five commands in your terminal. Every branch you work on, alive at once, and nothing written into your checkout. Press <kbd>?</kbd> for every key.', 'pando new · start --isolated · logs · share', false]), 2600);
+      setTimeout(() => showNote(['That’s pando.', 'Five keys here, five commands in your terminal. Every branch you work on, alive at once. Press <kbd>?</kbd> for every key.', 'pando new · start --isolated · logs · share', false]), 2600);
     }
   }
   function renderMissions() {
@@ -1019,17 +1030,16 @@
   function onKey(e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Tab') return; // Tab always moves focus on
-    if ((e.key === 'Escape' || e.key === 'q') && !S.ov && !S.armed && AP.user) {
+    if ((e.key === 'Escape' || e.key === 'q') && (!AP.user || (!S.ov && !S.armed))) {
       e.preventDefault();
-      say('q quits the real one; here it hands the keyboard back');
+      if (AP.user) say('q quits the real one; here it hands the keyboard back'); else tell('The keyboard is back with the page');
       const b = keysEl.querySelector('button[tabindex="0"]') || keysEl.querySelector('button'); if (b) b.focus();
       kickLoop();
       return;
     }
     const k = MAP[e.key] || (e.key.length === 1 ? e.key : null);
     if (!k) return;
-    if (k === ' ' && !(S.ov && (S.ov.type === 'new' || S.ov.type === 'prs'))) return;
-    e.preventDefault();
+    e.preventDefault(); // space included: here it is the leader key, never a page scroll
     takeOver(); key(k); flashKey(k); kickLoop();
   }
   scr.addEventListener('keydown', onKey);
