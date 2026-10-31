@@ -253,6 +253,108 @@ pub fn ipv6_loopback_available() -> bool {
     std::net::TcpListener::bind(("::1", 0)).is_ok()
 }
 
+/// A loopback port nothing answers on, held for as long as this lives.
+///
+/// Bound on 127.0.0.1, and on ::1 where there is one, and never listened
+/// on: a connection to it is refused, and nothing else can take it in the
+/// meantime — neither another test's listener nor the OS handing out an
+/// ephemeral port — which a port bound once and let go cannot promise.
+/// Under a full run another test bound such a port between the two, and
+/// "nothing answers" failed for want of anything wrong.
+pub struct RefusedPort {
+    pub port: u16,
+    _held: Vec<std::os::fd::OwnedFd>,
+}
+
+pub fn refused_port() -> RefusedPort {
+    for _ in 0..32 {
+        let (v4, port) = bound_unlistened(false, 0).expect("bind a socket on 127.0.0.1");
+        match bound_unlistened(true, port) {
+            Ok((v6, _)) => {
+                return RefusedPort {
+                    port,
+                    _held: vec![v4, v6],
+                };
+            }
+            // Taken on ::1 alone: another port.
+            Err(e) if e.raw_os_error() == Some(libc::EADDRINUSE) => continue,
+            // No IPv6 loopback, so no connection over it to refuse.
+            Err(_) => {
+                return RefusedPort {
+                    port,
+                    _held: vec![v4],
+                };
+            }
+        }
+    }
+    panic!("no loopback port could be held on both 127.0.0.1 and ::1");
+}
+
+#[test]
+fn a_refused_port_is_refused_and_nobody_else_can_take_it() {
+    let refused = refused_port();
+    assert!(!crate::ports::something_is_listening(refused.port));
+    assert!(
+        std::net::TcpListener::bind(("127.0.0.1", refused.port)).is_err(),
+        "held"
+    );
+}
+
+/// A TCP socket bound to `port` (0: any) on the IPv4 or IPv6 loopback and
+/// not listening, with the port it got. `std` binds only to listen.
+fn bound_unlistened(v6: bool, port: u16) -> std::io::Result<(std::os::fd::OwnedFd, u16)> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let family = if v6 { libc::AF_INET6 } else { libc::AF_INET };
+    // SAFETY: plain socket calls on a descriptor this function owns; every
+    // address handed over is a zeroed struct of the size passed with it.
+    unsafe {
+        let fd = libc::socket(family, libc::SOCK_STREAM, 0);
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let owned = OwnedFd::from_raw_fd(fd);
+        // Never inherited: a process another test starts would hold the
+        // port for as long as it runs.
+        if libc::fcntl(owned.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut storage: libc::sockaddr_storage = std::mem::zeroed();
+        let len = if v6 {
+            let addr = &mut *(&mut storage as *mut _ as *mut libc::sockaddr_in6);
+            addr.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+            addr.sin6_port = port.to_be();
+            addr.sin6_addr.s6_addr = std::net::Ipv6Addr::LOCALHOST.octets();
+            std::mem::size_of::<libc::sockaddr_in6>()
+        } else {
+            let addr = &mut *(&mut storage as *mut _ as *mut libc::sockaddr_in);
+            addr.sin_family = libc::AF_INET as libc::sa_family_t;
+            addr.sin_port = port.to_be();
+            addr.sin_addr.s_addr = u32::from(std::net::Ipv4Addr::LOCALHOST).to_be();
+            std::mem::size_of::<libc::sockaddr_in>()
+        } as libc::socklen_t;
+        let address = &storage as *const _ as *const libc::sockaddr;
+        if libc::bind(owned.as_raw_fd(), address, len) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let mut got: libc::sockaddr_storage = std::mem::zeroed();
+        let mut got_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        if libc::getsockname(
+            owned.as_raw_fd(),
+            &mut got as *mut _ as *mut libc::sockaddr,
+            &mut got_len,
+        ) != 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        let port = if v6 {
+            (*(&got as *const _ as *const libc::sockaddr_in6)).sin6_port
+        } else {
+            (*(&got as *const _ as *const libc::sockaddr_in)).sin_port
+        };
+        Ok((owned, u16::from_be(port)))
+    }
+}
+
 /// The quick-tunnel URL the fake provider publishes.
 pub const FAKE_TUNNEL_URL: &str = "https://fake-tunnel-for-tests.trycloudflare.com";
 

@@ -20,11 +20,13 @@ mod keymap;
 mod launch;
 mod log_keys;
 mod log_view;
+mod marks;
 mod merged;
 mod mouse;
 mod operations;
 mod pending;
 mod remedies;
+mod removing;
 mod setup;
 mod setup_row;
 mod sort;
@@ -45,6 +47,7 @@ pub use launch::{
     Launch, LaunchEnv, LaunchRequest, is_terminal_editor, plan_editor, plan_shell, said_after,
 };
 pub use log_view::{LOG_VIEWER_CAPACITY, LineInspect, LogFilter, LogView, SearchMode, SearchState};
+pub use marks::MarkedRemoval;
 pub use merged::{ALL_SOURCE, MergedTail, SOURCE_SEPARATOR, ViewTail, strip_source};
 pub use mouse::{Clicked, Hits};
 pub use pending::{AwaitingReady, PendingAction, PendingKind, PendingOutcome, SPINNER_FRAMES};
@@ -58,7 +61,7 @@ pub use themes::ThemeState;
 use anyhow::Result;
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::ListState;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -291,6 +294,9 @@ pub struct App {
     pub sort: ListSort,
     pub filter: String,
     pub filtered_indices: Vec<usize>,
+    /// The worktrees `+` marked, by name: `s` `x` `r` and `d` act on all
+    /// of them while there are any. Dropped when a worktree goes.
+    pub marks: BTreeSet<String>,
     pub mode: Mode,
     pub modal: Option<Modal>,
     /// The first press of a key that asks for a second.
@@ -316,6 +322,10 @@ pub struct App {
     pub queued_questions: VecDeque<QueuedQuestion>,
     /// The actions in flight, oldest first, at most one per worktree.
     pub pending: Vec<PendingAction>,
+    /// Where each removal the last refresh found marked stands — `pando
+    /// rm` in another pane, or one a quit interrupted — read on the
+    /// refresh worker, never in a paint.
+    pub removals: BTreeMap<String, actions::RemovalState>,
     /// Announced reads of git state in flight: the first, and one for the
     /// worktrees each discovery finds, which can overlap. The header says
     /// `reading git` while there is one.
@@ -345,6 +355,9 @@ pub struct App {
     /// dead half is said once and not on every refresh.
     pub silence_told: std::collections::HashSet<(String, u16)>,
     pub should_quit: bool,
+    /// `q` twice cancelled the starts in flight: pando quits as soon as
+    /// each has run its undo.
+    pub quitting: bool,
     pub tick: u32,
     /// Where the last frame put what the mouse acts on. Written by the
     /// paint, read by the mouse.
@@ -433,6 +446,7 @@ impl App {
             sort,
             filter: String::new(),
             filtered_indices: Vec::new(),
+            marks: BTreeSet::new(),
             mode: Mode::Normal,
             modal: None,
             armed: None,
@@ -444,6 +458,7 @@ impl App {
             select_on_arrival: None,
             queued_questions: VecDeque::new(),
             pending: Vec::new(),
+            removals: BTreeMap::new(),
             enriching: 0,
             git_refreshing: false,
             commit_seen: HashMap::new(),
@@ -452,6 +467,7 @@ impl App {
             deaths_told: HashMap::new(),
             silence_told: std::collections::HashSet::new(),
             should_quit: false,
+            quitting: false,
             tick: 0,
             hits: Hits::default(),
             last_click: None,
@@ -684,6 +700,11 @@ impl App {
                 self.adopt_config(*config);
                 false
             }
+            AppEvent::Removals(removals) => {
+                let changed = *removals != self.removals;
+                self.removals = *removals;
+                changed
+            }
             AppEvent::GitRead(read) => {
                 let (name, read) = *read;
                 self.git_read_arrived(&name, read)
@@ -826,6 +847,10 @@ impl App {
                 self.handle_remove_key(key, name, created_by_pando);
                 return;
             }
+            Some(Modal::RemoveMarked { names }) => {
+                self.handle_remove_marked_key(key, names);
+                return;
+            }
             Some(Modal::Create {
                 input,
                 branches,
@@ -937,10 +962,12 @@ impl App {
         match key.code {
             // Esc unwinds a kept filter before it quits: the filter line
             // says `esc clears`, and quitting instead loses the session.
+            // The marks next, so an esc meant for the filter keeps them.
             KeyCode::Esc if !self.filter.is_empty() => {
                 self.filter.clear();
                 self.refilter();
             }
+            KeyCode::Esc if !self.marks.is_empty() => self.clear_marks(),
             KeyCode::Char('q') | KeyCode::Esc => self.quit(key.code),
             KeyCode::Char('j') | KeyCode::Down => self.move_cursor(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_cursor(-1),
@@ -952,6 +979,7 @@ impl App {
             KeyCode::Char('n') => self.open_create(),
             KeyCode::Char('p') => self.open_pull_requests(),
             KeyCode::Char('d') => self.open_remove(),
+            KeyCode::Char('+') => self.toggle_mark(),
             // The leader, as in neovim: everything that moves the branch
             // is `space g`, and the menu shows the commands before any run.
             KeyCode::Char(' ') => self.leader = true,
@@ -962,6 +990,11 @@ impl App {
             // a curl, a chat. `C` is the public one, and never stands in.
             KeyCode::Char('c') => self.copy_selected_url(),
             KeyCode::Char('C') => self.copy_selected_public_url(),
+            // With rows marked, the keys that make sense on several at
+            // once act on every marked one; the rest stay the cursor's.
+            KeyCode::Char('s') if !self.marks.is_empty() => self.start_marked(),
+            KeyCode::Char('x') if !self.marks.is_empty() => self.stop_marked(),
+            KeyCode::Char('r') if !self.marks.is_empty() => self.restart_marked(),
             KeyCode::Char('s') => self.start_selected(),
             // The key pressed on a row without thinking: which services
             // it runs on, with what it already does under the cursor.
@@ -1031,27 +1064,65 @@ impl App {
     /// whose undo then never runs — so with one in flight `q` asks for a
     /// second press, and esc, which cancels everywhere else, only says so.
     /// ctrl-c still quits at once, whatever is in flight.
+    ///
+    /// A start or a restart in flight is cancelled by the second `q`
+    /// rather than abandoned, and pando quits once each has run its undo:
+    /// abandoned, a switch to isolated left containers up that its record
+    /// does not say are isolated. A cancel lands at the start's next safe
+    /// point, so a hook it is running finishes first; a `q` meanwhile
+    /// quits at once. Anything else in flight is abandoned, as before.
     fn quit(&mut self, key: KeyCode) {
+        if self.quitting && key == KeyCode::Char('q') {
+            self.should_quit = true;
+            return;
+        }
         let Some(first) = self.pending.first() else {
             self.should_quit = true;
             return;
         };
         let name = first.name.clone();
-        let doing = self
-            .pending
-            .iter()
-            .map(|p| format!("{} {}", p.kind.verb(), p.label))
-            .collect::<Vec<_>>()
-            .join(" and ");
+        let listed = |cancels: bool| {
+            self.pending
+                .iter()
+                .filter(|p| p.cancel.is_some() == cancels)
+                .map(|p| match cancels {
+                    true => format!("the {} of {}", p.kind.noun(), p.label),
+                    false => format!("{} {}", p.doing(), p.label),
+                })
+                .collect::<Vec<_>>()
+                .join(" and ")
+        };
+        let (cancels, abandons) = (listed(true), listed(false));
+        let what = match (cancels.is_empty(), abandons.is_empty()) {
+            (true, _) => format!("abandon {abandons} and quit"),
+            (false, true) => format!("cancel {cancels} and quit once it is undone"),
+            (false, false) => {
+                format!("cancel {cancels}, abandon {abandons}, and quit once it is undone")
+            }
+        };
         if key == KeyCode::Esc {
-            self.set_prompt(format!(
-                "{doing} is in flight — q twice abandons it and quits"
-            ));
+            self.set_prompt(match cancels.is_empty() {
+                true => format!("{abandons} is in flight — q twice abandons it and quits"),
+                false => format!("q twice would {what}"),
+            });
             return;
         }
-        if self.pressed_again('q', &name, &format!("abandon {doing} and quit")) {
-            self.should_quit = true;
+        if !self.pressed_again('q', &name, &what) {
+            return;
         }
+        if cancels.is_empty() {
+            self.should_quit = true;
+            return;
+        }
+        for pending in &self.pending {
+            if let Some(cancel) = &pending.cancel {
+                cancel.cancel();
+            }
+        }
+        self.quitting = true;
+        self.set_status(format!(
+            "cancelling {cancels} — pando quits once it is undone · q quits now"
+        ));
     }
 
     fn handle_filter_key(&mut self, key: KeyEvent) {
@@ -1750,6 +1821,7 @@ impl App {
             sort,
             filter: String::new(),
             filtered_indices: Vec::new(),
+            marks: BTreeSet::new(),
             mode: Mode::Normal,
             modal: None,
             armed: None,
@@ -1761,6 +1833,7 @@ impl App {
             select_on_arrival: None,
             queued_questions: VecDeque::new(),
             pending: Vec::new(),
+            removals: BTreeMap::new(),
             enriching: 0,
             git_refreshing: false,
             commit_seen: HashMap::new(),
@@ -1769,6 +1842,7 @@ impl App {
             deaths_told: HashMap::new(),
             silence_told: std::collections::HashSet::new(),
             should_quit: false,
+            quitting: false,
             tick: 0,
             hits: Hits::default(),
             last_click: None,

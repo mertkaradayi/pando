@@ -46,6 +46,12 @@ pub const LIST_KEYS: &[KeyHelp] = &[
         "first / last",
     ),
     key(
+        "+",
+        &[KeyCode::Char('+')],
+        "mark it, or unmark it, and move down: s x r d then act on every marked row, the \
+         other keys on the cursor's",
+    ),
+    key(
         "⏎",
         &[KeyCode::Enter],
         "choose its mode — shared, namespaced (experimental), isolated — and start it, or \
@@ -54,7 +60,7 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key(
         "s",
         &[KeyCode::Char('s')],
-        "start it, in the mode it last ran in",
+        "start it, in the mode it last ran in — with rows marked, every marked one",
     ),
     key(
         "i",
@@ -66,7 +72,12 @@ pub const LIST_KEYS: &[KeyHelp] = &[
         &[KeyCode::Char('S')],
         "start it shared: the project's own services (asks when it runs otherwise)",
     ),
-    key("x", &[KeyCode::Char('x')], "stop it (x twice when it runs)"),
+    key(
+        "x",
+        &[KeyCode::Char('x')],
+        "stop it (x twice when it runs), or cancel the start in flight on it — with rows \
+         marked, every marked one",
+    ),
     key(
         "X",
         &[KeyCode::Char('X')],
@@ -75,7 +86,8 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key(
         "r",
         &[KeyCode::Char('r')],
-        "restart it: r twice when it runs, once when stopped starts it",
+        "restart it: r twice when it runs, once when stopped starts it — with rows marked, \
+         every marked one",
     ),
     key(
         "P",
@@ -122,7 +134,7 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key(
         "d",
         &[KeyCode::Char('d')],
-        "remove it (never the main checkout)",
+        "remove it (never the main checkout) — with rows marked, every marked one, in one dialog",
     ),
     key(
         "space g",
@@ -158,7 +170,12 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key("T", &[KeyCode::Char('T')], "pick a colour theme"),
     key("R", &[KeyCode::Char('R')], "refresh now"),
     key("?", &[KeyCode::Char('?')], "this help"),
-    key("q esc", &[KeyCode::Char('q'), KeyCode::Esc], "quit"),
+    key(
+        "q esc",
+        &[KeyCode::Char('q'), KeyCode::Esc],
+        "quit — esc first clears the filter, then unmarks every row; with a start in flight, \
+         q twice cancels it and quits once it is undone",
+    ),
     key("ctrl-c", &[], "quit from anywhere"),
 ];
 
@@ -171,9 +188,21 @@ pub const LEADER_KEYS: &[KeyHelp] = &[
 
 /// What the marks in a list row mean, shown under the keys.
 pub const LIST_LEGEND: &[(&str, &str)] = &[
+    (
+        "+",
+        "marked with + — s x r d act on every marked row; esc unmarks them all",
+    ),
     ("●", "running: the dev server is up"),
     ("◌", "starting, or something is being done to it"),
     ("✗", "failed — l shows the log that says why"),
+    (
+        "removing",
+        "another pando is removing it — s x r d leave it alone until it is gone",
+    ),
+    (
+        "rm interrupted",
+        "a removal stopped half way — d finishes it; nothing starts it meanwhile",
+    ),
     ("○", "stopped — s starts it"),
     (
         "◍ #n",

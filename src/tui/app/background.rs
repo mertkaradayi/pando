@@ -71,6 +71,10 @@ pub enum AppEvent {
     SetupTried(Box<Result<super::setup::Tried, String>>),
     /// Where a checkout stands, for the git menu opened on it.
     GitRead(Box<(String, actions::git::GitRead)>),
+    /// Where each removal the last read marks stands: see
+    /// [`super::removing`]. Sent after every refresh and discovery, empty
+    /// once none is marked.
+    Removals(Box<BTreeMap<String, actions::RemovalState>>),
 }
 
 /// One consistent read of the repository, taken off the UI thread.
@@ -297,6 +301,7 @@ impl App {
         self.main = Some(snapshot.main);
         self.default_base = snapshot.default_base;
         self.created_by_pando = snapshot.created_by_pando;
+        self.forget_gone_marks();
         // Through the same door as the refresh: the full refresh a
         // discovery runs is as likely as the quick one to be the read
         // that first finds a process dead.
@@ -432,6 +437,9 @@ impl App {
         let selected = self.selected_worktree().map(|w| w.name.clone());
         thread::spawn(move || {
             let quick = refresh_if_needed(&paths);
+            // After the refresh, which may have held the lock: this asks
+            // for it only for a moment, and never waits.
+            let removals = super::removing::removals_in(&paths, &quick.refreshed.state);
             // Before the state is handed over: probing is a TCP connect
             // per service, and it has no business on the UI thread or in
             // a paint.
@@ -451,6 +459,7 @@ impl App {
                     .collect(),
             };
             let _ = tx.send(AppEvent::Refreshed(Box::new(quick)));
+            let _ = tx.send(AppEvent::Removals(Box::new(removals)));
             // Sent when empty too: a worktree whose private services were
             // just taken down must lose their rows, and an answer that is
             // the same as the last one costs no repaint.
@@ -480,7 +489,12 @@ impl App {
         };
         thread::spawn(move || {
             let result = snapshot(&paths, known_base, true).map_err(|e| format!("{e:#}"));
+            let removals = match &result {
+                Ok(snapshot) => super::removing::removals_in(&paths, &snapshot.state),
+                Err(_) => BTreeMap::new(),
+            };
             let _ = tx.send(AppEvent::Discovered(Box::new(result)));
+            let _ = tx.send(AppEvent::Removals(Box::new(removals)));
         });
     }
 

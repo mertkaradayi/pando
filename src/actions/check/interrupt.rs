@@ -13,9 +13,10 @@
 /// half-filled worktree. A second signal of the same kind
 /// ends pando at once, as it would have without the handler: somebody
 /// pressing Ctrl-C twice means it, and `pando check` sweeps whatever that
-/// leaves the next time it runs. A hook the check runs in pando's own
-/// process group gets a terminal's Ctrl-C itself and ends; one that a
-/// `kill` of pando alone does not reach runs to its end first.
+/// leaves the next time it runs. No hook starts once it has been told,
+/// and one already running is stopped with it: in front of a terminal the
+/// hook shares pando's group and gets the Ctrl-C itself; anywhere else it
+/// leads a group of its own, which pando stops (`hooks::run`).
 pub fn catch_check_interrupts() {
     crate::platform::signals::catch_interrupts();
 }

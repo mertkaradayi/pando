@@ -410,14 +410,16 @@ fn in_a_set(entry: &PorcelainEntry, main: &Path) -> bool {
 fn discover_sets(project: &ProjectRef) -> Result<Discovery> {
     let mut mains = Vec::new();
     let mut sets: Vec<(PathBuf, Vec<Worktree>)> = Vec::new();
-    for repo in &project.repos {
-        let root = project.root.join(repo);
-        let mut entries = parse_porcelain(&porcelain_text(&root)?);
+    for (repo, listed) in each_repo(project, porcelain_text) {
+        let mut entries = parse_porcelain(&listed?);
         if entries.is_empty() {
-            anyhow::bail!("git listed no worktrees for {}", root.display());
+            anyhow::bail!(
+                "git listed no worktrees for {}",
+                project.root.join(repo).display()
+            );
         }
         let mut main = Worktree::from_entry(entries.remove(0));
-        main.name = repo.clone();
+        main.name = repo.to_string();
         mains.push(main);
         for entry in entries {
             if entry.path.file_name() != Some(std::ffi::OsStr::new(repo)) {
@@ -448,6 +450,34 @@ fn discover_sets(project: &ProjectRef) -> Result<Discovery> {
         })
         .collect();
     in_list_order(main, worktrees)
+}
+
+/// `read` of each repository of a multi-repo project, every one on a
+/// thread of its own, the answers in the project's order of them.
+///
+/// One repository after another, a folder of five paid five `git` round
+/// trips on every discovery — the first frame's among them — and five
+/// `gh` calls, each of them pages of API calls, for its pull requests.
+fn each_repo<T: Send>(project: &ProjectRef, read: impl Fn(&Path) -> T + Sync) -> Vec<(&str, T)> {
+    std::thread::scope(|scope| {
+        let reading: Vec<_> = project
+            .repos
+            .iter()
+            .map(|repo| {
+                let (read, root) = (&read, project.root.join(repo));
+                (repo.as_str(), scope.spawn(move || read(&root)))
+            })
+            .collect();
+        reading
+            .into_iter()
+            .map(|(repo, thread)| {
+                let answer = thread
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+                (repo, answer)
+            })
+            .collect()
+    })
 }
 
 /// The branch every one of `checkouts` is on, if they are all on one.
@@ -759,44 +789,105 @@ pub fn enrich_stream(
 /// each set's directory: every repository's checkouts in them enriched
 /// against that repository's own base, and one update per set, sent once
 /// all its repositories have answered.
+///
+/// Every repository at once, each on a thread of its own with its share
+/// of `pool_cap`, and a set sent the moment the last repository it has a
+/// checkout in answers for it. One repository after another, nothing was
+/// sent until the last repository was read, so every row of the TUI
+/// waited on the slowest `git status` of the whole folder.
 fn enrich_sets(
     project: &ProjectRef,
     items: Vec<(String, PathBuf)>,
     sender: mpsc::Sender<EnrichUpdate>,
     pool_cap: usize,
 ) {
-    let mut by_set: HashMap<String, Vec<EnrichUpdate>> = HashMap::new();
-    for repo in &project.repos {
-        let root = project.root.join(repo);
-        let porcelain = porcelain_by_path(&root);
-        let listed: Vec<(String, PathBuf)> = items
-            .iter()
-            .map(|(name, dir)| (name.clone(), dir.join(repo)))
-            .filter(|(_, path)| porcelain.contains_key(&listed_key(path)))
-            .collect();
-        if listed.is_empty() {
-            continue;
-        }
-        // The base config names for it, where it names one this
-        // repository has: what `new` forked its checkouts from.
-        let base = project
-            .repo_bases
-            .get(repo)
-            .and_then(|base| first_existing_ref(&root, &[&format!("origin/{base}"), base]))
-            .or_else(|| resolve_base_branch(&root));
-        let (tx, rx) = mpsc::channel();
-        enrich_listed(&root, listed, porcelain, base, tx, pool_cap);
-        while let Ok(mut update) = rx.recv() {
-            let set = std::mem::replace(&mut update.name, repo.clone());
-            by_set.entry(set).or_default().push(update);
-        }
+    /// What a repository's thread says, in the order it says it: which
+    /// sets it has a checkout in, an update for each of them, and that it
+    /// is done.
+    enum Heard {
+        Listed(usize, Vec<String>),
+        Answered(usize, String, EnrichUpdate),
+        Done(usize),
     }
-    for (name, _) in items {
-        let repos = by_set.remove(&name).unwrap_or_default();
-        if sender.send(fold_set(name, repos)).is_err() {
-            return;
+    let repos = &project.repos;
+    let per_repo = (pool_cap / repos.len().max(1)).max(1);
+    let (tx, rx) = mpsc::channel::<Heard>();
+    std::thread::scope(|scope| {
+        for (index, repo) in repos.iter().enumerate() {
+            let (tx, items) = (tx.clone(), &items);
+            scope.spawn(move || {
+                let root = project.root.join(repo);
+                let porcelain = porcelain_by_path(&root);
+                let listed: Vec<(String, PathBuf)> = items
+                    .iter()
+                    .map(|(name, dir)| (name.clone(), dir.join(repo)))
+                    .filter(|(_, path)| porcelain.contains_key(&listed_key(path)))
+                    .collect();
+                let names = listed.iter().map(|(name, _)| name.clone()).collect();
+                let _ = tx.send(Heard::Listed(index, names));
+                if !listed.is_empty() {
+                    // The base config names for it, where it names one this
+                    // repository has: what `new` forked its checkouts from.
+                    let base = project
+                        .repo_bases
+                        .get(repo)
+                        .and_then(|base| {
+                            first_existing_ref(&root, &[&format!("origin/{base}"), base])
+                        })
+                        .or_else(|| resolve_base_branch(&root));
+                    let (updates, answered) = mpsc::channel();
+                    enrich_listed(&root, listed, porcelain, base, updates, per_repo);
+                    while let Ok(mut update) = answered.recv() {
+                        let set = std::mem::replace(&mut update.name, repo.clone());
+                        let _ = tx.send(Heard::Answered(index, set, update));
+                    }
+                }
+                let _ = tx.send(Heard::Done(index));
+            });
         }
-    }
+        drop(tx);
+
+        let mut listed: Vec<Option<Vec<String>>> = vec![None; repos.len()];
+        let mut done = vec![false; repos.len()];
+        let mut answers: HashMap<String, Vec<(usize, EnrichUpdate)>> = HashMap::new();
+        let mut sent: HashSet<String> = HashSet::new();
+        while let Ok(heard) = rx.recv() {
+            match heard {
+                Heard::Listed(index, names) => listed[index] = Some(names),
+                Heard::Answered(index, set, update) => {
+                    answers.entry(set).or_default().push((index, update));
+                }
+                Heard::Done(index) => done[index] = true,
+            }
+            // Every set no repository still owes an answer for.
+            for (name, _) in &items {
+                if sent.contains(name) {
+                    continue;
+                }
+                let owed = (0..repos.len()).any(|index| {
+                    !done[index]
+                        && listed[index]
+                            .as_ref()
+                            .is_none_or(|names| names.contains(name))
+                        && !answers
+                            .get(name)
+                            .is_some_and(|got| got.iter().any(|(by, _)| *by == index))
+                });
+                if owed {
+                    continue;
+                }
+                sent.insert(name.clone());
+                // In the project's order of its repositories, whichever
+                // answered first.
+                let mut got = answers.remove(name).unwrap_or_default();
+                got.sort_by_key(|(index, _)| *index);
+                let repos = got.into_iter().map(|(_, update)| update).collect();
+                if sender.send(fold_set(name.clone(), repos)).is_err() {
+                    return;
+                }
+            }
+        }
+    });
 }
 
 /// One update for a set from its checkouts' own: the branch they share,
@@ -1274,8 +1365,8 @@ pub fn list_project_branches(project: &ProjectRef) -> Vec<BranchEntry> {
     let mut local: std::collections::BTreeSet<String> = Default::default();
     let mut remote: std::collections::BTreeSet<String> = Default::default();
     let mut held: HashMap<String, usize> = HashMap::new();
-    for repo in &project.repos {
-        for entry in list_branches(&project.root.join(repo)) {
+    for (_, entries) in each_repo(project, list_branches) {
+        for entry in entries {
             *held.entry(entry.name.clone()).or_default() += 1;
             match entry.source {
                 BranchSource::Local => local.insert(entry.name),
@@ -1438,12 +1529,12 @@ pub fn list_project_prs(project: &ProjectRef) -> Result<Vec<PrInfo>> {
     let mut all = Vec::new();
     let mut first_error = None;
     let mut answered = false;
-    for repo in &project.repos {
-        match list_prs(&project.root.join(repo)) {
+    for (repo, listed) in each_repo(project, list_prs) {
+        match listed {
             Ok(prs) => {
                 answered = true;
                 all.extend(prs.into_iter().map(|pr| PrInfo {
-                    repo: Some(repo.clone()),
+                    repo: Some(repo.to_string()),
                     ..pr
                 }));
             }
@@ -1675,6 +1766,48 @@ mod tests {
 
     fn project_at(path: &Path) -> ProjectRef {
         ProjectRef::from_root(path).unwrap()
+    }
+
+    // A folder of repositories was read one repository after another —
+    // its listing on every discovery, its branches, its pull requests, its
+    // enrichment — so each paid the sum of them. Read together, the
+    // answers still come in the project's order of its repositories,
+    // whichever answered first.
+    #[test]
+    fn every_repository_is_read_at_once_and_answered_in_order() {
+        use std::time::{Duration, Instant};
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("product");
+        let repos = ["api", "infra", "web"];
+        for repo in repos {
+            init_repo(&root.join(repo));
+        }
+        let project =
+            ProjectRef::multi_repo(&root, repos.iter().map(|r| r.to_string()).collect()).unwrap();
+        let read = Duration::from_millis(400);
+        let began = Instant::now();
+        let answers = each_repo(&project, |checkout| {
+            // The first repository answers last.
+            let name = checkout.file_name().unwrap().to_string_lossy().to_string();
+            std::thread::sleep(match name.as_str() {
+                "api" => read,
+                _ => read / 4,
+            });
+            name
+        });
+        let took = began.elapsed();
+        assert_eq!(
+            answers,
+            vec![
+                ("api", "api".to_string()),
+                ("infra", "infra".to_string()),
+                ("web", "web".to_string())
+            ]
+        );
+        assert!(
+            took < read + read / 2,
+            "three reads took {took:?}, where the slowest is {read:?}"
+        );
     }
 
     /// A repo with one commit and a place to put linked worktrees.
@@ -1994,6 +2127,58 @@ bare
         let mut names: Vec<String> = rx.iter().map(|u| u.name).collect();
         names.sort();
         assert_eq!(names, vec!["alpha", "bravo", "charlie", "delta"]);
+    }
+
+    // A set's update is sent once every repository it has a checkout in
+    // has answered for it, and only once; its repositories are folded in
+    // the project's order of them, whichever answered first.
+    #[test]
+    fn a_folder_s_sets_get_one_update_each_with_their_repositories_in_order() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("product");
+        for repo in ["api", "web"] {
+            init_repo(&root.join(repo));
+        }
+        let project =
+            ProjectRef::multi_repo(&root, vec!["api".to_string(), "web".to_string()]).unwrap();
+        let trees = dir.path().join("trees");
+        // `feat+both` has a checkout in each repository, `feat+api` in one.
+        for (set, repos) in [("feat+both", &["api", "web"][..]), ("feat+api", &["api"])] {
+            for repo in repos {
+                let target = trees.join(set).join(repo);
+                git(
+                    &root.join(repo),
+                    &[
+                        "worktree",
+                        "add",
+                        "-b",
+                        &set.replace('+', "/"),
+                        target.to_str().unwrap(),
+                    ],
+                );
+            }
+        }
+        std::fs::write(trees.join("feat+both/web/scratch.txt"), "work\n").unwrap();
+        let items: Vec<(String, PathBuf)> = ["feat+api", "feat+both"]
+            .iter()
+            .map(|set| (set.to_string(), trees.join(set)))
+            .collect();
+
+        let (tx, rx) = mpsc::channel();
+        enrich_stream(&project, items, None, tx, 16);
+        let updates: Vec<EnrichUpdate> = rx.iter().collect();
+        let mut names: Vec<&str> = updates.iter().map(|u| u.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["feat+api", "feat+both"], "one update a set");
+        let both = updates.iter().find(|u| u.name == "feat+both").unwrap();
+        let repos: Vec<&str> = both.repos.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(repos, vec!["api", "web"]);
+        assert_eq!(both.branch.as_deref(), Some("feat/both"));
+        assert_eq!(both.dirty, Some(true), "web's checkout has work in it");
+        let api = updates.iter().find(|u| u.name == "feat+api").unwrap();
+        let repos: Vec<&str> = api.repos.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(repos, vec!["api"]);
+        assert_eq!(api.dirty, Some(false));
     }
 
     fn stream_updates(

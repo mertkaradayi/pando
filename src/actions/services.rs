@@ -17,7 +17,7 @@ use crate::state::{self, Phase, WorktreeRecord};
 use crate::template;
 
 use super::lifecycle::{DEFAULT_READY_ROLE, STOP_GRACE, process_env, reset_log};
-use super::worktree::find_worktree;
+use super::worktree::{find_worktree, refuse_while_removed};
 
 /// Stops the containers of every compose project named, leaving their
 /// volumes.
@@ -250,13 +250,19 @@ pub(super) fn docker_down_for(
     })
 }
 
-/// Runs one compose verb against every project a worktree owns, reporting
-/// the failures together. A failure `note` has words for — a daemon that
-/// is down, say — is said through `progress` instead of failing.
+/// Runs one compose verb against every project named, reporting the
+/// failures together. A failure `note` has words for — a daemon that is
+/// down, say — is said through `progress` instead of failing.
+///
+/// Every project at once, each on a thread of its own: a `docker compose
+/// stop` waits for its containers to shut down, up to compose's own ten
+/// seconds apiece, and one project after another a stop of every worktree
+/// took that for each. Together it is as long as the slowest. What is
+/// said is said in the projects' order, once they have all answered.
 fn stop_compose_projects(
     paths: &PandoPaths,
     projects: &[String],
-    run: impl Fn(&services::Compose) -> Result<()>,
+    run: impl Fn(&services::Compose) -> Result<()> + Sync,
     note: impl Fn(&str, &anyhow::Error) -> Option<String>,
     progress: &dyn Fn(&str),
 ) -> Result<()> {
@@ -264,10 +270,26 @@ fn stop_compose_projects(
         return Ok(());
     }
     let program = services::docker_program(paths);
+    let ran: Vec<Result<()>> = std::thread::scope(|scope| {
+        let running: Vec<_> = projects
+            .iter()
+            .map(|project| {
+                let (program, run) = (&program, &run);
+                scope.spawn(move || run(&services::Compose::by_project(program, project.as_str())))
+            })
+            .collect();
+        running
+            .into_iter()
+            .map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("the compose call panicked")))
+            })
+            .collect()
+    });
     let mut failures = Vec::new();
-    for project in projects {
-        let compose = services::Compose::by_project(&program, project.as_str());
-        if let Err(e) = run(&compose) {
+    for (project, ran) in projects.iter().zip(ran) {
+        if let Err(e) = ran {
             match note(project, &e) {
                 Some(note) => progress(&note),
                 None => failures.push(format!("{project}: {e:#}")),
@@ -309,6 +331,19 @@ fn compose_entries(config: &Config) -> Vec<ComposeEntry<'_>> {
             config::ServiceConfig::Native { .. } => None,
         })
         .collect()
+}
+
+/// The compose project an isolated start of `name` brings up, when this
+/// project has compose services at all: the name `plan_compose` gives it.
+pub(super) fn compose_project_of(
+    paths: &PandoPaths,
+    config: &Config,
+    name: &str,
+) -> Option<String> {
+    compose_entries(config)
+        .iter()
+        .any(|entry| !entry.include.is_empty())
+        .then(|| crate::compose::project_name(paths.project_id(), name))
 }
 
 /// Every service this project can run a private copy of, in config order.
@@ -924,6 +959,11 @@ fn bring_up_compose_services(
 
 /// Records the compose project on the service records it is about to
 /// create containers for.
+///
+/// And refuses, so nothing is brought up, where a removal of the worktree
+/// has begun since the start's first hold, or has finished and taken the
+/// record: an `up` now would make containers and a volume for a worktree
+/// that is going, with nothing left to name them once it is gone.
 fn name_compose_project(
     paths: &PandoPaths,
     name: &str,
@@ -932,8 +972,9 @@ fn name_compose_project(
 ) -> Result<()> {
     let _lock = state::lock(&paths.lock_file())?;
     let mut store = state::load(&paths.state_file())?;
+    refuse_while_removed(paths, &store, name, name, "its services were not started")?;
     let Some(record) = store.worktrees.get_mut(name) else {
-        return Ok(());
+        bail!("{name} was removed while this start was starting — its services were not started");
     };
     let mut changed = false;
     for service in record.services.iter_mut() {

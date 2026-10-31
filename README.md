@@ -338,7 +338,10 @@ pando update          update pando to the latest release, the way it was install
 
 A worktree is named by its branch (`feat/login`) or by its directory
 (`feat+login`). Inside a worktree, `start`, `stop`, `restart`, `logs`,
-`open`, `share` and `unshare` need no name.
+`open`, `share` and `unshare` need no name. `start`, `stop`, `restart` and
+`rm` take several — `pando start feat/a feat/b` — and act on them side by
+side, each said as it finishes; one that fails leaves the others, and the
+exit code is then 1.
 
 The main checkout runs too, first in every list, named the same way —
 `pando start main` — or with no name from inside it (but for `stop`,
@@ -358,13 +361,15 @@ From a script they return once everything is spawned; `--wait` and
          and start it, or switch it when it runs
 s i S    start it: as last time, isolated, or on the shared services
 l        open the log viewer
-x X      stop it, or stop everything
+x X      stop it (or cancel its start), or stop everything
 r P      restart it, or only the selected process
 o O      open its URL (or its app, where it serves no page), or the public one
 c C y    copy its local URL, its public URL, its path
 t        share it publicly, or stop sharing
 ! e      a shell in it, or open it in your editor
 n d      new worktree, remove one (never the main checkout, ⌂)
++ esc    mark rows, or unmark them all: s x r d then act on every
+         marked one at once, d in one dialog
 p        open pull requests: ⏎ makes a worktree for one
 space p  open its own pull request on GitHub (the row's #n)
 a v      copy the setup prompt, or test the setup (pando check)
@@ -393,9 +398,22 @@ services, and the chooser was the asking. The logs are `l`.
 A key that would interrupt a running worktree asks for a second press:
 `r r` restarts it, `x x` stops it, `P P` restarts one process, and `i`
 or `S` twice restarts it in the mode it already runs in. Esc takes the
-first press back. Moving a running worktree between modes with `i` or
+first press back. `x` on a worktree being started or restarted cancels
+that at once: the start stops at its next safe point, undoes what it
+had brought up, and the worktree ends stopped. `q q` with a start in
+flight cancels it the same way and quits once it is undone. Moving a running worktree between modes with `i` or
 `S`, sharing it, and removing it ask in a dialog instead. On a stopped
 worktree nothing asks.
+
+`+` marks the row under the cursor and moves down, and a `+` before
+the cursor's column shows it; `+` again unmarks it, and esc unmarks
+every row. While rows are marked, `s`, `x`, `r` and `d` act on all of
+them at once, each on its own worker: `x x` and `r r` ask once for the
+whole set, and `d` opens one dialog that says what each removal stops
+or takes with it, which only `F` removes (uncommitted changes), and
+which stay (locked, the main checkout). Every other key still acts on
+the row under the cursor. A mark stays on its worktree through a
+refresh, a re-sort or a filter, and goes with it.
 
 The list is a table with a header row: `branch`, then `changes`
 (`uncommitted` when there are uncommitted changes), `port`, `public` (`◈`

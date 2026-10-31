@@ -317,7 +317,7 @@ pub(super) fn gh_account_spans(account: Option<&GhAccount>) -> Vec<Span<'static>
 
 /// Key hints for a selected worktree that runs, most valuable first. The
 /// essential ones are never dropped.
-pub(super) const RUNNING_HINTS: [(&str, &str, bool); 16] = [
+pub(super) const RUNNING_HINTS: [(&str, &str, bool); 17] = [
     ("j/k", "move", true),
     ("l", "logs", true),
     ("x", "stop", true),
@@ -331,13 +331,14 @@ pub(super) const RUNNING_HINTS: [(&str, &str, bool); 16] = [
     ("!", "shell", false),
     ("e", "edit", false),
     ("n", "new", false),
+    ("+", "mark", false),
     ("/", "filter", false),
     ("?", "help", true),
     ("q", "quit", true),
 ];
 
 /// And for one that is stopped: what starts it, in each mode.
-pub(super) const STOPPED_HINTS: [(&str, &str, bool); 12] = [
+pub(super) const STOPPED_HINTS: [(&str, &str, bool); 13] = [
     ("j/k", "move", true),
     ("⏎", "start", true),
     ("space g", "git", false),
@@ -347,6 +348,7 @@ pub(super) const STOPPED_HINTS: [(&str, &str, bool); 12] = [
     ("e", "edit", false),
     ("n", "new", false),
     ("d", "remove", false),
+    ("+", "mark", false),
     ("/", "filter", false),
     ("?", "help", true),
     ("q", "quit", true),
@@ -354,7 +356,7 @@ pub(super) const STOPPED_HINTS: [(&str, &str, bool); 12] = [
 
 /// For a stopped worktree of a project that has nothing to run: no start
 /// key is offered, because none would start anything.
-pub(super) const NOTHING_TO_RUN_HINTS: [(&str, &str, bool); 10] = [
+pub(super) const NOTHING_TO_RUN_HINTS: [(&str, &str, bool); 11] = [
     ("j/k", "move", true),
     ("space g", "git", false),
     ("l", "logs", false),
@@ -362,6 +364,32 @@ pub(super) const NOTHING_TO_RUN_HINTS: [(&str, &str, bool); 10] = [
     ("e", "edit", false),
     ("n", "new", false),
     ("d", "remove", false),
+    ("+", "mark", false),
+    ("/", "filter", false),
+    ("?", "help", true),
+    ("q", "quit", true),
+];
+
+/// While rows are marked: the keys that act on every marked one first,
+/// then how to mark more or unmark them all.
+pub(super) const MARKED_HINTS: [(&str, &str, bool); 9] = [
+    ("s", "start", true),
+    ("x", "stop", true),
+    ("r", "restart", false),
+    ("d", "remove", true),
+    ("+", "mark", true),
+    ("esc", "unmark all", true),
+    ("j/k", "move", false),
+    ("?", "help", true),
+    ("q", "quit", false),
+];
+
+/// For a row with a start or a restart in flight: `x` cancels it.
+pub(super) const STARTING_HINTS: [(&str, &str, bool); 7] = [
+    ("j/k", "move", true),
+    ("x", "cancel", true),
+    ("l", "logs", false),
+    ("n", "new", false),
     ("/", "filter", false),
     ("?", "help", true),
     ("q", "quit", true),
@@ -414,6 +442,10 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
         );
         return;
     }
+    // While rows are marked, the footer says how many before its keys,
+    // which shed themselves to fit what that leaves.
+    let marked = marked_prefix(app);
+    let hints_width = width.saturating_sub(marked.as_ref().map_or(0, |m| text_width(&m.content)));
     let line = match app.mode {
         Mode::Filter => hint_line(
             &[
@@ -423,8 +455,19 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             ],
             width,
         ),
+        // esc clears a filter before it unmarks anything, and the filter
+        // line says so; the hint is only offered once it is true.
+        Mode::Normal if !app.marks.is_empty() => {
+            let hints: Vec<_> = MARKED_HINTS
+                .iter()
+                .copied()
+                .filter(|(key, ..)| *key != "esc" || app.filter.is_empty())
+                .collect();
+            hint_line(&hints, hints_width)
+        }
         Mode::Normal => match selected {
-            None => hint_line(&EMPTY_HINTS, width),
+            None => hint_line(&EMPTY_HINTS, hints_width),
+            Some(name) if app.start_to_cancel(&name) => hint_line(&STARTING_HINTS, hints_width),
             // A shared worktree's public URL is what gets handed out, so
             // its keys come right after the one that shared it.
             Some(name) if app.public_url_of(&name).is_some() => {
@@ -434,28 +477,47 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                     "t",
                     &[("O", "public", false), ("C", "copy public", false)],
                 );
-                hint_line(&with_pr_hint(app, hints), width)
+                hint_line(&with_pr_hint(app, hints), hints_width)
             }
             Some(name) if app.phase_of(&name).is_some() => {
-                hint_line(&with_pr_hint(app, RUNNING_HINTS.to_vec()), width)
+                hint_line(&with_pr_hint(app, RUNNING_HINTS.to_vec()), hints_width)
             }
             // Said first, in the footer's own row: what `⏎` would have
             // done, and the pane beside it says where to fix it.
             Some(_) if app.nothing_to_run => {
                 let mut line = hint_line(
                     &with_pr_hint(app, NOTHING_TO_RUN_HINTS.to_vec()),
-                    width.saturating_sub(17),
+                    hints_width.saturating_sub(17),
                 );
                 line.spans.insert(
                     0,
                     Span::styled(" nothing to run ·", Style::new().fg(yellow())),
                 );
-                truncate_line(line, width)
+                truncate_line(line, hints_width)
             }
-            Some(_) => hint_line(&with_pr_hint(app, STOPPED_HINTS.to_vec()), width),
+            Some(_) => hint_line(&with_pr_hint(app, STOPPED_HINTS.to_vec()), hints_width),
         },
     };
+    let line = match marked {
+        Some(marked) => {
+            let mut line = line;
+            line.spans.insert(0, marked);
+            truncate_line(line, width)
+        }
+        None => line,
+    };
     f.render_widget(Paragraph::new(line).style(Style::new().bg(surface())), area);
+}
+
+/// How many rows are marked, before the list's keys while any are: the
+/// footer is where the keys that act on them are.
+fn marked_prefix(app: &App) -> Option<Span<'static>> {
+    (!app.marks.is_empty() && app.mode == Mode::Normal).then(|| {
+        Span::styled(
+            format!(" {} marked ·", app.marks.len()),
+            Style::new().fg(blue()).add_modifier(Modifier::BOLD),
+        )
+    })
 }
 
 /// The key that opens the selected row's pull request, beside git's, on a

@@ -138,8 +138,10 @@ pub fn check_at(
     }
     let mut probe = probe_of(paths, config, base);
     paths.ensure_home()?;
-    // One at a time, for the whole run.
-    let Some(_lock) = state::try_lock(&paths.check_lock_file())? else {
+    // One at a time, for the whole run. Asked again for a moment while it
+    // is taken: a check that has just finished can still read as running
+    // while a child another thread forked holds a copy of its lock.
+    let Some(_lock) = state::try_lock_past_a_fork(&paths.check_lock_file())? else {
         bail!(
             "a check is already running for this project — its progress is in {}; wait for it \
              to finish",

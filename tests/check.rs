@@ -756,12 +756,20 @@ fn a_signal_ends_a_check_through_its_teardown() {
 
 // A terminal's Ctrl-C reaches the whole foreground group, so the install
 // dies of it too: the check was interrupted, not failed by its settings.
+//
+// It once sat ten minutes: the signal landed after the install's log was
+// opened and before the install was spawned, so it reached pando and not
+// the install, and the check waited out the install's `sleep 600`. pando
+// now stops the install itself, and the wait here is for the install's
+// own process rather than its log, and bounded.
 #[test]
 fn a_ctrl_c_during_the_install_records_the_check_interrupted() {
     use std::os::unix::process::CommandExt;
-    let e =
-        env(&config_running("sleep 600", "")
-            .replace("install = \"true\"", "install = \"sleep 600\""));
+    let marks = TempDir::new().unwrap();
+    let running = marks.path().join("install-pid");
+    let install = format!("echo $$ > '{}'; exec sleep 600", running.display());
+    let e = env(&config_running("sleep 600", "")
+        .replace("install = \"true\"", &format!("install = \"{install}\"")));
     let branches = e.git(&["branch", "--list"]);
     let child = e
         .command(&["check"])
@@ -770,21 +778,97 @@ fn a_ctrl_c_during_the_install_records_the_check_interrupted() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn pando");
-    e.wait_for_step("installing");
-    // The install is under way, not merely announced.
-    assert!(wait_until(Duration::from_secs(30), || {
-        e.paths.log_file(CHECK_WORKTREE, "install").exists()
-    }));
+    let pid = install_pid(&running);
     nix::sys::signal::killpg(
         nix::unistd::Pid::from_raw(child.id() as i32),
         nix::sys::signal::Signal::SIGINT,
     )
     .unwrap();
-    let out = child.wait_with_output().unwrap();
+    let out = output_within(child, Duration::from_secs(60));
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert_eq!(e.record().unwrap().outcome, CheckOutcome::Interrupted);
     assert_eq!(e.setup_state(), SetupState::Interrupted);
+    assert!(!pando::process::is_alive(pid), "the install was stopped");
     e.assert_nothing_left(&branches);
+}
+
+// An agent, a CI job or a supervisor stops pando with a `kill` of pando
+// alone, which the install in pando's group never heard: the check, told
+// to stop, waited for the install to end by itself.
+#[test]
+fn a_kill_of_pando_alone_during_the_install_stops_the_install() {
+    use std::os::unix::process::CommandExt;
+    let marks = TempDir::new().unwrap();
+    let running = marks.path().join("install-pid");
+    let install = format!("echo $$ > '{}'; exec sleep 600", running.display());
+    let e = env(&config_running("sleep 600", "")
+        .replace("install = \"true\"", &format!("install = \"{install}\"")));
+    let branches = e.git(&["branch", "--list"]);
+    // In a group of its own, never the terminal's foreground one even when
+    // the tests run in front of one: there the install shares pando's
+    // group, and gets the terminal's Ctrl-C itself.
+    let child = e
+        .command(&["check"])
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn pando");
+    let pid = install_pid(&running);
+    let began = std::time::Instant::now();
+    signal(&child, nix::sys::signal::Signal::SIGTERM);
+    let out = output_within(child, Duration::from_secs(60));
+    let took = began.elapsed();
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("the check was stopped before it finished"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(e.record().unwrap().outcome, CheckOutcome::Interrupted);
+    assert!(!pando::process::is_alive(pid), "the install was stopped");
+    assert!(took < Duration::from_secs(30), "took {took:?}");
+    e.assert_nothing_left(&branches);
+}
+
+/// The pid an install that writes `echo $$` to `file` and then `exec`s
+/// recorded: its own process, running, not merely announced.
+fn install_pid(file: &std::path::Path) -> u32 {
+    assert!(
+        wait_until(Duration::from_secs(30), || {
+            std::fs::read_to_string(file).is_ok_and(|pid| pid.ends_with('\n'))
+        }),
+        "the install never started"
+    );
+    std::fs::read_to_string(file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+/// What `child` printed once it ended — killed, and the test failed, if it
+/// has not ended within `limit`, rather than waiting on it for good.
+fn output_within(mut child: Child, limit: Duration) -> Output {
+    let deadline = std::time::Instant::now() + limit;
+    let ended = loop {
+        if child.try_wait().ok().flatten().is_some() {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    if !ended {
+        let _ = child.kill();
+        let out = child.wait_with_output().unwrap();
+        panic!(
+            "pando had not ended {limit:?} after it was told to stop: {}",
+            stderr(&out)
+        );
+    }
+    child.wait_with_output().unwrap()
 }
 
 // What a SIGKILL leaves — a worktree with a server still running in it —

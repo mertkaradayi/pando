@@ -2627,6 +2627,366 @@ fn stop_all_keeps_a_record_whose_group_it_could_not_signal() {
     );
 }
 
+// `stop` with no name and the TUI's `X` stopped one worktree after another
+// under the lock, so each dev server slow to stop cost a grace period of
+// its own: four of them, twenty seconds. Every worktree is signalled at
+// once now, and the whole stop is as long as the slowest.
+#[test]
+fn stop_all_waits_out_every_worktrees_grace_together() {
+    let fx = fixture();
+    let names: Vec<String> = (1..=4)
+        .map(|i| worktree_named(&fx, &format!("feat/slow{i}")))
+        .collect();
+    let mut store = fx.state();
+    for (i, name) in names.iter().enumerate() {
+        store
+            .worktrees
+            .get_mut(name)
+            .expect("new wrote a record")
+            .processes
+            .insert("dev".to_string(), fake_record(4_000_301 + i as i32));
+    }
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let grace = Duration::from_millis(600);
+    let began = Instant::now();
+    let stopped = stop_all_with(&fx.paths, |_| {
+        std::thread::sleep(grace);
+        Ok(())
+    })
+    .unwrap();
+    let took = began.elapsed();
+    assert_eq!(stopped, names);
+    assert!(
+        took < grace * 3,
+        "four worktrees took {took:?}, where one grace is {grace:?}"
+    );
+    let saved = fx.state();
+    for name in &names {
+        assert!(saved.worktrees[name].processes.is_empty(), "{name}");
+    }
+}
+
+// It waited for them all holding the lock, so a start, a stop or the
+// TUI's refresh of any worktree waited out the slowest grace behind it.
+// Marked first, as `stop` does, the wait runs with the lock let go, and a
+// read in it calls nothing failed.
+#[test]
+fn stop_all_waits_without_the_lock() {
+    let fx = fixture();
+    let names: Vec<String> = (1..=2)
+        .map(|i| worktree_named(&fx, &format!("feat/all{i}")))
+        .collect();
+    for (i, name) in names.iter().enumerate() {
+        live_dev(&fx, name, 4_000_431 + i as i32);
+    }
+    let seen = std::sync::Mutex::new(Vec::new());
+    let stopped = stop_all_with(&fx.paths, |pgid| {
+        let free = wait_until(Duration::from_secs(5), || {
+            state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+        });
+        let read = refresh(&fx.paths).state;
+        let running = read
+            .worktrees
+            .values()
+            .flat_map(|record| record.processes.values())
+            .all(|p| matches!(p.phase, Phase::Running { .. }));
+        seen.lock().unwrap().push((pgid, free, running));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(stopped, names);
+    let seen = seen.into_inner().unwrap();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    for (pgid, free, running) in seen {
+        assert!(free, "the lock was held through the wait of {pgid}");
+        assert!(running, "a death stop --all waits on read as failed");
+    }
+    let saved = fx.state();
+    for name in &names {
+        assert!(saved.worktrees[name].processes.is_empty(), "{name}");
+        assert!(saved.worktrees[name].stopping.is_empty(), "{name}");
+    }
+}
+
+// And their containers: each `docker compose stop` waits for its own to
+// shut down, and they were asked one project after another.
+#[test]
+fn stop_all_asks_docker_to_stop_every_project_at_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture();
+    let calls = fx.paths.home.join("docker-calls");
+    let bin = fx.paths.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("docker"),
+        format!(
+            "#!/bin/sh
+case \"$*\" in *' stop')
+  echo \"begin $*\" >> '{c}'
+  sleep 1
+               echo \"end $*\" >> '{c}' ;;
+esac
+",
+            c = calls.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("docker"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let names: Vec<String> = (1..=3)
+        .map(|i| worktree_named(&fx, &format!("feat/iso{i}")))
+        .collect();
+    let mut store = fx.state();
+    for (i, name) in names.iter().enumerate() {
+        // A stopped isolated worktree's record: the project, no pump.
+        store.worktrees.get_mut(name).unwrap().services = vec![state::ServiceRecord {
+            name: "postgres".to_string(),
+            kind: state::ServiceKind::Compose,
+            port: None,
+            pid: None,
+            pgid: None,
+            compose_project: Some(format!("pando-x-iso{i}")),
+        }];
+    }
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    stop_all_with(&fx.paths, |_| Ok(())).unwrap();
+    let lines: Vec<String> = std::fs::read_to_string(&calls)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(lines.len(), 6, "{lines:#?}");
+    let first_end = lines.iter().position(|l| l.starts_with("end ")).unwrap();
+    assert_eq!(
+        first_end, 3,
+        "every project was asked before the first one answered: {lines:#?}"
+    );
+}
+
+/// A worktree record with one live process: the test's own pid as its
+/// leader, so no sweep signals it, and `pgid` for the stop to be handed.
+fn live_dev(fx: &Fx, name: &str, pgid: i32) {
+    let mut store = fx.state();
+    let mut dev = fake_record(pgid);
+    dev.pid = std::process::id();
+    store
+        .worktrees
+        .get_mut(name)
+        .expect("new wrote a record")
+        .processes
+        .insert("dev".to_string(), dev);
+    state::save(&fx.paths.state_file(), &store).unwrap();
+}
+
+// A stop waited out its grace period under the lock, so the TUI's stops
+// of several worktrees — and two `pando stop`s in two panes — ended one
+// grace after another, and every start and refresh waited behind them.
+#[test]
+fn two_stops_of_two_worktrees_wait_out_their_grace_together() {
+    let fx = fixture();
+    let one = worktree_named(&fx, "feat/one");
+    let two = worktree_named(&fx, "feat/two");
+    live_dev(&fx, &one, 4_000_401);
+    live_dev(&fx, &two, 4_000_402);
+
+    let grace = Duration::from_millis(800);
+    let slow = |_| {
+        std::thread::sleep(grace);
+        Ok(())
+    };
+    let began = Instant::now();
+    let (a, b) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| super::lifecycle::stop_with(&fx.paths, &one, None, slow, &noop));
+        let b = scope.spawn(|| super::lifecycle::stop_with(&fx.paths, &two, None, slow, &noop));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    let took = began.elapsed();
+    assert_eq!(a.unwrap(), StopOutcome::Stopped(vec!["dev".to_string()]));
+    assert_eq!(b.unwrap(), StopOutcome::Stopped(vec!["dev".to_string()]));
+    assert!(
+        took < grace * 2 - Duration::from_millis(200),
+        "two stops took {took:?}, where one grace is {grace:?}"
+    );
+    let saved = fx.state();
+    for name in [&one, &two] {
+        assert!(saved.worktrees[name].processes.is_empty(), "{name}");
+        assert!(saved.worktrees[name].stopping.is_empty(), "{name}");
+    }
+}
+
+// While it waits, the lock is free, and the group dying is the stop's
+// doing: a read in that window does not call it failed, nor does another
+// mutation's sweep signal it again or its reconcile drop its record.
+#[test]
+fn a_stop_waits_without_the_lock_and_nothing_calls_its_process_failed() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    let dev = crate::testutil::spawn_guarded(
+        "exec sleep 30",
+        &std::env::temp_dir(),
+        &fx.paths.log_file(&name, "dev"),
+    );
+    let mut store = fx.state();
+    let mut record = fake_record(dev.pgid.as_raw());
+    record.pid = dev.pid;
+    store
+        .worktrees
+        .get_mut(&name)
+        .unwrap()
+        .processes
+        .insert("dev".to_string(), record);
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let seen = std::sync::Mutex::new(None);
+    let outcome = super::lifecycle::stop_with(
+        &fx.paths,
+        &name,
+        None,
+        |pgid| {
+            // Not at once under a full run: a fork another test makes
+            // before its exec holds a copy of the lock's file a moment.
+            let free = wait_until(Duration::from_secs(5), || {
+                state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+            });
+            crate::process::stop(pgid, Duration::from_secs(5))?;
+            // Dead now, and not yet settled: what everyone else sees.
+            let read = refresh(&fx.paths).state.worktrees[&name].processes["dev"]
+                .phase
+                .clone();
+            // And what another mutation does, under its lock.
+            let mut other = fx.state();
+            let swept = super::lifecycle::sweep_orphaned_groups(&mut other).unwrap();
+            advance_before_reconcile(&mut other);
+            let advanced = other.worktrees[&name].processes["dev"].phase.clone();
+            state::reconcile(&mut other, proc::is_alive, proc::group_alive);
+            let kept = other.worktrees[&name].processes.contains_key("dev");
+            *seen.lock().unwrap() = Some((free, read, advanced, swept, kept));
+            Ok(())
+        },
+        &noop,
+    )
+    .unwrap();
+    assert_eq!(outcome, StopOutcome::Stopped(vec!["dev".to_string()]));
+    let (free, read, advanced, swept, kept) = seen.into_inner().unwrap().expect("the stop waited");
+    assert!(free, "the lock was held through the wait");
+    for phase in [read, advanced] {
+        assert!(
+            matches!(phase, Phase::Running { .. }),
+            "a death the stop is waiting on read as {phase:?}"
+        );
+    }
+    assert!(swept.is_empty(), "{swept:?}");
+    assert!(kept, "another mutation's reconcile dropped the record");
+    let saved = fx.state();
+    assert!(saved.worktrees[&name].processes.is_empty());
+    assert!(saved.worktrees[&name].stopping.is_empty());
+}
+
+// A native server is signalled with the rest and dies under the wait as
+// they do. The read path called that a crash — "its redis exited" — and
+// forgot the record; another mutation's reconcile forgot it too, and the
+// stop then had no record to find the server's socket directory by.
+#[test]
+fn a_native_server_a_stop_waits_on_is_neither_reported_nor_forgotten() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    live_dev(&fx, &name, 4_000_421);
+    let server = crate::testutil::spawn_guarded(
+        "exec sleep 30",
+        &std::env::temp_dir(),
+        &fx.paths.log_file(&name, "redis"),
+    );
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().services = vec![state::ServiceRecord {
+        name: "redis".to_string(),
+        kind: state::ServiceKind::Native,
+        port: Some(4_321),
+        pid: Some(server.pid),
+        pgid: Some(server.pgid),
+        compose_project: None,
+    }];
+    state::save(&fx.paths.state_file(), &store).unwrap();
+    let sockets = fx.paths.service_socket_dir(&name, "redis");
+    std::fs::create_dir_all(&sockets).unwrap();
+
+    let seen = std::sync::Mutex::new(Vec::new());
+    super::lifecycle::stop_with(
+        &fx.paths,
+        &name,
+        None,
+        |pgid| {
+            if pgid != server.pgid {
+                return Ok(());
+            }
+            crate::process::stop(pgid, Duration::from_secs(5))?;
+            let read = refresh(&fx.paths);
+            // Another mutation, under its lock: a start of a sibling.
+            let _lock = state::lock(&fx.paths.lock_file()).unwrap();
+            let mut other = fx.state();
+            advance_before_reconcile(&mut other);
+            state::reconcile(&mut other, proc::is_alive, proc::group_alive);
+            state::save(&fx.paths.state_file(), &other).unwrap();
+            let kept = |s: &state::State| !s.worktrees[&name].services.is_empty();
+            *seen.lock().unwrap() = vec![
+                (read.notices.join("; "), kept(&read.state)),
+                (String::new(), kept(&other)),
+            ];
+            Ok(())
+        },
+        &noop,
+    )
+    .unwrap();
+    for (notices, kept) in seen.into_inner().unwrap() {
+        assert!(notices.is_empty(), "{notices}");
+        assert!(kept, "the server's record was forgotten under the stop");
+    }
+    let saved = fx.state();
+    let redis = &saved.worktrees[&name].services[0];
+    assert_eq!((redis.pid, redis.pgid), (None, None), "{redis:?}");
+    assert_eq!(redis.port, Some(4_321), "a stopped server keeps its port");
+    assert!(!sockets.exists(), "the stop left the socket directory");
+}
+
+// A start of the worktree in the meantime — its processes died under the
+// wait, and it spawned new ones — is not the stop's to undo.
+#[test]
+fn a_start_during_a_stops_wait_keeps_what_it_started() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    live_dev(&fx, &name, 4_000_411);
+    let outcome = super::lifecycle::stop_with(
+        &fx.paths,
+        &name,
+        None,
+        |_| {
+            // What a start writes once the old process is gone.
+            let _lock = state::lock(&fx.paths.lock_file()).unwrap();
+            let mut store = fx.state();
+            let mut new = fake_record(4_000_412);
+            new.pid = std::process::id();
+            store
+                .worktrees
+                .get_mut(&name)
+                .unwrap()
+                .processes
+                .insert("dev".to_string(), new);
+            state::save(&fx.paths.state_file(), &store).unwrap();
+            Ok(())
+        },
+        &noop,
+    )
+    .unwrap();
+    assert_eq!(outcome, StopOutcome::Stopped(Vec::new()));
+    let saved = fx.state();
+    assert_eq!(
+        saved.worktrees[&name].processes["dev"].pgid,
+        Group::from_raw(4_000_412),
+        "the start's process is kept"
+    );
+    assert!(saved.worktrees[&name].stopping.is_empty());
+}
+
 // A worktree whose processes are all gone can still be shared: the tunnel
 // outlives them. `stop` with no name is "nothing of pando's left running",
 // and it chose the worktrees to stop by their processes and services alone
@@ -2946,7 +3306,9 @@ fn a_mutation_that_sweeps_and_then_refuses_still_saves_the_sweep() {
         format!("{err:#}").contains("modified or untracked"),
         "{err:#}"
     );
-    assert!(swept(), "a refused rm forgot the group it signalled");
+    // `rm` asks git before it takes the lock, so this refusal comes before
+    // the sweep: nothing was signalled, so nothing can be forgotten.
+    assert!(!swept(), "a refused rm signalled a group");
 
     // A branch another worktree has checked out passes every check `new`
     // makes itself, and git refuses it after the sweep.
@@ -3699,6 +4061,49 @@ fn unshare_refuses_a_worktree_that_is_not_shared() {
     let name = worktree_named(&fx, "feat/one");
     let err = unshare(&fx.paths, &name).unwrap_err();
     assert!(format!("{err:#}").contains("not shared"), "{err:#}");
+}
+
+// Each half of a share gets five seconds to exit, and an unshare that held
+// the state lock through them held up every other command as long. The
+// record still names the share while it goes, and keeps naming one that
+// would not stop, for the retry.
+#[test]
+fn unshare_holds_no_state_lock_while_the_share_exits() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    let share = share_record_of(4_000_011, Some(4_000_012));
+    let plant = || {
+        let mut store = fx.state();
+        store.worktrees.get_mut(&name).unwrap().share = Some(share.clone());
+        state::save(&fx.paths.state_file(), &store).unwrap();
+    };
+
+    plant();
+    let seen = std::cell::RefCell::new(Vec::new());
+    unshare_with(&fx.paths, &name, |pgid| {
+        // Waited for, not taken at once: a fork another test makes holds a
+        // copy of a lock's descriptor until its exec.
+        let free = wait_until(Duration::from_secs(5), || {
+            state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+        });
+        let named = fx.state().worktrees[&name].share.as_ref() == Some(&share);
+        seen.borrow_mut().push((pgid, free, named));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        *seen.borrow(),
+        [
+            (share.tunnel_pgid, true, true),
+            (share.proxy_pgid.unwrap(), true, true)
+        ]
+    );
+    assert!(fx.state().worktrees[&name].share.is_none());
+
+    plant();
+    let err = unshare_with(&fx.paths, &name, |_| bail!("it would not stop")).unwrap_err();
+    assert!(format!("{err:#}").contains("could not take"), "{err:#}");
+    assert_eq!(fx.state().worktrees[&name].share, Some(share.clone()));
 }
 
 // A tunnel whose process is already gone must still unshare: the record
@@ -7965,6 +8370,83 @@ fn refresh_on_a_project_that_never_started_anything_writes_nothing() {
     );
 }
 
+// A `rm` or a stop holds the state lock for as long as a `docker compose
+// down` takes, and every `ls`, `status` and TUI frame waited all that time
+// for it. A read that finds the lock held answers from the file as it
+// stands, advanced on a copy and written nowhere — except that a death it
+// sees is not called a failure, since the holder may be the one stopping
+// it: a check whose processes `stop --all` stopped recorded itself failed.
+#[test]
+fn refresh_answers_at_once_while_another_pando_holds_the_lock() {
+    let fx = fixture();
+    let mut store = state::State::new();
+    let mut record = WorktreeRecord::new("/trees/feat+one", true);
+    // A process whose pid is long gone, and one starting with nothing to
+    // wait for that is alive: the test's own pid.
+    record
+        .processes
+        .insert("dev".to_string(), fake_record(4_000_011));
+    let mut up = fake_record(4_000_012);
+    up.pid = std::process::id();
+    up.phase = Phase::Starting { since: Utc::now() };
+    record.processes.insert("api".to_string(), up);
+    store.worktrees.insert("feat+one".to_string(), record);
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let held = state::lock(&fx.paths.lock_file()).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let paths = fx.paths.clone();
+    let began = Instant::now();
+    std::thread::spawn(move || {
+        let _ = tx.send(refresh(&paths));
+    });
+    let refreshed = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("refresh waited for a lock another pando holds");
+    let took = began.elapsed();
+    assert!(took < Duration::from_secs(2), "took {took:?}");
+    assert!(refreshed.warning.is_none(), "{:?}", refreshed.warning);
+    let answered = &refreshed.state.worktrees["feat+one"].processes;
+    assert!(
+        matches!(answered["api"].phase, Phase::Running { .. }),
+        "a process seen ready is advanced: {:?}",
+        answered["api"].phase
+    );
+    assert!(
+        matches!(answered["dev"].phase, Phase::Running { .. }),
+        "a death under another pando's lock is not called a failure: {:?}",
+        answered["dev"].phase
+    );
+    let saved = fx.state();
+    assert!(
+        matches!(
+            saved.worktrees["feat+one"].processes["api"].phase,
+            Phase::Starting { .. }
+        ),
+        "and nothing is written without the lock"
+    );
+
+    drop(held);
+    // A fork another test makes before its exec can hold a copy of the
+    // lock's file a moment after the drop, so the read that finds it free
+    // may be the second.
+    assert!(
+        wait_until(Duration::from_secs(5), || {
+            refresh(&fx.paths);
+            matches!(
+                fx.state().worktrees["feat+one"].processes["dev"].phase,
+                Phase::Failed { .. }
+            )
+        }),
+        "the next read that finds it free judges the death, and saves"
+    );
+    let saved = fx.state();
+    assert!(matches!(
+        saved.worktrees["feat+one"].processes["api"].phase,
+        Phase::Running { .. }
+    ));
+}
+
 #[test]
 fn refresh_moves_a_starting_process_to_running_once_its_port_binds() {
     if !python3_available() {
@@ -8461,6 +8943,99 @@ fn new_with_a_remote_only_branch_tracks_the_remote() {
         upstream_of(&fx.root, "feat/remote").as_deref(),
         Some("origin/feat/remote"),
         "checking out a remote branch should track it"
+    );
+}
+
+// An install beside it can hold the repository's config lock — npm's
+// `prepare` runs `husky install`, which sets `core.hooksPath` — and a
+// create of a remote branch writes its upstream there. git waits for no
+// lock: the add failed with "could not lock config file" where a moment
+// later it would have passed, and the TUI runs a create beside another's
+// install.
+#[test]
+fn a_create_waits_out_a_config_lock_another_git_holds_a_moment() {
+    let fx = fixture_with_origin(&["feat/remote"]);
+    let lock = fx.root.join(".git").join("config.lock");
+    std::fs::write(&lock, "").unwrap();
+    let (adding, added) = std::sync::mpsc::channel();
+    let held = lock.clone();
+    let releaser = std::thread::spawn(move || {
+        // Held until the add is under way, and a while into it.
+        let _ = added.recv_timeout(Duration::from_secs(30));
+        std::thread::sleep(Duration::from_millis(500));
+        std::fs::remove_file(&held).unwrap();
+    });
+    let said = |line: &str| {
+        if line.starts_with("checking out") {
+            let _ = adding.send(());
+        }
+    };
+    let created = new(&fx.paths, &fx.config, "feat/remote", None, &said);
+    releaser.join().unwrap();
+    assert_eq!(created.unwrap(), "feat+remote");
+    assert_eq!(
+        upstream_of(&fx.root, "feat/remote").as_deref(),
+        Some("origin/feat/remote")
+    );
+}
+
+// git's lock errors, each a moment's: the step is tried again once the
+// failure is undone. `rm` of the only other worktree ends in git's rmdir
+// of `.git/worktrees` once it is empty, and an add that had just made it,
+// and not yet its own entry in it, died on that — "could not create
+// directory of" — leaving nothing.
+#[test]
+fn a_git_step_tries_again_only_on_a_lock_another_git_held() {
+    let failed = Command::new("git")
+        .arg("--no-such-option")
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    let saying = |stderr: &str| std::process::Output {
+        status: failed.status,
+        stdout: Vec::new(),
+        stderr: format!("Preparing worktree (new branch 'x')\n{stderr}\nhint: a hint\n")
+            .into_bytes(),
+    };
+    let ok = Command::new("git").arg("--version").output().unwrap();
+    let tries = |first: std::process::Output, cleaned: bool| {
+        let (mut runs, mut undone) = (0, 0);
+        let out = retrying_git_locks(
+            || {
+                runs += 1;
+                Ok(if runs == 1 { first.clone() } else { ok.clone() })
+            },
+            |_| {
+                undone += 1;
+                cleaned
+            },
+        )
+        .unwrap();
+        (out.status.success(), runs, undone)
+    };
+    for busy in [
+        "error: could not lock config file .git/config: File exists",
+        "fatal: Unable to create '/r/.git/index.lock': File exists.",
+        "error: cannot lock ref 'refs/heads/x': Unable to create '/r/.git/refs/heads/x.lock': \
+         File exists.",
+        "error: cannot lock ref 'refs/remotes/origin/x': is at 1111 but expected 2222",
+        "fatal: could not create directory of '/r/.git/worktrees/x': No such file or directory",
+    ] {
+        assert_eq!(tries(saying(busy), true), (true, 2, 1), "{busy}");
+        // A failure whose undo left something: given up on, as it was.
+        assert_eq!(tries(saying(busy), false), (false, 1, 1), "{busy}");
+    }
+    for not_busy in [
+        "error: could not lock config file .git/config: Permission denied",
+        "fatal: a branch named 'x' already exists",
+        "fatal: invalid reference: origin/x",
+    ] {
+        assert_eq!(tries(saying(not_busy), true), (false, 1, 0), "{not_busy}");
+    }
+    assert_eq!(
+        git_failure_reason(&saying("fatal: invalid reference: origin/x")),
+        "invalid reference: origin/x",
+        "a hint after the failure is not its reason"
     );
 }
 
@@ -10523,6 +11098,570 @@ fn rm_removes_a_pando_worktree_with_its_logs_and_data() {
     assert!(!fx.paths.logs_dir(&name).exists());
     assert!(!fx.paths.data_dir(&name).exists());
     assert!(!fx.state().worktrees.contains_key(&name));
+}
+
+/// Fills `dir` with `dirs` directories of `files` small files each: the
+/// shape of a `node_modules`, which is what makes a removal slow.
+fn fill_tree(dir: &Path, dirs: usize, files: usize) {
+    for d in 0..dirs {
+        let sub = dir.join(format!("pkg-{d}"));
+        std::fs::create_dir_all(&sub).unwrap();
+        for f in 0..files {
+            std::fs::write(sub.join(format!("f{f}.js")), "module.exports = 1;\n").unwrap();
+        }
+    }
+}
+
+// `rm` stopped what a worktree ran under the state lock, so a dev server
+// that ignores SIGTERM cost its whole grace with every other command
+// waiting — and the TUI's removals of several running worktrees ended one
+// grace after another. Here each stop takes a grace of its own, and the
+// two removals take about one.
+#[test]
+fn two_removals_of_running_worktrees_wait_out_their_grace_together() {
+    let fx = fixture();
+    let one = worktree_named(&fx, "feat/one");
+    let two = worktree_named(&fx, "feat/two");
+    live_dev(&fx, &one, 4_000_501);
+    live_dev(&fx, &two, 4_000_502);
+
+    let grace = Duration::from_millis(800);
+    let free = std::sync::Mutex::new(Vec::new());
+    let slow = |_| {
+        // Waited for, not taken at once: a fork another test makes holds a
+        // copy of a lock's descriptor until its exec.
+        free.lock()
+            .unwrap()
+            .push(wait_until(Duration::from_secs(5), || {
+                state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+            }));
+        std::thread::sleep(grace);
+        Ok(())
+    };
+    let began = Instant::now();
+    let (a, b) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| rm_with(&fx.paths, &one, false, false, slow, &noop));
+        let b = scope.spawn(|| rm_with(&fx.paths, &two, false, false, slow, &noop));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    let took = began.elapsed();
+    a.unwrap();
+    b.unwrap();
+    assert!(
+        took < grace * 2 - Duration::from_millis(200),
+        "two removals took {took:?}, where one grace is {grace:?}"
+    );
+    assert_eq!(
+        *free.lock().unwrap(),
+        [true, true],
+        "a stop waited with the lock held"
+    );
+    assert!(fx.state().worktrees.is_empty(), "{:?}", fx.state());
+    assert!(fx.names().is_empty());
+}
+
+// A group that will not end fails the removal before anything is
+// removed, as it did when the stop ran under the lock: the worktree, its
+// record and the process's record are kept, unmarked, for a retry.
+#[test]
+fn a_removal_whose_process_will_not_stop_keeps_the_worktree() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/stuck");
+    live_dev(&fx, &name, 4_000_503);
+
+    let err = rm_with(
+        &fx.paths,
+        &name,
+        false,
+        false,
+        |_| bail!("it would not die"),
+        &noop,
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("would not die"), "{err:#}");
+    assert_eq!(fx.names(), vec![name.clone()]);
+    let record = &fx.state().worktrees[&name];
+    assert!(record.processes.contains_key("dev"), "{record:?}");
+    assert!(record.stopping.is_empty(), "{record:?}");
+    assert!(record.removing.is_none(), "{record:?}");
+    assert!(!fx.paths.removal_lock_file(&name).exists());
+}
+
+/// The number behind "removals of running worktrees wait out their grace
+/// together": two worktrees whose dev server ignores SIGTERM, so each stop
+/// takes the whole of `STOP_GRACE` before its SIGKILL, removed at once.
+/// Ignored, as a measurement; `two_removals_of_running_worktrees_wait_out_
+/// their_grace_together` proves it. Run with `--ignored --nocapture`.
+#[test]
+#[ignore = "a measurement: run with --ignored --nocapture"]
+fn measure_removals_of_running_worktrees() {
+    let mut fx = fixture();
+    with_dev(
+        &mut fx,
+        ProcessConfig {
+            cmd: "trap '' TERM; sleep 60".to_string(),
+            ..Default::default()
+        },
+    );
+    let names: Vec<String> = (0..2)
+        .map(|i| worktree_named(&fx, &format!("feat/stubborn-{i}")))
+        .collect();
+    let _running: Vec<Vec<Detached>> = names
+        .iter()
+        .map(|name| guard(&start(&fx.paths, &fx.config, name, None, &noop).unwrap()))
+        .collect();
+    let at = Instant::now();
+    std::thread::scope(|scope| {
+        let removals: Vec<_> = names
+            .iter()
+            .map(|name| {
+                let paths = &fx.paths;
+                scope.spawn(move || rm(paths, name, false, false))
+            })
+            .collect();
+        for removal in removals {
+            removal.join().unwrap().unwrap();
+        }
+    });
+    eprintln!(
+        "two removals of running worktrees that ignore SIGTERM, at once: {:.2?} (the grace is \
+         {STOP_GRACE:?})",
+        at.elapsed()
+    );
+    assert!(fx.state().worktrees.is_empty());
+}
+
+/// The numbers behind "removals run side by side": one removal of a
+/// sizeable worktree alone, four one after another, and four at once.
+/// Ignored — it measures, and a measurement asserted on fails on a loaded
+/// machine; `removals_of_several_worktrees_run_side_by_side` is what
+/// proves the overlap. Run it with `--ignored --nocapture`.
+#[test]
+#[ignore = "a measurement: run with --ignored --nocapture"]
+fn measure_concurrent_removals() {
+    let (dirs, files) = (200, 100);
+    let fx = fixture();
+    let make = |branch: &str| {
+        let name = worktree_named(&fx, branch);
+        fill_tree(
+            &fx.worktrees_dir().join(&name).join("node_modules"),
+            dirs,
+            files,
+        );
+        name
+    };
+    let one = make("feat/solo");
+    let at = Instant::now();
+    rm(&fx.paths, &one, false, false).unwrap();
+    let solo = at.elapsed();
+
+    let names: Vec<String> = (0..4).map(|i| make(&format!("feat/seq-{i}"))).collect();
+    let at = Instant::now();
+    for name in &names {
+        rm(&fx.paths, name, false, false).unwrap();
+    }
+    let sequential = at.elapsed();
+
+    let names: Vec<String> = (0..4).map(|i| make(&format!("feat/par-{i}"))).collect();
+    let at = Instant::now();
+    let done = std::sync::atomic::AtomicBool::new(false);
+    // The longest any other command waited for the state lock meanwhile.
+    let mut waited = Duration::ZERO;
+    let took: Vec<Duration> = std::thread::scope(|scope| {
+        let handles: Vec<_> = names
+            .iter()
+            .map(|name| {
+                let paths = &fx.paths;
+                scope.spawn(move || {
+                    let at = Instant::now();
+                    rm(paths, name, false, false).unwrap();
+                    at.elapsed()
+                })
+            })
+            .collect();
+        let watcher = scope.spawn(|| {
+            let mut longest = Duration::ZERO;
+            while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                let at = Instant::now();
+                drop(state::lock(&fx.paths.lock_file()).unwrap());
+                longest = longest.max(at.elapsed());
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            longest
+        });
+        let took = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        waited = watcher.join().unwrap();
+        took
+    });
+    let concurrent = at.elapsed();
+    assert!(fx.names().is_empty());
+    eprintln!(
+        "{} files a worktree: one alone {solo:.2?}; four in turn {sequential:.2?}; four at once \
+         {concurrent:.2?} (each {took:.2?}); the state lock was waited for at most {waited:.2?} \
+         meanwhile",
+        dirs * files
+    );
+}
+
+/// A stand-in `docker` in pando's own `bin` that answers every question at
+/// once and runs `on_down` for a `down -v`, logging each call. Returns
+/// the log.
+fn docker_with_down(paths: &PandoPaths, on_down: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = paths.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = paths.home.join("docker-calls.log");
+    std::fs::write(
+        bin.join("docker"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$*\" in\n  *' down -v') {on_down} ;;\n\
+             esac\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("docker"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    log
+}
+
+/// Records a compose project in `name`'s record, as an isolated start
+/// leaves one for `rm` to take down.
+fn with_compose_project(fx: &Fx, name: &str, project: &str) {
+    let mut store = fx.state();
+    store
+        .worktrees
+        .get_mut(name)
+        .expect("a record")
+        .services
+        .push(state::ServiceRecord {
+            name: "db".to_string(),
+            kind: state::ServiceKind::Compose,
+            port: None,
+            pid: None,
+            pgid: None,
+            compose_project: Some(project.to_string()),
+        });
+    state::save(&fx.paths.state_file(), &store).unwrap();
+}
+
+// "We can't delete several worktrees at the same time": `rm` held the
+// state lock through `docker compose down -v`, `git worktree remove` and
+// the namespace drops, so a second removal — from the TUI or another
+// terminal — waited for the whole of the first. Here every `down -v`
+// waits until all four have begun: removals that still ran one at a
+// time would leave the first waiting for ones that cannot begin, and it
+// gives up after ten seconds and fails its removal.
+#[test]
+fn removals_of_several_worktrees_run_side_by_side() {
+    let fx = fixture();
+    let gate = tempdir().unwrap();
+    let count = format!("$(ls '{}' | grep -c '^arrived-')", gate.path().display());
+    let log = docker_with_down(
+        &fx.paths,
+        &format!(
+            "touch '{}/arrived-'$$; i=0; while [ {count} -lt 4 ] && [ $i -lt 200 ]; do sleep \
+             0.05; i=$((i+1)); done; [ {count} -ge 4 ] || exit 1",
+            gate.path().display()
+        ),
+    );
+    let names: Vec<String> = (0..4)
+        .map(|i| {
+            let name = worktree_named(&fx, &format!("feat/side-{i}"));
+            fill_tree(&fx.worktrees_dir().join(&name).join("node_modules"), 20, 50);
+            with_compose_project(&fx, &name, &format!("pando-acme-side-{i}"));
+            name
+        })
+        .collect();
+
+    let results: Vec<Result<()>> = std::thread::scope(|scope| {
+        let removals: Vec<_> = names
+            .iter()
+            .map(|name| {
+                let paths = &fx.paths;
+                scope.spawn(move || rm(paths, name, false, false))
+            })
+            .collect();
+        removals.into_iter().map(|r| r.join().unwrap()).collect()
+    });
+    for (name, result) in names.iter().zip(results) {
+        result.unwrap_or_else(|e| panic!("{name}: {e:#}"));
+    }
+    assert!(fx.names().is_empty());
+    assert!(fx.state().worktrees.is_empty(), "{:?}", fx.state());
+    for name in &names {
+        assert!(!fx.worktrees_dir().join(name).exists());
+        assert!(!fx.paths.logs_dir(name).exists());
+        assert!(!fx.paths.removal_lock_file(name).exists());
+    }
+    let calls = std::fs::read_to_string(log).unwrap();
+    assert_eq!(
+        calls.lines().filter(|l| l.ends_with(" down -v")).count(),
+        4,
+        "{calls}"
+    );
+}
+
+// The slow part of a removal holds no lock, so what it is removing has to
+// say so itself: a second `rm`, a start or a share of it would act on a
+// tree being deleted, and a start that raced the mark would leave a
+// process nobody could find once the record went.
+#[test]
+fn a_worktree_being_removed_refuses_everything_else_and_holds_up_nothing() {
+    let mut fx = fixture();
+    with_dev(&mut fx, dev("sleep 30"));
+    let gate = tempdir().unwrap();
+    docker_with_down(
+        &fx.paths,
+        &format!(
+            "touch '{g}/down'; i=0; while [ ! -e '{g}/release' ] && [ $i -lt 400 ]; do sleep \
+             0.05; i=$((i+1)); done",
+            g = gate.path().display()
+        ),
+    );
+    let name = worktree_named(&fx, "feat/going");
+    let other = worktree_named(&fx, "feat/staying");
+    with_compose_project(&fx, &name, "pando-acme-going");
+
+    let racer = std::thread::scope(|scope| {
+        let removal = scope.spawn(|| rm(&fx.paths, &name, false, false));
+        assert!(
+            wait_until(Duration::from_secs(10), || gate
+                .path()
+                .join("down")
+                .exists()),
+            "the removal never reached its containers"
+        );
+        assert!(
+            wait_until(Duration::from_secs(5), || state::try_lock(
+                &fx.paths.lock_file()
+            )
+            .unwrap()
+            .is_some()),
+            "the state lock is free while the containers go"
+        );
+        let mark = fx.state().worktrees[&name]
+            .removing
+            .clone()
+            .expect("marked as being removed");
+        assert_eq!(mark.owner_pid, std::process::id());
+
+        let refusals = [
+            rm(&fx.paths, &name, false, true).unwrap_err(),
+            start(&fx.paths, &fx.config, &name, None, &noop).unwrap_err(),
+            share_with(
+                &fx.paths,
+                &fx.config,
+                &name,
+                &MissingProvider,
+                &stub_proxy,
+                &noop,
+            )
+            .unwrap_err(),
+        ];
+        for err in refusals {
+            assert!(format!("{err:#}").contains(BEING_REMOVED), "{err:#}");
+        }
+        // Another worktree starts meanwhile.
+        let started = start(&fx.paths, &fx.config, &other, None, &noop).unwrap();
+        let _running = guard(&started);
+
+        // What a start whose unlocked part began before the mark records
+        // after it: a process the removal never saw.
+        let racer =
+            crate::testutil::spawn_guarded("sleep 30", &fx.root, &gate.path().join("racer.log"));
+        {
+            let _lock = state::lock(&fx.paths.lock_file()).unwrap();
+            let mut store = fx.state();
+            store.worktrees.get_mut(&name).unwrap().processes.insert(
+                "dev".to_string(),
+                ProcessRecord {
+                    pid: racer.pid,
+                    pgid: racer.pgid,
+                    ..fake_record(4_000_003)
+                },
+            );
+            state::save(&fx.paths.state_file(), &store).unwrap();
+        }
+
+        std::fs::write(gate.path().join("release"), "").unwrap();
+        removal.join().unwrap().unwrap();
+        racer
+    });
+    assert!(
+        !crate::process::group_alive(racer.pgid),
+        "the removal must stop what was recorded after its mark"
+    );
+    assert!(!fx.state().worktrees.contains_key(&name));
+    assert!(fx.state().worktrees.contains_key(&other));
+    assert!(!fx.paths.removal_lock_file(&name).exists());
+}
+
+// A removal that fails keeps the worktree, and a worktree kept with the
+// mark on would refuse every start until an `rm` finished a removal
+// nobody wants any more.
+#[test]
+fn a_removal_that_fails_takes_its_mark_off() {
+    let fx = fixture();
+    docker_with_down(&fx.paths, "echo 'Error: the volume is in use' >&2; exit 1");
+    let name = worktree_named(&fx, "feat/kept");
+    with_compose_project(&fx, &name, "pando-acme-kept");
+
+    let err = rm(&fx.paths, &name, false, false).unwrap_err();
+    assert!(format!("{err:#}").contains("was left in place"), "{err:#}");
+    assert_eq!(fx.names(), vec![name.clone()]);
+    let record = &fx.state().worktrees[&name];
+    assert!(record.removing.is_none(), "{record:?}");
+    assert!(record.created_by_pando);
+    assert!(!fx.paths.removal_lock_file(&name).exists());
+
+    // And an adopted worktree, which had no record until the mark made
+    // one, has none again once git fails to delete it.
+    use std::os::unix::fs::PermissionsExt;
+    let adopted = fx.root.parent().unwrap().join("adopted");
+    git(
+        &fx.root,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "adopted",
+            adopted.to_str().unwrap(),
+        ],
+    );
+    let stuck = adopted.join("node_modules").join("pkg");
+    std::fs::create_dir_all(&stuck).unwrap();
+    std::fs::write(stuck.join("index.js"), "1\n").unwrap();
+    std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let err = rm(&fx.paths, "adopted", true, false).unwrap_err();
+    std::fs::set_permissions(&stuck, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        format!("{err:#}").contains("git worktree remove failed"),
+        "{err:#}"
+    );
+    assert!(!fx.state().worktrees.contains_key("adopted"));
+    assert!(!fx.paths.removal_lock_file("adopted").exists());
+}
+
+// A removal stopped half way — here after git's part, the record still
+// marked and its lock let go, as a killed `rm` leaves them — is finished
+// by the next `rm`, which takes down the containers the record names.
+// Meanwhile nothing may drop that record as stale, and its name is not
+// given to a new worktree.
+#[test]
+fn an_interrupted_removal_is_finished_by_the_next_rm() {
+    let fx = fixture();
+    let log = docker_with_down(&fx.paths, ":");
+    let name = worktree_named(&fx, "feat/half");
+    with_compose_project(&fx, &name, "pando-acme-half");
+    git(
+        &fx.root,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            fx.worktrees_dir().join(&name).to_str().unwrap(),
+        ],
+    );
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().removing = Some(state::Removal {
+        owner_pid: 4_000_002,
+        since: Utc::now(),
+        raced: Vec::new(),
+    });
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    worktree_named(&fx, "feat/other");
+    assert!(
+        fx.state().worktrees[&name].removing.is_some(),
+        "a `new` dropped the record of an interrupted removal as stale"
+    );
+    let err = new(&fx.paths, &fx.config, "feat/half", None, &noop).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("was interrupted") && msg.contains(&format!("`pando rm {name}`")),
+        "{msg}"
+    );
+
+    let said = std::cell::RefCell::new(Vec::<String>::new());
+    super::rm(&fx.paths, &name, false, false, &|line| {
+        said.borrow_mut().push(line.to_string())
+    })
+    .unwrap();
+    assert!(
+        said.borrow()
+            .iter()
+            .any(|l| l.contains("was interrupted — finishing it")),
+        "{:?}",
+        said.borrow()
+    );
+    let calls = std::fs::read_to_string(log).unwrap();
+    assert!(
+        calls.contains("compose -p pando-acme-half down -v"),
+        "{calls}"
+    );
+    assert!(!fx.state().worktrees.contains_key(&name));
+    new(&fx.paths, &fx.config, "feat/half", None, &noop).unwrap();
+}
+
+// The TUI reads where a removal stands from `removals`, so the rule is
+// written once. Asking means taking the removal's lock for a moment, and
+// a moment that fell on an `rm` claiming it would make that `rm` refuse as
+// if another were under way: so it asks only under the state lock, which
+// it takes itself — and, as no read does, never waits for it.
+#[test]
+fn removals_says_where_each_removal_stands_and_asks_under_the_state_lock() {
+    let fx = fixture();
+    assert!(removals(&fx.paths).unwrap().is_empty());
+    assert!(!fx.paths.home.exists(), "nothing to ask, so nothing made");
+    let name = worktree_named(&fx, "feat/going");
+    worktree_named(&fx, "feat/staying");
+    assert!(removals(&fx.paths).unwrap().is_empty());
+    let mark = state::Removal {
+        owner_pid: 4_000_021,
+        since: Utc::now(),
+        raced: Vec::new(),
+    };
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().removing = Some(mark.clone());
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let held = state::try_lock(&fx.paths.removal_lock_file(&name))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        removals(&fx.paths).unwrap(),
+        BTreeMap::from([(name.clone(), RemovalState::UnderWay(mark.clone()))])
+    );
+    drop(held);
+    // Waited for: a fork another test makes holds a copy of a lock's
+    // descriptor until its exec.
+    let interrupted = BTreeMap::from([(name.clone(), RemovalState::Interrupted(mark.clone()))]);
+    assert!(wait_until(Duration::from_secs(5), || removals(&fx.paths)
+        .unwrap()
+        == interrupted));
+
+    // Held elsewhere, the lock is not waited for, and no removal's lock is
+    // asked: the interrupted one reads as under way until it is free. A
+    // removal claiming its lock meanwhile finds it free.
+    let lock = state::lock(&fx.paths.lock_file()).unwrap();
+    assert_eq!(
+        removals(&fx.paths).unwrap(),
+        BTreeMap::from([(name.clone(), RemovalState::UnderWay(mark.clone()))])
+    );
+    assert!(
+        wait_until(Duration::from_secs(5), || state::try_lock(
+            &fx.paths.removal_lock_file(&name)
+        )
+        .unwrap()
+        .is_some()),
+        "nothing took the removal's lock"
+    );
+    drop(lock);
+    assert!(wait_until(Duration::from_secs(5), || removals(&fx.paths)
+        .unwrap()
+        == interrupted));
 }
 
 // Any command that creates a directory under pando's home must make the
@@ -12990,6 +14129,14 @@ fn a_compose_ps_that_fails_starts_nothing_and_stops_nothing() {
     )
     .unwrap();
     fx.paths.ensure_home().unwrap();
+    // The record the start's first hold leaves, which a bring-up refuses
+    // without: its worktree was removed meanwhile.
+    let mut store = state::State::default();
+    store.worktrees.insert(
+        "feat+one".to_string(),
+        WorktreeRecord::new(fx.root.clone(), false),
+    );
+    state::save(&fx.paths.state_file(), &store).unwrap();
     let calls = fx.paths.home.join("docker-calls");
     let bin = fx.paths.home.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -13246,6 +14393,99 @@ fn a_compose_leftover_does_not_hide_a_service_moving_back_to_compose() {
     );
 }
 
+/// A fixture whose one native service, `stuckdb`, spawns a server that
+/// never listens: a start in isolated mode waits on it until its timeout.
+fn stuck_native_fixture() -> (Fx, String) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut fx = fixture();
+    with_dev(&mut fx, dev("sleep 30"));
+    let name = worktree_named(&fx, "feat/one");
+    let recipes = fx.paths.recipes_dir();
+    std::fs::create_dir_all(&recipes).unwrap();
+    std::fs::write(
+        recipes.join("stuckdb.toml"),
+        "kind = \"service\"\nname = \"stuckdb\"\nbinaries = [\"pando-fake-stuckdb\"]\n\n\
+         [service]\ninit = \"mkdir -p {datadir}\"\ncmd = \"exec pando-fake-stuckdb {port}\"\n",
+    )
+    .unwrap();
+    let bin = fx.paths.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("pando-fake-stuckdb"),
+        "#!/bin/sh\nexec sleep 300\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        bin.join("pando-fake-stuckdb"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let native: Config =
+        toml::from_str("[[services]]\nkind = \"native\"\nname = \"stuckdb\"\n").unwrap();
+    fx.config.services = native.services;
+    (fx, name)
+}
+
+// `x` on a start the TUI has in flight cancels it. A start blocked in a
+// readiness wait — a minute, by default — stops within a round of it,
+// through the undo a failed wait runs: the server it spawned is stopped,
+// the worktree is back on the shared services, and nothing was spawned.
+#[test]
+fn a_start_cancelled_in_its_readiness_wait_stops_at_once_and_undoes_itself() {
+    let (fx, name) = stuck_native_fixture();
+    let cancel = crate::cancel::Cancel::new();
+    let (said, heard) = std::sync::mpsc::channel::<String>();
+    let started = std::thread::scope(|scope| {
+        // The worker holds the only sender, so a start that never waits
+        // ends the search below rather than hanging it.
+        let (paths, config, worktree, handed) = (&fx.paths, &fx.config, &name, cancel.clone());
+        let worker = scope.spawn(move || {
+            handed.run(|| {
+                let progress = |line: &str| {
+                    let _ = said.send(line.to_string());
+                };
+                super::start(paths, config, worktree, None, Mode::Isolated, &progress)
+            })
+        });
+        // Until it waits on the server, then a moment more inside the wait.
+        let waiting = heard
+            .iter()
+            .find(|line| line.starts_with("waiting for stuckdb"));
+        assert!(waiting.is_some(), "the start never waited on stuckdb");
+        let server = fx.state().worktrees[&name].services[0].clone();
+        let _server = server.pgid.map(|pgid| crate::testutil::Detached {
+            pid: server.pid.unwrap(),
+            pgid,
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let asked = Instant::now();
+        cancel.cancel();
+        let result = worker.join().unwrap();
+        (result, asked.elapsed(), server.pid)
+    });
+    let (result, took, server_pid) = started;
+    let err = result.expect_err("a cancelled start fails");
+    assert!(
+        format!("{err:#}").contains(crate::cancel::CANCELLED),
+        "{err:#}"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "it stopped within a round of its wait, not at the deadline: {took:?}"
+    );
+    let record = &fx.state().worktrees[&name];
+    assert!(
+        record.mode() != crate::state::ServiceMode::Isolated,
+        "the switch to isolated was undone"
+    );
+    assert!(record.processes.is_empty(), "nothing was spawned");
+    assert!(
+        !server_pid.is_some_and(proc::is_alive),
+        "the server it spawned was stopped"
+    );
+    assert!(!record.is_live(), "nothing of it is up");
+}
+
 // Two starts of one worktree at once — the TUI and an agent — both found
 // no native server running and both spawned one on the same data
 // directory, and the second pid was written over the first: a live server
@@ -13397,6 +14637,39 @@ fn new_says_nothing_about_steps_it_has_nothing_to_do_for() {
             .any(|m| m == "provisioning" || m == "installing"),
         "{said:?}"
     );
+}
+
+// The TUI lets the other git writers go once `new` says it is installing,
+// so by then every ref it writes is written, its record saved, and the
+// state lock free: the install is all that is left.
+#[test]
+fn new_says_installing_only_once_its_git_work_is_done() {
+    let fx = installable_fixture("echo installed");
+    let seen = std::sync::Mutex::new(None);
+    new(&fx.paths, &fx.config, "feat/one", None, &|m| {
+        if m != INSTALLING {
+            return;
+        }
+        // Asked again for a moment: a child another test forks in this
+        // process can hold a copy of the lock's descriptor until it execs.
+        // `new` holding the lock itself would hold it through this whole
+        // call, which it is blocked in, so the wait cannot hide that.
+        let lock_free = crate::testutil::wait_until(std::time::Duration::from_secs(2), || {
+            state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+        });
+        let recorded = fx.state().worktrees.contains_key("feat+one");
+        let branch = Command::new("git")
+            .arg("-C")
+            .arg(&fx.root)
+            .args(["rev-parse", "--quiet", "--verify", "refs/heads/feat/one"])
+            .output()
+            .unwrap()
+            .status
+            .success();
+        *seen.lock().unwrap() = Some((lock_free, recorded, branch));
+    })
+    .unwrap();
+    assert_eq!(seen.into_inner().unwrap(), Some((true, true, true)));
 }
 
 // `rm` of a running worktree printed only "removed": that it stopped the
@@ -19310,4 +20583,404 @@ fn a_second_new_of_an_incomplete_set_never_undoes_the_firsts_checkout() {
         !ref_exists(&fx.root.join("frontend"), "refs/heads/feat/x"),
         "and nothing was made"
     );
+}
+
+// ---- the lock races --------------------------------------------------
+
+/// Marks `name`'s record as a removal an `rm` began, as `claim_removal`
+/// leaves it, and returns the mark.
+fn with_removal_mark(fx: &Fx, name: &str) -> state::Removal {
+    let mut store = fx.state();
+    let mark = state::Removal {
+        owner_pid: 4_000_031,
+        since: Utc::now(),
+        raced: Vec::new(),
+    };
+    store.worktrees.get_mut(name).unwrap().removing = Some(mark.clone());
+    state::save(&fx.paths.state_file(), &store).unwrap();
+    std::fs::create_dir_all(fx.paths.removal_lock_file(name).parent().unwrap()).unwrap();
+    mark
+}
+
+// A child another thread of this pando forks holds a copy of every open
+// descriptor until it execs, a look at a removal's lock among them. Asked
+// once, an interrupted removal's lock read as held while such a copy
+// lived, and a start, a share, a `new` or an `rm` of the worktree was
+// refused as if a removal were under way. Asked again for a moment it
+// reads as what it is — and a removal really under way still reads as
+// one, however long it is asked.
+#[test]
+fn a_forked_childs_copy_of_a_removal_lock_is_not_a_removal_under_way() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    let mark = with_removal_mark(&fx, &name);
+    let lock_file = fx.paths.removal_lock_file(&name);
+    let removal = || {
+        let _lock = state::lock(&fx.paths.lock_file()).unwrap();
+        super::worktree::removal_of(&fx.paths, &fx.state(), &name)
+    };
+
+    let (taken, copy_taken) = std::sync::mpsc::channel();
+    let seen = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            // The copy, let go well inside the moment it is asked again.
+            let copy = state::try_lock(&lock_file)
+                .unwrap()
+                .expect("nobody holds it");
+            taken.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(60));
+            drop(copy);
+        });
+        copy_taken.recv().unwrap();
+        removal()
+    });
+    assert_eq!(seen, Some(RemovalState::Interrupted(mark.clone())));
+    let err = start(&fx.paths, &fx.config, &name, None, &noop).unwrap_err();
+    assert!(format!("{err:#}").contains("was interrupted"), "{err:#}");
+
+    let held = state::try_lock(&lock_file).unwrap().unwrap();
+    assert_eq!(removal(), Some(RemovalState::UnderWay(mark)));
+    drop(held);
+}
+
+/// Whether `name`'s process `process` is recorded and alive.
+fn is_running(fx: &Fx, name: &str, process: &str) -> bool {
+    fx.state().worktrees[name]
+        .processes
+        .get(process)
+        .is_some_and(|p| p.alive(proc::is_alive, proc::group_alive))
+}
+
+// A start that landed while a stop of the same worktree waited without
+// the lock found the dev server alive in the stop's grace, called it
+// already running and started nothing; the stop then ended it, and the
+// start had returned Ok with nothing running. Before the stop let go of
+// the lock the start waited for it and started fresh, and it does again:
+// it waits the stop out, and says so.
+#[test]
+fn a_start_during_a_stops_wait_waits_it_out_and_starts_fresh() {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    let mut fx = fixture();
+    with_dev(&mut fx, dev("sleep 30"));
+    let name = worktree_named(&fx, "feat/one");
+    let first = start(&fx.paths, &fx.config, &name, None, &noop).unwrap();
+    let _first = guard(&first);
+    let marked = AtomicBool::new(false);
+    let waiting = AtomicBool::new(false);
+    let said = std::sync::Mutex::new(Vec::<String>::new());
+    let report = std::thread::scope(|scope| {
+        let stopping = scope.spawn(|| {
+            super::lifecycle::stop_with(
+                &fx.paths,
+                &name,
+                None,
+                |pgid| {
+                    // Marked, and the lock let go: the dev server is in
+                    // its grace while another pando starts the worktree.
+                    marked.store(true, SeqCst);
+                    wait_until(Duration::from_secs(10), || waiting.load(SeqCst));
+                    crate::process::stop(pgid, Duration::from_secs(5))
+                },
+                &noop,
+            )
+        });
+        assert!(wait_until(Duration::from_secs(10), || marked.load(SeqCst)));
+        let report = start(&fx.paths, &fx.config, &name, None, &|line| {
+            said.lock().unwrap().push(line.to_string());
+            if line.contains("the stop of") {
+                waiting.store(true, SeqCst);
+            }
+        });
+        waiting.store(true, SeqCst);
+        stopping.join().unwrap().unwrap();
+        report
+    });
+    let report = report.expect("the start succeeded");
+    let _second = guard(&report);
+    let said = said.into_inner().unwrap();
+    assert!(
+        is_running(&fx, &name, "dev"),
+        "the start returned Ok (started {}, already running {}), and once the stop it raced \
+         was done nothing ran: {said:?}",
+        report.started.len(),
+        report.already_running.len()
+    );
+    assert_eq!(report.started.len(), 1, "{said:?}");
+    assert!(report.already_running.is_empty(), "{said:?}");
+    assert!(
+        said.iter()
+            .any(|l| l == &format!("waiting for the stop of {name} to finish")),
+        "{said:?}"
+    );
+}
+
+// The same at a start's second lock: a stop that marked a process the
+// start had read as running, while the start ran its hooks without the
+// lock, ended it after the start had spawned the rest — and the start
+// had said the one it left was already running.
+#[test]
+fn a_stop_between_a_starts_two_locks_is_waited_out_and_what_it_ended_is_started() {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    let mut fx = fixture();
+    with_dev(&mut fx, dev("sleep 30"));
+    fx.config.processes.insert(
+        "api".to_string(),
+        ProcessConfig {
+            cmd: "sleep 30".to_string(),
+            ..Default::default()
+        },
+    );
+    let gate = tempdir().unwrap();
+    let g = gate.path().display().to_string();
+    fx.config.hooks = vec![crate::config::HookConfig {
+        name: "gate".to_string(),
+        after: crate::config::HookPoint::Create,
+        fingerprint: Vec::new(),
+        cmd: format!(
+            "if [ -e '{g}/block' ]; then touch '{g}/in-hook'; i=0; while [ ! -e '{g}/release' ] \
+             && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done; fi"
+        ),
+        cwd: None,
+        fallback: None,
+        on: None,
+    }];
+    let name = worktree_named(&fx, "feat/one");
+    let first = start(&fx.paths, &fx.config, &name, Some("dev"), &noop).unwrap();
+    let _first = guard(&first);
+    std::fs::write(gate.path().join("block"), "").unwrap();
+    let waiting = AtomicBool::new(false);
+    let said = std::sync::Mutex::new(Vec::<String>::new());
+    let report = std::thread::scope(|scope| {
+        let starting = scope.spawn(|| {
+            let report = start(&fx.paths, &fx.config, &name, None, &|line| {
+                said.lock().unwrap().push(line.to_string());
+                if line.contains("the stop of") {
+                    waiting.store(true, SeqCst);
+                }
+            });
+            waiting.store(true, SeqCst);
+            report
+        });
+        // In its hook: it has read dev as running, and let go of the lock.
+        assert!(wait_until(Duration::from_secs(10), || gate
+            .path()
+            .join("in-hook")
+            .exists()));
+        super::lifecycle::stop_with(
+            &fx.paths,
+            &name,
+            None,
+            |pgid| {
+                std::fs::write(gate.path().join("release"), "").unwrap();
+                wait_until(Duration::from_secs(10), || waiting.load(SeqCst));
+                crate::process::stop(pgid, Duration::from_secs(5))
+            },
+            &noop,
+        )
+        .unwrap();
+        starting.join().unwrap()
+    });
+    let report = report.expect("the start succeeded");
+    let _second = guard(&report);
+    let said = said.into_inner().unwrap();
+    assert!(
+        is_running(&fx, &name, "dev"),
+        "the stop ended dev after the start called it running: {said:?}"
+    );
+    assert!(is_running(&fx, &name, "api"), "{said:?}");
+    assert!(report.already_running.is_empty(), "{said:?}");
+}
+
+/// A worktree isolated on one compose service, `db`, whose project name
+/// it returns, and a stand-in `docker` that holds a start's `up` and a
+/// removal's `down -v` where a test says: an `up` touches `up-waiting` in
+/// `gate` and waits for `up-go` there; a `down -v` touches `down-done` and
+/// waits for `rm-go`; `ps` answers that `db` is up and healthy. Every call
+/// is logged, one per line, in the file returned last, and an `up` that
+/// comes back as `up done`.
+fn raced_compose_fixture(gate: &Path) -> (Fx, String, String, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut fx = fixture();
+    with_dev(&mut fx, dev("sleep 30"));
+    std::fs::write(
+        fx.root.join("docker-compose.yml"),
+        "services:\n  db:\n    image: postgres:16\n    ports: [\"5432:5432\"]\n    \
+         healthcheck:\n      test: [\"CMD\", \"pg_isready\"]\n",
+    )
+    .unwrap();
+    git(&fx.root, &["add", "."]);
+    git(&fx.root, &["commit", "--quiet", "-m", "compose"]);
+    let services: Config = toml::from_str(
+        "[[services]]\nkind = \"compose\"\nfile = \"docker-compose.yml\"\ninclude = [\"db\"]\n",
+    )
+    .unwrap();
+    fx.config.services = services.services;
+    let name = worktree_named(&fx, "feat/raced");
+    let project = crate::compose::project_name(fx.paths.project_id(), &name);
+    with_compose_project(&fx, &name, &project);
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().mode = Some(state::ServiceMode::Isolated);
+    state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let bin = fx.paths.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = fx.paths.home.join("docker-calls.log");
+    let g = gate.display();
+    std::fs::write(
+        bin.join("docker"),
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{log}'\n\
+             hold() {{ i=0; while [ ! -e '{g}'/\"$1\" ] && [ $i -lt 400 ]; do sleep 0.05; \
+             i=$((i+1)); done; }}\n\
+             case \"$*\" in\n  \
+             *' up -d '*) touch '{g}/up-waiting'; hold up-go; echo 'up done' >> '{log}' ;;\n  \
+             *' down -v') touch '{g}/down-done'; hold rm-go ;;\n  \
+             *' ps '*) echo '{{\"Service\":\"db\",\"State\":\"running\",\"Health\":\"healthy\"}}' ;;\n\
+             esac\nexit 0\n",
+            log = log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(bin.join("docker"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    (fx, name, project, log)
+}
+
+/// Asserts the log has a `down -v` of `project` after an `up` came back.
+fn assert_down_after_up(log: &Path, project: &str) {
+    let calls = std::fs::read_to_string(log).unwrap();
+    let lines: Vec<&str> = calls.lines().collect();
+    let up_at = lines
+        .iter()
+        .position(|l| *l == "up done")
+        .unwrap_or_else(|| panic!("no `up` came back:\n{calls}"));
+    assert!(
+        lines[up_at..]
+            .iter()
+            .any(|l| l.contains(&format!("-p {project} ")) && l.ends_with(" down -v")),
+        "containers brought up after the removal's `down -v` were never taken down, and no \
+         record names them now:\n{calls}"
+    );
+}
+
+// An isolated start records its compose project at its first hold and
+// lets the lock go for the `up`. An `rm` that claimed the worktree
+// meanwhile took that project down with `down -v` — and then the start's
+// `up`, still pulling, made its containers and a fresh volume. The start
+// was refused at its second hold, undid nothing for a worktree already
+// isolated, and the removal's last step skipped every project its claim
+// had named: the containers and the volume outlived the worktree, with
+// nothing left to name them.
+#[test]
+fn a_project_a_start_brings_up_after_the_removals_down_is_taken_down_again() {
+    let gate = tempdir().unwrap();
+    let (fx, name, project, log) = raced_compose_fixture(gate.path());
+    let started = std::thread::scope(|scope| {
+        let starting = scope
+            .spawn(|| super::start(&fx.paths, &fx.config, &name, None, Mode::Remembered, &noop));
+        // Past its first hold, in its `up`.
+        assert!(wait_until(Duration::from_secs(10), || gate
+            .path()
+            .join("up-waiting")
+            .exists()));
+        let removal = scope.spawn(|| rm(&fx.paths, &name, false, false));
+        // The removal's `down -v` has run; the start's `up` lands after it.
+        assert!(wait_until(Duration::from_secs(10), || gate
+            .path()
+            .join("down-done")
+            .exists()));
+        std::fs::write(gate.path().join("up-go"), "").unwrap();
+        let started = starting.join().unwrap();
+        std::fs::write(gate.path().join("rm-go"), "").unwrap();
+        removal.join().unwrap().unwrap();
+        started
+    });
+    let err = started.expect_err("a start of a worktree being removed is refused");
+    assert!(format!("{err:#}").contains(BEING_REMOVED), "{err:#}");
+    assert!(
+        !fx.state().worktrees.contains_key(&name),
+        "the record is gone"
+    );
+    assert_down_after_up(&log, &project);
+}
+
+// The same with the removal finished before the start's `up` is done:
+// the record that named the project is gone, and the start takes down
+// what it made itself.
+#[test]
+fn a_project_a_start_brings_up_after_its_worktree_is_removed_is_taken_down() {
+    let gate = tempdir().unwrap();
+    let (fx, name, project, log) = raced_compose_fixture(gate.path());
+    std::fs::write(gate.path().join("rm-go"), "").unwrap();
+    let started = std::thread::scope(|scope| {
+        let starting = scope
+            .spawn(|| super::start(&fx.paths, &fx.config, &name, None, Mode::Remembered, &noop));
+        assert!(wait_until(Duration::from_secs(10), || gate
+            .path()
+            .join("up-waiting")
+            .exists()));
+        rm(&fx.paths, &name, false, false).unwrap();
+        assert!(
+            !fx.state().worktrees.contains_key(&name),
+            "the record is gone"
+        );
+        std::fs::write(gate.path().join("up-go"), "").unwrap();
+        starting.join().unwrap()
+    });
+    started.expect_err("a start of a worktree removed meanwhile spawns nothing");
+    assert!(!fx.state().worktrees.contains_key(&name));
+    assert_down_after_up(&log, &project);
+}
+
+// A share's own lock lives in the worktree's logs directory, which a
+// removal deletes. `unshare` took it without asking about a removal, and
+// `share` asked only before it: one taken after the removal's `take_down`
+// made the directory again, empty but for the lock, and nothing removed
+// it. The lock is taken where its directory is now, and one that finds it
+// gone asks about the removal under the state lock, and is refused — or,
+// with no removal, makes it there and goes on.
+#[test]
+fn a_share_lock_taken_during_a_removal_leaves_no_logs_directory() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    let logs = fx.paths.logs_dir(&name);
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().share = Some(ShareRecord {
+        tunnel_pid: 4_000_041,
+        tunnel_pgid: Group::from_raw(4_000_041),
+        public_url: "https://raced.trycloudflare.com".to_string(),
+        local_port: 17_000,
+        started_at: Utc::now(),
+        log_path: logs.join("tunnel.log"),
+        proxy_pid: None,
+        proxy_pgid: None,
+        proxy_port: None,
+    });
+    state::save(&fx.paths.state_file(), &store).unwrap();
+    with_removal_mark(&fx, &name);
+    let removing = state::try_lock(&fx.paths.removal_lock_file(&name))
+        .unwrap()
+        .unwrap();
+    // What the removal's `take_down` deletes.
+    let _ = std::fs::remove_dir_all(&logs);
+
+    let err = super::share::unshare_with(&fx.paths, &name, |_| Ok(())).unwrap_err();
+    assert!(format!("{err:#}").contains(BEING_REMOVED), "{err:#}");
+    assert!(
+        !logs.exists(),
+        "an unshare made the removed logs directory again"
+    );
+    share(&fx.paths, &fx.config, &name, &noop).unwrap_err();
+    assert!(
+        !logs.exists(),
+        "a share made the removed logs directory again"
+    );
+
+    // The removal abandoned, the worktree stays: its logs directory gone by
+    // hand is made again, and the unshare goes on.
+    drop(removing);
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().removing = None;
+    state::save(&fx.paths.state_file(), &store).unwrap();
+    super::share::unshare_with(&fx.paths, &name, |_| Ok(())).unwrap();
+    assert!(fx.state().worktrees[&name].share.is_none());
 }

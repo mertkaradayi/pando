@@ -39,6 +39,13 @@ pub(super) fn spawn_group(command: &mut Command) -> io::Result<(Child, Group)> {
     Ok((child, group))
 }
 
+pub(super) fn spawn_in_group(command: &mut Command) -> io::Result<(Child, Group)> {
+    let child = command.process_group(0).spawn()?;
+    // A group of 0 is one led by the child, whose id is its pid.
+    let group = Group::from_raw(child.id() as i32);
+    Ok((child, group))
+}
+
 pub(super) fn ports_by_group(groups: &[Group]) -> BTreeMap<Group, Option<Vec<u16>>> {
     super::scan::observed_ports_by_group(groups)
 }
@@ -95,6 +102,45 @@ pub(super) fn is_alive(pid: u32) -> bool {
         Err(Errno::ESRCH) => false,
         Err(_) => false,
     }
+}
+
+/// The start of `pid` in microseconds since the epoch, from the kernel's
+/// own record of the process.
+#[cfg(target_os = "macos")]
+pub(super) fn started(pid: u32) -> Option<u64> {
+    let pid = libc::c_int::try_from(pid).ok()?;
+    let size = libc::c_int::try_from(std::mem::size_of::<libc::proc_bsdinfo>()).ok()?;
+    // SAFETY: an all-zero `proc_bsdinfo` is a valid value of a plain C
+    // struct, and `info` is `size` bytes long, which is what the kernel is
+    // told it may write.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size,
+        )
+    };
+    (written == size).then(|| {
+        info.pbi_start_tvsec
+            .wrapping_mul(1_000_000)
+            .wrapping_add(info.pbi_start_tvusec)
+    })
+}
+
+/// The start of `pid` in clock ticks since the kernel booted: field 22 of
+/// its `/proc/<pid>/stat`, as the boot's own start is read.
+#[cfg(target_os = "linux")]
+pub(super) fn started(pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    crate::platform::boot::parse_start_time(&stat)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub(super) fn started(_: u32) -> Option<u64> {
+    None
 }
 
 /// `kill(-pgid, 0)` and not `kill(leader, 0)`: a dev server's group leader is

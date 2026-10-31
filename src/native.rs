@@ -655,6 +655,9 @@ impl Native {
                     }
                 }
             }
+            // A start cancelled while it waits stops here, within a round,
+            // rather than at the deadline: the bring-up stops the server.
+            crate::cancel::check()?;
             if Instant::now() >= deadline {
                 let why = match &last {
                     Some(line) => format!(" — its readiness check last said: {line}"),

@@ -34,6 +34,15 @@ pub fn spawn_group(command: &mut Command) -> io::Result<(Child, Group)> {
     imp::spawn_group(command)
 }
 
+/// Spawns `command` as the first process of a group of its own in pando's
+/// session. It keeps pando's controlling terminal, as a background group,
+/// so no signal the terminal sends reaches it: whoever spawned it passes
+/// them on, with [`stop`]. Everything it starts stays in the group unless
+/// it leaves on purpose.
+pub fn spawn_in_group(command: &mut Command) -> io::Result<(Child, Group)> {
+    imp::spawn_in_group(command)
+}
+
 /// Whether `pid` is running.
 ///
 /// A child of this pando that has ended is collected here as a side
@@ -42,6 +51,14 @@ pub fn spawn_group(command: &mut Command) -> io::Result<(Child, Group)> {
 /// this first for that reason.
 pub fn is_alive(pid: u32) -> bool {
     imp::is_alive(pid)
+}
+
+/// When `pid` started, as a token only ever compared with another this
+/// gives: the same for one process however often it is asked, and another
+/// for a process handed the same number later. `None` where the system
+/// does not say, which is no evidence either way.
+pub fn started(pid: u32) -> Option<u64> {
+    imp::started(pid)
 }
 
 /// Whether anything is left in `group`: the leader, a child it forked, or

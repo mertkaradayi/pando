@@ -14,8 +14,9 @@ use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 use super::app::{
     App, BY_HAND_KEY, BranchLoadState, CreateRow, GitStage, INSPECT_LEGEND, KeyHelp, LIST_KEYS,
-    LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE, Modal, MouseHelp, RemoveBlocker,
-    SETUP_KEYS, SETUP_LEGEND, SPINNER_FRAMES, StatusKind, compact_age, create_rows, pr_rows,
+    LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE, MarkedRemoval, Modal, MouseHelp,
+    RemoveBlocker, SETUP_KEYS, SETUP_LEGEND, SPINNER_FRAMES, StatusKind, compact_age, create_rows,
+    pr_rows,
 };
 use super::render::{centered_box, chunk_cells, text_width, truncate, truncate_middle, wrap_text};
 use crate::actions;
@@ -88,6 +89,13 @@ pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Pain
         }
         Modal::Remove { name, .. } => {
             render_remove(f, area, &app.label_of(name), &app.remove_blockers(name)).map(no_options)
+        }
+        Modal::RemoveMarked { names } => {
+            let rows: Vec<(String, MarkedRemoval)> = names
+                .iter()
+                .map(|name| (app.label_of(name), app.marked_removal(name)))
+                .collect();
+            render_remove_marked(f, area, &rows).map(no_options)
         }
         Modal::Unshare { name, url } => {
             render_unshare(f, area, &app.label_of(name), url).map(no_options)
@@ -1383,6 +1391,200 @@ fn render_remove(
     let inner = popup(f, area, "remove worktree", None, width, height)?;
     paint_over_keys(f, inner, lines, keys);
     Some(inner)
+}
+
+/// `d` with rows marked: a row for each marked worktree, saying what
+/// goes with it, that only `F` removes it, or why it stays — all before a
+/// key is pressed, the most serious first — then one confirm for them all.
+fn render_remove_marked(
+    f: &mut Frame,
+    area: Rect,
+    rows: &[(String, MarkedRemoval)],
+) -> Option<Rect> {
+    let cap = max_content_width(area);
+    // Past this many rows the rest are counted, and sooner in a short
+    // tmux split.
+    const MAX_ROWS: usize = 16;
+    let goes = rows
+        .iter()
+        .filter(|(_, v)| matches!(v, MarkedRemoval::Goes(_)))
+        .count();
+    let forced: Vec<&[RemoveBlocker]> = rows
+        .iter()
+        .filter_map(|(_, v)| match v {
+            MarkedRemoval::NeedsForce(blockers) => Some(blockers.as_slice()),
+            _ => None,
+        })
+        .collect();
+    let removable = goes + forced.len();
+    let asked = match removable {
+        0 => "none of the marked worktrees can be removed".to_string(),
+        1 => "remove 1 marked worktree?".to_string(),
+        n => format!("remove {n} marked worktrees?"),
+    };
+    let mut head = vec![Line::styled(
+        truncate(&asked, cap),
+        Style::new().fg(text()).add_modifier(Modifier::BOLD),
+    )];
+    if removable > 0 {
+        head.extend(
+            wrap_text(
+                "the branches are kept; their logs and data are deleted",
+                cap,
+            )
+            .into_iter()
+            .map(|row| Line::styled(row, Style::new().fg(text_muted()))),
+        );
+    }
+    let keys = if removable == 0 {
+        vec![(key_span("esc"), hint_span(" close"))]
+    } else {
+        let changes = forced.iter().any(|blockers| {
+            blockers
+                .iter()
+                .any(|b| matches!(b, RemoveBlocker::Dirty(_)))
+        });
+        let cost = match changes {
+            true => ", discarding changes",
+            false => " and all they hold",
+        };
+        let mut keys = Vec::new();
+        if goes > 0 {
+            keys.push((key_span("y"), hint_span(&format!(" remove {goes}"))));
+        }
+        keys.push((
+            key_span("F"),
+            hint_span(&match (goes, forced.len()) {
+                (_, 0) => " force".to_string(),
+                (0, n) => format!(" remove {n}{cost}"),
+                (_, _) => format!(" remove all {removable}{cost}"),
+            }),
+        ));
+        keys.push((key_span("esc"), hint_span(" cancel")));
+        keys
+    };
+    let keys = key_rows(keys, cap);
+
+    // What stays first, then what only F removes, then what takes data
+    // with it, then what stops; the rows that just go come last, and are
+    // the ones a short pane counts rather than shows.
+    let rank = |verdict: &MarkedRemoval| match verdict {
+        MarkedRemoval::Skipped(_) => 0,
+        MarkedRemoval::NeedsForce(_) => 1,
+        MarkedRemoval::Goes(blockers)
+            if blockers
+                .iter()
+                .any(|b| matches!(b, RemoveBlocker::Drops(_))) =>
+        {
+            2
+        }
+        MarkedRemoval::Goes(blockers) if !blockers.is_empty() => 3,
+        MarkedRemoval::Goes(_) => 4,
+    };
+    let mut order: Vec<&(String, MarkedRemoval)> = rows.iter().collect();
+    order.sort_by_key(|(_, verdict)| rank(verdict));
+    let painted: Vec<Vec<Line<'static>>> = order
+        .iter()
+        .map(|(label, verdict)| marked_removal_row(label, verdict, cap))
+        .collect();
+    // The border, the heading, the blank row and the keys.
+    let room = (area.height as usize).saturating_sub(2 + head.len() + 1 + keys.len());
+    let total: usize = painted.iter().map(Vec::len).sum();
+    let mut lines = head;
+    if total <= room && painted.len() <= MAX_ROWS {
+        lines.extend(painted.into_iter().flatten());
+    } else {
+        let budget = room.saturating_sub(1);
+        let mut used = 0;
+        let mut shown = 0;
+        for row in &painted {
+            if shown == MAX_ROWS || used + row.len() > budget {
+                break;
+            }
+            used += row.len();
+            shown += 1;
+            lines.extend(row.iter().cloned());
+        }
+        lines.push(hint_span(&format!("… and {} more", painted.len() - shown)).into());
+    }
+    let width = widest(&lines).max(widest(&keys)).min(cap);
+    let height = lines.len() + 1 + keys.len();
+    let inner = popup(f, area, "remove worktrees", None, width, height)?;
+    paint_over_keys(f, inner, lines, keys);
+    Some(inner)
+}
+
+/// One marked worktree in the dialog that removes them all: its mark, its
+/// branch, and what removing it takes, stops or needs, on one line where
+/// that fits and on the lines under it where it does not.
+fn marked_removal_row(label: &str, verdict: &MarkedRemoval, cap: usize) -> Vec<Line<'static>> {
+    let colour = |blocker: &RemoveBlocker| match blocker {
+        // Data that goes for good: the destructive colour.
+        RemoveBlocker::Drops(_) => red(),
+        RemoveBlocker::DirtyUnknown => text_muted(),
+        _ => yellow(),
+    };
+    let (mark, mark_colour, label_colour, notes): (&str, _, _, Vec<(String, _)>) = match verdict {
+        MarkedRemoval::Skipped(why) => (
+            "–",
+            text_muted(),
+            text_dim(),
+            vec![(format!("stays: {why}"), text_muted())],
+        ),
+        MarkedRemoval::NeedsForce(blockers) => (
+            "*",
+            yellow(),
+            text(),
+            blockers
+                .iter()
+                .map(|b| (b.short(), colour(b)))
+                .chain([("only F removes it".to_string(), yellow())])
+                .collect(),
+        ),
+        MarkedRemoval::Goes(blockers) => (
+            "✕",
+            red(),
+            text(),
+            blockers.iter().map(|b| (b.short(), colour(b))).collect(),
+        ),
+    };
+    let label = truncate_middle(label, cap.saturating_sub(2));
+    let mut first = vec![
+        Span::styled(format!("{mark} "), Style::new().fg(mark_colour)),
+        Span::styled(label.clone(), Style::new().fg(label_colour)),
+    ];
+    if notes.is_empty() {
+        return vec![Line::from(first)];
+    }
+    let joined = notes
+        .iter()
+        .map(|(note, _)| note.as_str())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    if 2 + text_width(&label) + 3 + text_width(&joined) <= cap {
+        first.push(hint_span(" — "));
+        for (i, (note, colour)) in notes.into_iter().enumerate() {
+            if i > 0 {
+                first.push(hint_span(" · "));
+            }
+            first.push(Span::styled(note, Style::new().fg(colour)));
+        }
+        return vec![Line::from(first)];
+    }
+    // Too long for one line: the notes wrap under the branch, in the
+    // colour of the most serious of them.
+    let colour = notes
+        .iter()
+        .map(|(_, colour)| *colour)
+        .find(|colour| *colour == red())
+        .unwrap_or(notes[0].1);
+    let mut lines = vec![Line::from(first)];
+    lines.extend(
+        wrap_text(&joined, cap.saturating_sub(2))
+            .into_iter()
+            .map(|row| Line::styled(format!("  {row}"), Style::new().fg(colour))),
+    );
+    lines
 }
 
 /// Every key of the view it was opened from, then what the marks mean.

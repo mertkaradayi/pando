@@ -130,3 +130,20 @@ fn an_exit_is_seen_without_reaping_the_child() {
     let _ = running.kill();
     let _ = running.wait();
 }
+
+// A stop's mark names the pando that wrote it by pid and by this: a pid
+// handed to another process once that pando is gone must not read as it.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn a_process_start_is_its_own_and_not_the_next_holder_of_its_pid() {
+    let own = started(std::process::id());
+    assert!(own.is_some());
+    assert_eq!(own, started(std::process::id()), "asked twice, one answer");
+    let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+    let theirs = started(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(theirs.is_some());
+    assert_ne!(theirs, own);
+    assert_eq!(started(child.id()), None, "a pid nobody holds has no start");
+}

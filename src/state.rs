@@ -1,8 +1,165 @@
 //! Persistent state: what pando started, what it owns, and what it observed.
 //!
-//! Two rules are inherited from the origin tool unchanged: every mutation
-//! holds the flock, and every read path reconciles before trusting what is
-//! in the map. State is v2 from the first commit — there is no v1 to migrate.
+//! One JSON file per project: a [`WorktreeRecord`] per worktree name, and
+//! the boot it was written in, so [`load`] can forget the pids of an
+//! earlier one. [`save`] writes a temporary file, syncs it and renames it
+//! over the old, so a read without the lock sees one save or the next,
+//! never half of one. State is v2 from the first commit — there is no v1
+//! to migrate.
+//!
+//! # The state lock
+//!
+//! Every pando process and TUI worker thread coordinates through one flock
+//! per project ([`crate::paths::PandoPaths::lock_file`]), taken with
+//! [`lock`], which waits, and says so where the CLI asked
+//! ([`announce_lock_waits`]). It is per open descriptor, so two threads of
+//! one pando keep each other out as two processes do. Every write is a
+//! load, a change and a [`save`] under it. It is held for bookkeeping — a
+//! decision, the records it changes, the save — and the slow work runs
+//! with it let go, between two holds:
+//!
+//! | | Under the lock | Without it | Under it again |
+//! |---|---|---|---|
+//! | `start` | refusals, a stop in flight waited out, mode, ports and service records, saved | hooks, install, services | refusals again, a stop waited out again, races checked, spawned, saved; the `dev` hook after |
+//! | `stop`, `restart`'s stop | `mark_stop`: a [`StopMark`] per group | `wait_for`: every group signalled and waited for at once | `settle_stop`, `finish_stop` |
+//! | `stop --all` | `mark_stop` of every worktree it stops | `wait_for`: all of their groups at once | `settle_stop` of each, the sweep and `reconcile` |
+//! | `rm` | `claim_removal`: refusals, the removal lock, stop marks, a [`Removal`] | `stop_claimed`'s wait, settled under the lock; `take_down` | `finish_removal`, or `abandon_removal` |
+//! | `share` | refusals, again once its own lock is held; the proxy's port | proxy and tunnel, each group noted as a [`PendingShare`] | recorded, or closed again |
+//! | `unshare` | the share read, again under the share's own lock | both halves signalled | the record dropped if it names that share still |
+//! | `new` | the target directory claimed | the checkout | the record written, let go before the install |
+//!
+//! What it read may have changed by the second hold, so each re-reads and
+//! settles only what is still its own: `settle_stop` only the groups it
+//! waited on when a start changed the worktree meanwhile, `rm` only while
+//! the mark is the one it wrote (`Claim::still_ours`), a start refusing
+//! where another changed the mode or took its slot.
+//!
+//! Some still wait under it. A start stops what it replaces with it held:
+//! in its first hold dead-leader groups, a stale record's, and what a mode
+//! change cannot keep serving; in its second a `restart --only`'s
+//! process, and what kept serving through the change. The orphan sweep
+//! (`sweep_orphaned_groups`) and the share sweep signal and wait
+//! wherever they run; a failed `new` unwinds its checkout under it; and
+//! `finish_removal` takes down whatever a racing start recorded after the
+//! mark or named in it ([`Removal::raced`]), which is almost always
+//! nothing, as `leave_to_removal` does for a start whose worktree's
+//! removal has finished.
+//!
+//! # Readers
+//!
+//! A read never waits for the lock: it asks [`try_lock`], and while
+//! another pando holds it an unlocked [`load`] stands in. `actions::refresh`
+//! advances phases on that copy and returns it; `actions::removals` reads
+//! every removal mark in it as under way. A reader shows the copy and does
+//! nothing else with it: it never saves it — the holder's save is the one
+//! that counts, and the next read to find the lock free does this one's
+//! work again and saves it — never signals, since the sweeps that signal
+//! run only under the lock, and never asks a removal's lock. A process
+//! seen dead on the copy keeps the phase it was recorded in, because a
+//! death under another pando's lock is as likely that pando's stop as a
+//! crash; a readiness timeout and a process seen ready stand. The read
+//! path advances rather than reconciles, so a crash stays visible; a
+//! mutation that runs [`reconcile`] advances first, under the lock.
+//!
+//! # The marks
+//!
+//! [`WorktreeRecord::stopping`] holds a [`StopMark`] per group a stop is
+//! waiting on: written by `mark_stop`, for `stop`, `stop --all` and `rm`,
+//! and taken off by `unmark_stop` when the stop settles or fails. While
+//! one is live the group's death is the stop's doing: [`advance_phases`]
+//! leaves its phase, [`reconcile`] keeps its record — a process's, a
+//! native server's, a log pump's pid — [`forget_dead_native_services`]
+//! neither forgets nor reports the server, the orphan sweep leaves it
+//! alone, and neither share sweep closes the worktree's share. The stop
+//! settles them, and removes a native server's socket directory by its
+//! record. And a start of the worktree waits the stop out
+//! (`wait_out_stop`), at either hold, rather than call what the stop is
+//! ending already running: it lets the lock go, polls an unlocked
+//! [`load`] until no mark of the worktree is live, and decides again
+//! under the lock — and a process its first hold found running that is
+//! down by its second is spawned again, not reported as up.
+//!
+//! A mark is void once the pando that wrote it is gone — a process handed
+//! its pid since is not it, for the mark says when that pando started —
+//! or after [`STOP_MARK_LIFETIME_SECS`]. A stop that dies mid-wait leaves
+//! its marks, void, and its records, which read as what they are; a group
+//! it had ended reads as failed until the next `stop`, `start` or `rm` of
+//! the worktree clears it. [`load`] forgets a void mark, as it forgets an
+//! earlier boot's marks with its pids, so the next save under the lock
+//! drops it.
+//!
+//! [`WorktreeRecord::removing`] holds the [`Removal`] `claim_removal`
+//! writes. It goes with the record in `finish_removal`, or comes off in
+//! `abandon_removal` when the worktree stays, and never goes void. While
+//! its removal lock is held the removal is under way: a start, a share and
+//! a `new` of the name are refused (`refuse_while_removed`), and so is
+//! another `rm`. Once the lock is free it was interrupted: a start, a
+//! share and a `new` are still refused, and the next `rm` finishes it from
+//! the containers and namespaces the record still names. Nor does
+//! `drop_stale_worktree_records` drop a marked record.
+//!
+//! An isolated start that recorded its compose project before the mark
+//! may run its `up` after the removal's `down -v`. Nothing it brings up
+//! outlives the removal, whichever finishes first: no `up` begins once a
+//! removal has begun or the record is gone (`name_compose_project`
+//! refuses), and a start that brought one up and then ends without
+//! spawning — refused at its second hold, or failed — does so after its
+//! `up` returned, and hands the projects on under the lock
+//! (`leave_to_removal`). To a removal under way it adds them to the mark
+//! ([`Removal::raced`]), and `finish_removal`, the step that takes the mark
+//! off under the same lock and so runs after, takes them down again; for a
+//! removal finished it takes them down itself, the record being gone; an
+//! interrupted one's record names them for the `rm` that finishes it.
+//! `Claim::still_ours` asks [`Removal::same_claim`], so the projects a
+//! start adds do not make the mark another removal's.
+//!
+//! # The removal lock
+//!
+//! Per worktree ([`crate::paths::PandoPaths::removal_lock_file`]), outside
+//! the logs and data the removal deletes. `rm` takes it in `claim_removal`
+//! and holds it to the end, whose step deletes the file under the state
+//! lock. The kernel lets go of a dead process's lock, so the lock, not
+//! `owner_pid`, tells under way from interrupted. [`is_held`] asks by
+//! taking it for a moment, so it is asked only under the state lock
+//! (`removal_of`): `rm` claims under it too, and a look outside it could
+//! fall on a claim, which would then refuse as if another were under way.
+//!
+//! A share's own lock is the other way round: it lives in the worktree's
+//! logs, which `take_down` deletes. So it is taken in place
+//! ([`try_lock_in_place`], [`lock_in_place`]), never making the directory,
+//! and one that finds the directory gone makes it again only under the
+//! state lock, once no removal has begun (`take_share_lock`): a removal
+//! that claims after that deletes it after too. A share refused at its
+//! last hold removes the logs its tunnel and proxy wrote, and the
+//! directory once nothing else is in it.
+//!
+//! # Lock order
+//!
+//! A removal lock is only ever tried under the state lock, never waited
+//! for, and the `rm` holding one waits for the state lock at each later
+//! step: the two are taken in both orders, and nothing deadlocks because
+//! the inner take of one order never blocks. Every other lock is outer: a
+//! share's own, the home's slots lock, a native service's turn and the
+//! check lock are each taken before the state lock, never while it is held.
+//! git's own locks — the config's, a ref's, an index's — are the git
+//! pando runs: never waited for, by git or pando, so a create's git step
+//! that finds one held tries again a moment later (`retrying_git_locks`).
+//!
+//! # A forked child's copy
+//!
+//! A child another thread of this pando forks holds a copy of every
+//! descriptor open at the fork until it execs, and with a flock the copy
+//! holds the lock: a lock let go, or a look at one, can read as held a
+//! moment longer. A reader takes that as held and uses its copy:
+//! `actions::removals` asks [`is_held`] once. Wherever a held lock makes
+//! pando refuse, it asks again for up to [`FORK_COPY_WAIT`] first, through
+//! [`past_a_forks_copy`]: `removal_of` for every refusal over a removal
+//! under way ([`is_held_past_a_fork`]), and `rm`'s take of the removal lock
+//! and `check`'s of the check lock ([`try_lock_past_a_fork`]). The retry
+//! never hides a holder: a lock taken is held alone, and `removal_of` asks
+//! under the state lock, which the `rm` holding a removal lock needs before
+//! it can let go of it alive — so one that reads as free within the moment
+//! was let go by an `rm` that died, and the removal is interrupted.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -180,6 +337,155 @@ pub struct WorktreeRecord {
     /// repository: each repository's new branch forks from its own.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bases: BTreeMap<String, String>,
+    /// The groups a `stop` of this worktree has signalled and is waiting
+    /// on with the lock let go. See [`StopMark`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stopping: Vec<StopMark>,
+    /// A removal of this worktree has begun. See [`Removal`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removing: Option<Removal>,
+}
+
+/// A process group a `stop` is taking down, written before it waits.
+///
+/// A stop waits for its groups to end — up to the grace period, for one
+/// that ignores SIGTERM — without the lock, so two stops of two worktrees
+/// wait together rather than one after the other. While it waits, the
+/// group dying is its doing: nothing calls that death a failure, sweeps
+/// the group as an orphan, drops its record or closes its share, and the
+/// stop settles all of it under the lock when it is done. A mark whose
+/// pando is gone, or older than [`STOP_MARK_LIFETIME_SECS`], is no mark,
+/// and [`load`] forgets it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StopMark {
+    pub pgid: Group,
+    /// The pando stopping it.
+    pub by: u32,
+    /// When that pando started ([`crate::platform::process::started`]),
+    /// so a process handed its pid once it is gone is not taken for it.
+    /// `None` where the system does not say, or in a mark written before
+    /// it was kept: the pid alone then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by_started: Option<u64>,
+    pub since: DateTime<Utc>,
+}
+
+/// How long a [`StopMark`] holds: far past a stop's grace period and its
+/// SIGKILL, so it only ever runs out on a stop that never came back.
+pub const STOP_MARK_LIFETIME_SECS: i64 = 120;
+
+impl StopMark {
+    /// This pando's mark on `pgid`, written `since`.
+    pub fn ours(pgid: Group, since: DateTime<Utc>) -> Self {
+        let by = std::process::id();
+        Self {
+            pgid,
+            by,
+            by_started: crate::platform::process::started(by),
+            since,
+        }
+    }
+
+    /// Whether the stop that wrote this is still waiting on it: its pando
+    /// is alive, is the process that wrote it, and wrote it lately.
+    pub fn live(&self, is_alive: &impl Fn(u32) -> bool) -> bool {
+        is_alive(self.by)
+            && self.by_started.is_none_or(|then| {
+                crate::platform::process::started(self.by).is_none_or(|now| now == then)
+            })
+            && Utc::now().signed_duration_since(self.since).num_seconds() < STOP_MARK_LIFETIME_SECS
+    }
+}
+
+/// `rm`'s mark on a worktree it is removing, written under the lock
+/// before it lets go of it for the slow part — the containers, git's
+/// deletion of the tree, the namespaces — and gone with the record once
+/// that is done, or taken off again by a removal that failed and kept the
+/// worktree.
+///
+/// While the `rm` that wrote it runs, it holds the worktree's removal
+/// lock ([`crate::paths::PandoPaths::removal_lock_file`]), and every
+/// start, share and `new` of the name is refused: they would run in, or
+/// make, a tree being deleted. Once that lock is free the removal was
+/// interrupted — a Ctrl-C, a crash, a TUI quit — and the record stays,
+/// marked, for the next `rm` to finish: it names the containers and
+/// namespaces nothing else could find. A lock, not this pid, says which:
+/// the kernel lets go of a dead process's, and a pid can be anyone's by
+/// the time it is read.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Removal {
+    /// The pando that began it, for the message that says so.
+    pub owner_pid: u32,
+    pub since: DateTime<Utc>,
+    /// Compose projects a start brought up while this removal was under
+    /// way, once its own `down -v` may have run: a start that began before
+    /// the mark, refused at its second hold, writes them here under the
+    /// lock once its `up` is done, and `finish_removal` takes them down
+    /// again. Almost always empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub raced: Vec<String>,
+}
+
+impl Removal {
+    /// Whether `other` is this same removal's mark — the same `rm`'s claim
+    /// — whatever a racing start has written into it since.
+    pub fn same_claim(&self, other: &Removal) -> bool {
+        self.owner_pid == other.owner_pid && self.since == other.since
+    }
+}
+
+/// Whether something holds the lock at `lock_path` now: another pando, or
+/// this one on another thread, still inside what it locked. A file that
+/// is not there is held by nobody, and is not made by asking. One that
+/// cannot be asked is taken as held — the answer refuses, never deletes.
+///
+/// Asked under the state lock, by everything that asks it of a removal:
+/// the moment this holds the lock to find out, a removal claiming it would
+/// find it taken.
+pub fn is_held(lock_path: &Path) -> bool {
+    let file = match std::fs::OpenOptions::new().write(true).open(lock_path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(_) => return true,
+    };
+    !matches!(crate::platform::files::try_lock_exclusive(&file), Ok(true))
+}
+
+/// How long a lock that reads as held is asked again before pando refuses
+/// over it: far past the moment from a fork to its exec, in which a child
+/// holds a copy of every descriptor open in the pando that forked it.
+pub const FORK_COPY_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Asks `ask` until it answers, for up to [`FORK_COPY_WAIT`]: `None` once
+/// it never did. Where pando refuses over a lock that reads as held, it
+/// asks through this, so a forked child's copy is not taken for a holder
+/// (see "A forked child's copy" above). It changes only when pando
+/// decides, never what: a lock taken is held alone whenever it is taken,
+/// and one asked about reads as free only at a moment nothing held it.
+pub fn past_a_forks_copy<T>(mut ask: impl FnMut() -> Result<Option<T>>) -> Result<Option<T>> {
+    let deadline = std::time::Instant::now() + FORK_COPY_WAIT;
+    loop {
+        if let Some(answer) = ask()? {
+            return Ok(Some(answer));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// [`is_held`], believed only once it has held for [`FORK_COPY_WAIT`]:
+/// for a caller that refuses on the answer. A reader asks [`is_held`]
+/// once and lives with a moment's wrong answer.
+pub fn is_held_past_a_fork(lock_path: &Path) -> bool {
+    past_a_forks_copy(|| Ok((!is_held(lock_path)).then_some(()))).is_ok_and(|free| free.is_none())
+}
+
+/// [`try_lock`], asked again for [`FORK_COPY_WAIT`] while it is taken: for
+/// a claim that refuses when it cannot have the lock.
+pub fn try_lock_past_a_fork(lock_path: &Path) -> Result<Option<StateLock>> {
+    past_a_forks_copy(|| try_lock(lock_path))
 }
 
 impl WorktreeRecord {
@@ -222,7 +528,30 @@ impl WorktreeRecord {
             last_started: None,
             base: None,
             bases: BTreeMap::new(),
+            stopping: Vec::new(),
+            removing: None,
         }
+    }
+
+    /// Whether a `stop` in flight is taking `pgid` down: see [`StopMark`].
+    pub fn being_stopped(&self, pgid: Group, is_alive: &impl Fn(u32) -> bool) -> bool {
+        self.stopping
+            .iter()
+            .any(|mark| mark.pgid == pgid && mark.live(is_alive))
+    }
+
+    /// The groups of this worktree a `stop` in flight is taking down.
+    pub fn groups_being_stopped(&self, is_alive: &impl Fn(u32) -> bool) -> Vec<Group> {
+        self.stopping
+            .iter()
+            .filter(|mark| mark.live(is_alive))
+            .map(|mark| mark.pgid)
+            .collect()
+    }
+
+    /// Whether a `stop` in flight is taking down anything of this worktree.
+    pub fn stop_in_flight(&self, is_alive: &impl Fn(u32) -> bool) -> bool {
+        self.stopping.iter().any(|mark| mark.live(is_alive))
     }
 
     /// When this worktree last ran: the start that last spawned a process,
@@ -559,7 +888,19 @@ pub fn load(path: &Path) -> Result<State> {
         pids_since: boot_pids_since,
     });
     forget_previous_boot(&mut state, written, crate::platform::boot::now());
+    forget_void_marks(&mut state, crate::platform::process::is_alive);
     Ok(state)
+}
+
+/// Drops every [`StopMark`] that is no longer live: a stop that died
+/// mid-wait, or ran past [`STOP_MARK_LIFETIME_SECS`], left it, and nothing
+/// reads it. Forgotten as it is read, so the next save under the lock
+/// drops it — and a process handed its pando's pid later, where the
+/// system cannot say when a process started, cannot bring it back.
+fn forget_void_marks(state: &mut State, is_alive: impl Fn(u32) -> bool) {
+    for record in state.worktrees.values_mut() {
+        record.stopping.retain(|mark| mark.live(&is_alive));
+    }
 }
 
 /// The state file as it is written: the state, and the boot it was
@@ -597,7 +938,7 @@ struct Saving<'a> {
 /// written during another boot keeps what outlives a restart — ports,
 /// roles, hooks, the compose projects that name containers and volumes,
 /// the mode — and loses every pid, the process groups of a share still
-/// coming up among them.
+/// coming up and the marks of a stop among them.
 ///
 /// A file with no boot recorded, or a system that cannot say, keeps them:
 /// not knowing is not evidence of a restart.
@@ -613,6 +954,7 @@ fn forget_previous_boot(state: &mut State, written: Option<Boot<'_>>, now: Optio
         record.observed_ports.clear();
         record.share = None;
         record.pending_shares.clear();
+        record.stopping.clear();
         for service in record.services.iter_mut() {
             service.pid = None;
             service.pgid = None;
@@ -644,22 +986,6 @@ pub fn save(path: &Path, state: &State) -> Result<()> {
     Ok(())
 }
 
-/// Drops what is no longer running: process records whose pid is gone,
-/// native service records whose pid is gone, and a share whose tunnel or
-/// proxy has exited. The worktree record itself survives — `created_by_pando`
-/// and the port assignment outlive any process.
-///
-/// One exception: a `Failed` record stays. It is the one phase whose whole
-/// purpose is to outlive its process — `refresh` advances phases rather
-/// than reconciling precisely so a crashed dev server stays visible until
-/// the developer acts on it — and dropping it here erased that from
-/// `status` the moment anything else in the project was started or stopped.
-/// The mutations that *are* about those processes clear them explicitly:
-/// `start` for the ones it starts, `stop` for the ones it stops, `rm` for
-/// all of a worktree's.
-///
-/// Every read path calls this before trusting the map. Returns whether
-/// anything changed, so a caller holding the lock knows to save.
 /// Whether a process record still has something behind it.
 ///
 /// The leader first, because that is the question `stop` and the Phase 2b
@@ -715,6 +1041,27 @@ impl ProcessRecord {
     }
 }
 
+/// Drops what is no longer running: process records whose pid is gone,
+/// native service records whose pid is gone, and a share whose tunnel or
+/// proxy has exited. The worktree record itself survives — `created_by_pando`
+/// and the port assignment outlive any process.
+///
+/// One exception: a `Failed` record stays. It is the one phase whose whole
+/// purpose is to outlive its process — `refresh` advances phases rather
+/// than reconciling precisely so a crashed dev server stays visible until
+/// the developer acts on it — and dropping it here erased that from
+/// `status` the moment anything else in the project was started or stopped.
+/// The mutations that *are* about those processes clear them explicitly:
+/// `start` for the ones it starts, `stop` for the ones it stops, `rm` for
+/// all of a worktree's.
+///
+/// A group a stop in flight is taking down is that stop's ([`StopMark`]):
+/// its process record, and its service record with the pid on it, stay
+/// for the stop to settle.
+///
+/// Every mutation that drops records calls this, under the lock, once it
+/// has advanced phases; the read path advances instead. Returns whether
+/// anything changed, so the caller knows to save.
 pub fn reconcile(
     state: &mut State,
     is_alive: impl Fn(u32) -> bool,
@@ -722,10 +1069,13 @@ pub fn reconcile(
 ) -> bool {
     let mut changed = false;
     for rec in state.worktrees.values_mut() {
+        // A record a stop in flight signalled is that stop's to drop.
+        let stopping = rec.groups_being_stopped(&is_alive);
         let before = rec.processes.len();
         rec.processes.retain(|_, p| {
             record_alive(p.pid, p.pgid, p.ready_port, &is_alive, &group_alive)
                 || matches!(p.phase, Phase::Failed { .. })
+                || stopping.contains(&p.pgid)
         });
         changed |= rec.processes.len() != before;
 
@@ -735,12 +1085,21 @@ pub fn reconcile(
         // because the pump died would leave a running container — with its
         // volume — that nothing in pando could ever find again, let alone
         // take down. So the pump is forgotten and the service is kept.
+        //
+        // And a service whose group a stop in flight signalled is that
+        // stop's to settle, as a process is: it clears the record's pid,
+        // keeps a native server's record for its port, and removes the
+        // server's socket directory, which it finds by that record.
+        let marked = |s: &ServiceRecord| s.pgid.is_some_and(|pgid| stopping.contains(&pgid));
         let before = rec.services.len();
-        rec.services
-            .retain(|s| s.kind != ServiceKind::Native || s.pid.map(&is_alive).unwrap_or(true));
+        rec.services.retain(|s| {
+            s.kind != ServiceKind::Native || s.pid.map(&is_alive).unwrap_or(true) || marked(s)
+        });
         changed |= rec.services.len() != before;
         for service in rec.services.iter_mut() {
-            if service.kind == ServiceKind::Compose && service.pid.is_some_and(|pid| !is_alive(pid))
+            if service.kind == ServiceKind::Compose
+                && service.pid.is_some_and(|pid| !is_alive(pid))
+                && !marked(service)
             {
                 service.pid = None;
                 service.pgid = None;
@@ -779,6 +1138,10 @@ pub fn reconcile(
 /// lives on — a database's own children still holding the socket — is the
 /// orphan sweep's to signal, on the next mutation, and dropping the record
 /// here would leave that group with nothing able to find it again.
+///
+/// Never one a stop in flight is taking down ([`StopMark`]): that death is
+/// the stop's doing, not a crash to report, and the stop settles the
+/// record and removes the socket directory by it.
 pub fn forget_dead_native_services(
     state: &mut State,
     is_alive: impl Fn(u32) -> bool,
@@ -786,10 +1149,12 @@ pub fn forget_dead_native_services(
 ) -> Vec<(String, String)> {
     let mut forgotten = Vec::new();
     for (name, rec) in state.worktrees.iter_mut() {
+        let stopping = rec.groups_being_stopped(&is_alive);
         rec.services.retain(|service| {
             let gone = service.kind == ServiceKind::Native
                 && service.pid.is_some_and(|pid| !is_alive(pid))
-                && !service.pgid.is_some_and(&group_alive);
+                && !service.pgid.is_some_and(&group_alive)
+                && !service.pgid.is_some_and(|pgid| stopping.contains(&pgid));
             if gone {
                 forgotten.push((name.clone(), service.name.clone()));
             }
@@ -804,6 +1169,10 @@ pub fn forget_dead_native_services(
 fn sweep_dead_shares(state: &mut State, is_alive: &impl Fn(u32) -> bool) -> bool {
     let mut changed = false;
     for rec in state.worktrees.values_mut() {
+        // A stop in flight takes its share down itself, and says so.
+        if rec.stop_in_flight(is_alive) {
+            continue;
+        }
         let Some(share) = &rec.share else { continue };
         let tunnel_dead = !is_alive(share.tunnel_pid);
         let proxy_dead = share.proxy_pid.map(|p| !is_alive(p)).unwrap_or(false);
@@ -823,6 +1192,9 @@ fn sweep_dead_shares(state: &mut State, is_alive: &impl Fn(u32) -> bool) -> bool
 /// port to find out, which would hand the server being waited for an
 /// `EADDRINUSE`. A process that declared no `ready_port` is Running as soon
 /// as it is alive.
+///
+/// A group a `stop` in flight is taking down is left where it is: its
+/// death is that stop's doing, and the stop settles it ([`StopMark`]).
 pub fn advance_phases<R: Into<PortCheck>>(
     state: &mut State,
     is_alive: impl Fn(u32) -> bool,
@@ -832,7 +1204,11 @@ pub fn advance_phases<R: Into<PortCheck>>(
     let now = Utc::now();
     let mut changed = false;
     for rec in state.worktrees.values_mut() {
+        let stopping = rec.groups_being_stopped(&is_alive);
         for proc in rec.processes.values_mut() {
+            if stopping.contains(&proc.pgid) {
+                continue;
+            }
             match &proc.phase {
                 Phase::Starting { since } => {
                     let timeout = proc
@@ -972,13 +1348,6 @@ impl Aggregate {
     }
 }
 
-/// The phase of a whole worktree, or `None` when it is running nothing.
-///
-/// The failure reported is the *earliest* one: with a web process that died
-/// because its api never came up, the api's failure is the one that
-/// explains the worktree, and the classifier's hint for it is the one worth
-/// showing. Ties go to the first name in order, so the answer is stable
-/// across reads.
 /// How long a worktree has to have been up before a port of its processes
 /// that nothing listens on is worth saying: long enough for a second
 /// server the ready one started to bind.
@@ -1013,6 +1382,13 @@ pub fn silent_ports(record: &WorktreeRecord, now: DateTime<Utc>) -> Vec<(String,
     silent
 }
 
+/// The phase of a whole worktree, or `None` when it is running nothing.
+///
+/// The failure reported is the *earliest* one: with a web process that died
+/// because its api never came up, the api's failure is the one that
+/// explains the worktree, and the classifier's hint for it is the one worth
+/// showing. Ties go to the first name in order, so the answer is stable
+/// across reads.
 pub fn aggregate_phase(record: &WorktreeRecord) -> Option<Aggregate> {
     if record.processes.is_empty() {
         return None;
@@ -1054,8 +1430,68 @@ pub struct StateLock {
     _file: std::fs::File,
 }
 
+/// How long [`lock`] waits in silence before it says what it is waiting
+/// for: longer than a read or a quick mutation holds a lock, short enough
+/// that nobody wonders whether pando hung.
+pub const LOCK_WAIT_NOTICE_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// What [`lock`] says when it has to wait, set once by a front end that
+/// has somewhere to say it. The CLI sets it; the TUI does not, since its
+/// stderr is the screen and its rows already show what is pending.
+static LOCK_WAIT_NOTICE: std::sync::OnceLock<fn(&str)> = std::sync::OnceLock::new();
+
+/// Has every [`lock`] that waits longer than [`LOCK_WAIT_NOTICE_AFTER`]
+/// say so through `say`, once. The first call wins.
+pub fn announce_lock_waits(say: fn(&str)) {
+    let _ = LOCK_WAIT_NOTICE.set(say);
+}
+
+/// Takes the lock, waiting for whoever holds it. A holder keeps it for
+/// bookkeeping, a moment, except where something still waits under it —
+/// a start stopping what it replaces, a sweep — which can take a grace
+/// period (see the module doc). Where a front end asked
+/// ([`announce_lock_waits`]), a wait that lasts is said once rather than
+/// looking like a hang.
 pub fn lock(lock_path: &Path) -> Result<StateLock> {
+    match LOCK_WAIT_NOTICE.get() {
+        Some(say) => lock_announced(lock_path, LOCK_WAIT_NOTICE_AFTER, &|line| say(line)),
+        None => {
+            let file = open_lock_file(lock_path)?;
+            crate::platform::files::lock_exclusive(&file)
+                .with_context(|| format!("flock on {}", lock_path.display()))?;
+            Ok(StateLock { _file: file })
+        }
+    }
+}
+
+/// [`lock`], saying through `say` once it has waited `after`.
+///
+/// Asked again every few milliseconds until then, so the line is never
+/// printed for a lock that came free in time and no thread is needed to
+/// print it; after it, the wait is the plain blocking one.
+pub(crate) fn lock_announced(
+    lock_path: &Path,
+    after: std::time::Duration,
+    say: &dyn Fn(&str),
+) -> Result<StateLock> {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(20);
     let file = open_lock_file(lock_path)?;
+    let began = std::time::Instant::now();
+    loop {
+        if crate::platform::files::try_lock_exclusive(&file)
+            .with_context(|| format!("flock (try) on {}", lock_path.display()))?
+        {
+            return Ok(StateLock { _file: file });
+        }
+        if began.elapsed() >= after {
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    say(&format!(
+        "waiting for another pando to finish — it holds {}",
+        lock_path.display()
+    ));
     crate::platform::files::lock_exclusive(&file)
         .with_context(|| format!("flock on {}", lock_path.display()))?;
     Ok(StateLock { _file: file })
@@ -1066,6 +1502,30 @@ pub fn try_lock(lock_path: &Path) -> Result<Option<StateLock>> {
     let held = crate::platform::files::try_lock_exclusive(&file)
         .with_context(|| format!("flock (try) on {}", lock_path.display()))?;
     Ok(held.then_some(StateLock { _file: file }))
+}
+
+/// [`try_lock`] on a lock file whose directory is never made: an error of
+/// kind `NotFound` once the directory is gone. For a lock that lives in a
+/// directory a removal deletes, which taking it must not make again.
+pub fn try_lock_in_place(lock_path: &Path) -> std::io::Result<Option<StateLock>> {
+    let file = open_in_place(lock_path)?;
+    let held = crate::platform::files::try_lock_exclusive(&file)?;
+    Ok(held.then_some(StateLock { _file: file }))
+}
+
+/// [`try_lock_in_place`] that waits for whoever holds it.
+pub fn lock_in_place(lock_path: &Path) -> std::io::Result<StateLock> {
+    let file = open_in_place(lock_path)?;
+    crate::platform::files::lock_exclusive(&file)?;
+    Ok(StateLock { _file: file })
+}
+
+fn open_in_place(lock_path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path)
 }
 
 fn open_lock_file(lock_path: &Path) -> Result<std::fs::File> {
@@ -1710,9 +2170,14 @@ mod tests {
             })
         };
         let mut state = full_state();
+        // A mark is a pid too, and a restart within its lifetime — a
+        // distro's takes seconds — hands that pid to someone else.
+        state.worktrees.get_mut("feat+x").unwrap().stopping =
+            vec![StopMark::ours(Group::from_raw(4242), Utc::now())];
         forget_previous_boot(&mut state, boot(Some(100)), boot(Some(250)));
         let rec = &state.worktrees["feat+x"];
         assert!(rec.processes.is_empty(), "{:?}", rec.processes);
+        assert!(rec.stopping.is_empty(), "{:?}", rec.stopping);
         assert!(rec.share.is_none());
         assert!(
             rec.services
@@ -1875,6 +2340,89 @@ mod tests {
             vec!["postgres"],
             "a compose record is a container, not a process, and stays"
         );
+    }
+
+    // A stop that died mid-wait left its marks in the file, and nothing
+    // took them off: void, but a pid handed to another process brought
+    // one back for the rest of its lifetime. Every load forgets a void
+    // one, so the next save under the lock drops it.
+    #[test]
+    fn a_load_forgets_every_stop_mark_that_is_void() {
+        let mut gone = std::process::Command::new("git")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        gone.wait().unwrap();
+        let mark = |pgid, by, by_started, ago| StopMark {
+            pgid: Group::from_raw(pgid),
+            by,
+            by_started,
+            since: Utc::now() - chrono::Duration::seconds(ago),
+        };
+        let ours = StopMark::ours(Group::from_raw(1), Utc::now());
+        let me = std::process::id();
+        let mut rec = WorktreeRecord::new("/abs/w", true);
+        rec.stopping = vec![
+            ours.clone(),
+            // Written before a mark said when its pando started.
+            mark(2, me, None, 0),
+            // Its pando is gone.
+            mark(3, gone.id(), None, 0),
+            // Past its lifetime.
+            mark(4, me, ours.by_started, STOP_MARK_LIFETIME_SECS + 1),
+            // Its pid is held by another process than the one that wrote it.
+            mark(5, me, ours.by_started.map(|s| s + 1), 0),
+        ];
+        let mut state = State::new();
+        state.worktrees.insert("w".into(), rec);
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        save(&path, &state).unwrap();
+
+        let kept: Vec<i32> = load(&path).unwrap().worktrees["w"]
+            .stopping
+            .iter()
+            .map(|mark| mark.pgid.as_raw())
+            .collect();
+        let started_known = ours.by_started.is_some();
+        assert_eq!(
+            kept,
+            if started_known {
+                vec![1, 2]
+            } else {
+                vec![1, 2, 5]
+            },
+            "{started_known}"
+        );
+    }
+
+    // A stop signals a native server's group with the rest and waits for
+    // it with the lock let go. That death is the stop's: neither sweep may
+    // forget the record, or report the server as exited, before the stop
+    // settles it and removes its socket directory by it.
+    #[test]
+    fn a_native_server_a_stop_is_taking_down_is_kept_by_both_sweeps() {
+        let mut state = full_state();
+        state.worktrees.get_mut("feat+x").unwrap().stopping = vec![StopMark {
+            pgid: Group::from_raw(5150),
+            by: 1234,
+            by_started: None,
+            since: Utc::now(),
+        }];
+        let stopper_alive = |pid| pid == 1234;
+        assert!(forget_dead_native_services(&mut state, stopper_alive, |_| false).is_empty());
+        reconcile(&mut state, stopper_alive, |_| false);
+        let redis = state.worktrees["feat+x"]
+            .services
+            .iter()
+            .find(|s| s.name == "redis")
+            .expect("the stop's to settle");
+        assert_eq!(redis.pid, Some(5150), "{redis:?}");
+
+        // Its pando gone, the mark is void, and the death is a crash again.
+        let forgotten = forget_dead_native_services(&mut state, |_| false, |_| false);
+        assert_eq!(forgotten, vec![("feat+x".to_string(), "redis".to_string())]);
     }
 
     #[test]
@@ -2238,5 +2786,51 @@ mod tests {
         assert!(procs["gone"].swept, "nothing left to signal");
         assert!(procs["starting"].swept, "nothing left to signal");
         assert!(!procs["lingering"].swept, "its group still has a member");
+    }
+
+    // A mutation that has to wait for another pando's lock says so once,
+    // after a moment, rather than looking hung; a lock that is free, or
+    // comes free in time, says nothing.
+    #[test]
+    fn a_lock_that_waits_says_so_once_and_one_that_does_not_says_nothing() {
+        use std::cell::RefCell;
+        use std::time::{Duration, Instant};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.lock");
+
+        let said = RefCell::new(Vec::<String>::new());
+        let say = |line: &str| said.borrow_mut().push(line.to_string());
+        drop(lock_announced(&path, Duration::from_millis(100), &say).unwrap());
+        assert!(said.borrow().is_empty(), "a free lock: {:?}", said.borrow());
+
+        let held = lock(&path).unwrap();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let holder = std::thread::spawn(move || {
+            let _ = released.recv();
+            std::thread::sleep(Duration::from_millis(300));
+            drop(held);
+        });
+        let began = Instant::now();
+        release.send(()).unwrap();
+        let taken = lock_announced(&path, Duration::from_millis(100), &say).unwrap();
+        holder.join().unwrap();
+        assert!(began.elapsed() >= Duration::from_millis(300), "it waited");
+        assert_eq!(said.borrow().len(), 1, "{:?}", said.borrow());
+        assert!(
+            said.borrow()[0].starts_with("waiting for another pando to finish"),
+            "{:?}",
+            said.borrow()
+        );
+        assert!(said.borrow()[0].contains("state.lock"));
+        assert!(
+            try_lock(&path).unwrap().is_none(),
+            "and it holds the lock it waited for"
+        );
+        drop(taken);
+        // Not at once under a full run: a fork another test makes between
+        // here and its exec holds a copy of the lock's file a moment longer.
+        assert!(crate::testutil::wait_until(Duration::from_secs(5), || {
+            try_lock(&path).unwrap().is_some()
+        }));
     }
 }

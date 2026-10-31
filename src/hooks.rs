@@ -13,8 +13,9 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crate::platform::signals::{self, HangUpOnExit};
 
@@ -256,6 +257,71 @@ fn waited<T>(
     wait(child)
 }
 
+/// What a hook is not started for once pando has been told to stop.
+pub const NOT_STARTED: &str = "not started, since pando was told to stop";
+
+/// What a hook pando stopped, on being told to stop itself, ends with.
+pub const STOPPED: &str = "stopped, since pando was told to stop";
+
+/// How long a hook pando stops has between SIGTERM and SIGKILL: an install
+/// told to stop gets to finish the file it is writing.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+
+/// How often a hook pando may have to stop is looked at, for its end or
+/// for pando's.
+const POLL: Duration = Duration::from_millis(50);
+
+/// [`waited`] for a hook, which is stopped when pando is.
+///
+/// Never started once pando has been told to stop. And while pando
+/// catches interrupts — `check`, a `new` from the CLI — a hook that a
+/// terminal's Ctrl-C would not reach leads a group of its own, which
+/// pando stops the moment it is told to: an agent's pando, CI's, one in
+/// the background, or a `kill` of pando alone. Before, it ran in pando's
+/// group and was waited for to its end, so an interrupt that landed
+/// between the hook's log being opened and its spawn reached pando and
+/// not the install, and the check sat until the install ended by itself.
+///
+/// In front of a terminal it keeps pando's group, as before: the
+/// terminal's Ctrl-C reaches it as it reaches pando, and a tool in it can
+/// still prompt there, which a background group cannot.
+fn run_to_end(command: &mut Command, detached: bool) -> std::io::Result<ExitStatus> {
+    if signals::interrupted() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            NOT_STARTED,
+        ));
+    }
+    let catching = signals::catching();
+    let (mut child, group, _held) = if detached {
+        let (child, group) = crate::platform::process::spawn_group(command)?;
+        (child, group, Some(HangUpOnExit::hold(group)))
+    } else if catching && !crate::platform::terminal::in_foreground() {
+        let (child, group) = crate::platform::process::spawn_in_group(command)?;
+        (child, group, None)
+    } else {
+        return command.spawn()?.wait();
+    };
+    if !catching {
+        return child.wait();
+    }
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if signals::interrupted() {
+            // The stop reaps the group's leader, which is the child: there
+            // is no status left to wait for.
+            let _ = crate::platform::process::stop(group, STOP_GRACE);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                STOPPED,
+            ));
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
 /// `bash -lc` running `shell_cmd` in `cwd` with `env` added and nothing on
 /// stdin. [`waited`] decides whether it gets a terminal.
 fn shell(shell_cmd: &str, cwd: &Path, env: &[(String, String)]) -> std::io::Result<Command> {
@@ -297,8 +363,8 @@ pub fn run(log_file: &Path, shell_cmd: &str, cwd: &Path, env: &[(String, String)
     let detached = DETACHED.load(Ordering::Relaxed);
     let mut command = shell(shell_cmd, cwd, env).with_context(|| format!("run {shell_cmd:?}"))?;
     command.stdout(out).stderr(err);
-    let status = waited(&mut command, detached, |mut child| child.wait())
-        .with_context(|| format!("run {shell_cmd:?}"))?;
+    let status =
+        run_to_end(&mut command, detached).with_context(|| format!("run {shell_cmd:?}"))?;
 
     // A hook's last line ends in a newline, so whatever the log gets next
     // starts a line of its own.
@@ -379,6 +445,11 @@ pub fn run_with_fallback(
     let Some(fallback) = fallback else {
         return Err(first);
     };
+    // The first one failed because pando was told to stop, most likely,
+    // and nothing starts after that.
+    if signals::interrupted() {
+        return Err(first);
+    }
     append(
         log_file,
         &format!("\npando: {shell_cmd} failed; trying the fallback\n"),

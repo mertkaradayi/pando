@@ -15,7 +15,10 @@ use crate::worktree::{self, PrInfo, Worktree};
 
 use super::checkout::CheckoutPlan;
 use super::hooks::{HookContext, run_hooks};
-use super::lifecycle::{StopOutcome, stop_recorded, sweep_orphaned_groups};
+use super::lifecycle::{
+    STOP_GRACE, StopOutcome, mark_stop, settle_stop, stop_recorded, stop_recorded_with,
+    sweep_orphaned_groups, unmark_stop, wait_for,
+};
 use super::namespaced::drop_namespaces;
 use super::refresh::refresh;
 use super::services::{clear_native_sockets, compose_projects, docker_down_for, remove_containers};
@@ -25,6 +28,13 @@ use crate::remedy;
 /// its install step failed. The worktree is kept, so a caller may treat
 /// it as made.
 pub const CREATED_BUT_INSTALL_FAILED: &str = "was created, but its install step failed";
+
+/// What `new` says as its install starts, once it has written every ref it
+/// writes: the branch, each checkout's entry, the record — and let go of
+/// the state lock. What follows is the install and the create hooks, which
+/// take minutes and write no ref, so the TUI lets the other git writers
+/// run from this line on.
+pub const INSTALLING: &str = "installing";
 
 /// What `new` says when another command recorded the worktree while git
 /// checked it out. The worktree is kept here too, so a caller may treat
@@ -108,7 +118,7 @@ fn sources_for(
     progress: &dyn Fn(&str),
 ) -> Result<Vec<RepoSource>> {
     let root = paths.root();
-    let mut sources = Vec::new();
+    let mut wanted_checkouts = Vec::new();
     for (repo, checkout) in paths.project.repo_checkouts_in(root) {
         if !wanted(repo) {
             continue;
@@ -128,23 +138,53 @@ fn sources_for(
         let requested = base
             .or_else(|| config.base_for(repo, Some(branch)))
             .map(str::to_string);
-        // Each repository's lookup said as its own, or a fetch per
-        // repository reads as one line said twice.
-        let said = |line: &str| match repo {
-            Some(repo) => progress(&format!("{repo}: {line}")),
-            None => progress(line),
-        };
-        let source = in_repo(
-            resolve_create_source(&checkout, branch, requested, &said),
-            repo,
-        )?;
-        sources.push(RepoSource {
-            repo: repo.map(str::to_string),
-            root: checkout,
-            source,
-        });
+        wanted_checkouts.push((repo.map(str::to_string), checkout, requested));
     }
-    Ok(sources)
+    // Every repository's lookup at once, each on a thread of its own: a
+    // lookup can be a `git fetch`, and one repository after another a set
+    // of five waited on five. What each says is said here as it comes,
+    // as its own, or a fetch per repository reads as one line said twice.
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let resolved: Vec<Result<CreateSource>> = std::thread::scope(|scope| {
+        let resolving: Vec<_> = wanted_checkouts
+            .iter()
+            .map(|(repo, checkout, requested)| {
+                let tx = tx.clone();
+                scope.spawn(move || {
+                    let said = |line: &str| {
+                        let _ = tx.send(match repo {
+                            Some(repo) => format!("{repo}: {line}"),
+                            None => line.to_string(),
+                        });
+                    };
+                    resolve_create_source(checkout, branch, requested.clone(), &said)
+                })
+            })
+            .collect();
+        drop(tx);
+        for line in rx {
+            progress(&line);
+        }
+        resolving
+            .into_iter()
+            .map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    wanted_checkouts
+        .into_iter()
+        .zip(resolved)
+        .map(|((repo, root, _), source)| {
+            Ok(RepoSource {
+                source: in_repo(source, repo.as_deref())?,
+                repo,
+                root,
+            })
+        })
+        .collect()
 }
 
 /// The set called `name` when it lacks a checkout of one of the project's
@@ -289,7 +329,7 @@ fn complete_set(
     );
     progress(&format!("added {} to {shown}", names.join(", ")));
     if has_install_step(config) {
-        progress("installing");
+        progress(INSTALLING);
     }
     let no_ports: BTreeMap<String, u16> = BTreeMap::new();
     let no_services: BTreeMap<String, String> = BTreeMap::new();
@@ -355,6 +395,14 @@ fn claim_checkouts(
     sources: &[RepoSource],
 ) -> Result<Vec<PathBuf>> {
     let _lock = state::lock(&paths.lock_file())?;
+    // A set being removed gets no checkout added to it.
+    refuse_while_removed(
+        paths,
+        &state::load(&paths.state_file())?,
+        &set.name,
+        &set.display_name(),
+        "nothing was added to it",
+    )?;
     let mut claimed = Vec::new();
     for source in sources {
         let at = source.target(&set.path);
@@ -602,6 +650,11 @@ fn create(
         if store != loaded {
             state::save(&paths.state_file(), &store)?;
         }
+        // A worktree of this name is not gone until its removal drops its
+        // record: made now, the new one would be checked out where the old
+        // one's tree is still being deleted, and lose its record to that
+        // removal.
+        refuse_while_removed(paths, &store, &dir_name, &dir_name, "nothing was made")?;
         // The target is claimed here, under the lock, as an empty directory
         // `git worktree add` accepts: a second `new` of the same branch
         // finds it taken and refuses before git runs, so the one that
@@ -741,7 +794,7 @@ fn create(
         }
     }
     if installs {
-        progress("installing");
+        progress(INSTALLING);
     }
     let no_ports: BTreeMap<String, u16> = BTreeMap::new();
     let no_services: BTreeMap<String, String> = BTreeMap::new();
@@ -820,7 +873,19 @@ fn add_checkout(
     // download can ask for a password — over the TUI, whose keys then went
     // nowhere, and for ever.
     cmd.env("GIT_TERMINAL_PROMPT", "0");
-    let out = cmd.output().context("spawn git worktree add")?;
+    // Again while another git holds the config or a ref a moment — the
+    // upstream `--track` writes, beside an install's `husky install` — once
+    // the failed add is undone: git kept the branch `-b` made.
+    let out = retrying_git_locks(
+        || cmd.output(),
+        |_| {
+            !is_registered(root, at)
+                && made
+                    .as_deref()
+                    .is_none_or(|start| delete_made_branch(root, branch, start) != Some(false))
+        },
+    )
+    .context("spawn git worktree add")?;
     // git removes a worktree whose checkout failed, but keeps the branch
     // `-b` made for it; and it keeps the worktree itself when only its
     // `post-checkout` hook failed. A worktree still there is the caller's
@@ -1254,11 +1319,10 @@ fn refuse_unforced(shown: &str, target: &Worktree) -> Result<()> {
 
 /// `git worktree remove` of each checkout of `target`, in its own
 /// repository: the worktree itself, or each of a set's. A removal git
-/// refuses saves `store` — what was running has been stopped by then, and
-/// that cannot be taken back — and says what was and was not removed.
+/// refuses says what was and was not removed — what was running has been
+/// stopped by then, and saved so, and that cannot be taken back.
 fn remove_checkouts(
     paths: &PandoPaths,
-    store: &state::State,
     target: &Worktree,
     force: bool,
     stopped: &StopOutcome,
@@ -1283,10 +1347,7 @@ fn remove_checkouts(
             removed.push(&checkout.name);
             continue;
         }
-        // The cleared record is saved rather than left behind to resurface
-        // as a phantom failure, and the message says what actually
-        // happened.
-        state::save(&paths.state_file(), store)?;
+        // The message says what actually happened.
         let reason = match repo {
             Some(repo) => format!("in {repo}: {}", git_failure_reason(&out)),
             None => git_failure_reason(&out),
@@ -1481,17 +1542,74 @@ fn drop_made_branch(
     let Some(start) = made else {
         return err;
     };
-    let refname = format!("refs/heads/{branch}");
-    if !ref_exists(root, &refname) {
-        return err;
-    }
-    match git_succeeds(root, &["update-ref", "-d", &refname, start]) {
-        true => anyhow::anyhow!("{err:#} — the new branch {branch} was removed"),
-        false => anyhow::anyhow!(
+    match delete_made_branch(root, branch, start) {
+        None => err,
+        Some(true) => anyhow::anyhow!("{err:#} — the new branch {branch} was removed"),
+        Some(false) => anyhow::anyhow!(
             "{err:#} — the new branch {branch} is still there; delete it with `git branch -D \
              {branch}`"
         ),
     }
+}
+
+/// Deletes `branch` while it is still at `start`, the commit a failed
+/// `git worktree add -b` made it at: `None` when there is no such branch,
+/// else whether it went.
+fn delete_made_branch(root: &Path, branch: &str, start: &str) -> Option<bool> {
+    let refname = format!("refs/heads/{branch}");
+    ref_exists(root, &refname).then(|| git_succeeds(root, &["update-ref", "-d", &refname, start]))
+}
+
+/// How long a git step that writes the repository's shared config or refs
+/// tries again while another git holds their lock. git holds one for
+/// milliseconds; one held past this is one a git that crashed left, which
+/// git's own message then names.
+const GIT_LOCK_PATIENCE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Runs a git step that writes the repository's shared config or refs
+/// again while it fails only because another git held a lock it needed
+/// ([`git_lock_busy`]), for up to [`GIT_LOCK_PATIENCE`]. git waits for
+/// none of them, so two steps that would each have passed alone fail side
+/// by side: a create beside another's install, whose `husky install` sets
+/// `core.hooksPath`, or beside a `pando rm` of the only other worktree.
+///
+/// `undo` runs after each such failure, before the step is tried again,
+/// and says whether it left nothing behind: only then is it. The failure
+/// it gave up on is the one returned.
+pub(super) fn retrying_git_locks(
+    mut run: impl FnMut() -> std::io::Result<std::process::Output>,
+    mut undo: impl FnMut(&std::process::Output) -> bool,
+) -> std::io::Result<std::process::Output> {
+    let began = std::time::Instant::now();
+    let mut pause = std::time::Duration::from_millis(25);
+    loop {
+        let out = run()?;
+        if out.status.success()
+            || !git_lock_busy(&out)
+            || began.elapsed() >= GIT_LOCK_PATIENCE
+            || !undo(&out)
+        {
+            return Ok(out);
+        }
+        std::thread::sleep(pause);
+        pause = (pause * 2).min(std::time::Duration::from_millis(400));
+    }
+}
+
+/// Whether git failed for a lock another git held a moment, in git's own
+/// words: the config's, a ref's or an index's lock file already there, a
+/// ref another git moved under it, or `.git/worktrees` removed by another
+/// worktree's removal between an add making it and making its own entry
+/// in it. Never a lock git could not take for any other reason.
+pub(super) fn git_lock_busy(out: &std::process::Output) -> bool {
+    String::from_utf8_lossy(&out.stderr).lines().any(|line| {
+        let held = line.contains("File exists");
+        (line.contains("could not lock config file") && held)
+            || (line.contains("Unable to create '") && line.contains(".lock'") && held)
+            || (line.contains("cannot lock ref") && line.contains("but expected"))
+            || (line.contains("could not create directory of '")
+                && line.contains("No such file or directory"))
+    })
 }
 
 /// The commit `rev` names, in full.
@@ -1529,11 +1647,46 @@ fn git_succeeds(root: &Path, args: &[&str]) -> bool {
 /// same way, less the git removal: what the record names is taken down
 /// and the record forgotten. Otherwise the record would wait for an
 /// unrelated `new` to drop it, and nothing would take down what it named.
+///
+/// In the shape `start` has, so removals of several worktrees run side by
+/// side and nothing else waits behind one: under the state lock, every
+/// refusal is decided, what runs is stopped and the record is marked as
+/// being removed ([`state::Removal`]); without it, the containers, the
+/// tree and the namespaces go — the tree alone is minutes for a big
+/// `node_modules`; under it again, the record goes. The questions put to
+/// git and Docker are asked before the lock, and the ones state answers
+/// asked again under it. A removal stopped half way leaves its record
+/// marked, and the next `rm` of the name finishes it.
+///
+/// What runs is stopped as `stop` stops it: marked and signalled under the
+/// lock, waited for without it, settled under it again. A dev server that
+/// ignores SIGTERM takes its whole grace before its SIGKILL, and several
+/// removals of running worktrees wait out theirs together.
 pub fn rm(
     paths: &PandoPaths,
     name: &str,
     yes: bool,
     force: bool,
+    progress: &dyn Fn(&str),
+) -> Result<()> {
+    rm_with(
+        paths,
+        name,
+        yes,
+        force,
+        |pgid| crate::process::stop(pgid, STOP_GRACE),
+        progress,
+    )
+}
+
+/// [`rm`] with the signal injected, so a test can give a stop the grace a
+/// stubborn dev server takes without spending it.
+pub(super) fn rm_with(
+    paths: &PandoPaths,
+    name: &str,
+    yes: bool,
+    force: bool,
+    stop: impl Fn(crate::process::Group) -> Result<()> + Sync,
     progress: &dyn Fn(&str),
 ) -> Result<()> {
     let discovery = worktree::discover_all(&paths.project)?;
@@ -1571,6 +1724,172 @@ pub fn rm(
     // `rm` can be the first command a project ever sees (an adopted
     // worktree), and taking the lock creates the project directory.
     paths.ensure_home()?;
+    let shown = target.map_or_else(|| name.to_string(), Worktree::display_name);
+    // A removal of this one already under way, first: git's questions
+    // below, put to a tree being deleted, would fail with less to say.
+    let seen = {
+        let _lock = state::lock(&paths.lock_file())?;
+        let seen = state::load(&paths.state_file())?;
+        if let Some(RemovalState::UnderWay(mark)) = removal_of(paths, &seen, name) {
+            bail!(being_removed(&shown, &mark, ALREADY_REMOVING));
+        }
+        seen
+    };
+    // Every refusal before anything is stopped, in the order they are put
+    // again under the lock below, where state answers the ones it can.
+    let recorded_at = match target {
+        Some(target) => Some(target.path.clone()),
+        None => forgotten_record(&discovery, &seen, name).map(|record| record.path.clone()),
+    };
+    if let Some(at) = &recorded_at {
+        refuse_unowned(&seen, target, name, yes, &shown, at)?;
+    }
+
+    // git's own refusal is the last one, so it is asked first: stopping the
+    // dev server and *then* being told the worktree stays leaves a process
+    // that is gone, a worktree that is not, and a record blaming the
+    // process for pando's kill. The questions are the two git asks without
+    // `--force`, in its order; ignored files never block a removal and do
+    // not show here. Not under the lock: they read the tree, which no lock
+    // of pando's keeps anyone from writing, and `git status` of a big one
+    // takes seconds every other command would wait out.
+    if let Some(target) = target {
+        refuse_foreign_checkouts(&shown, target)?;
+    }
+    if !force && let Some(target) = target {
+        refuse_unforced(&shown, target)?;
+    }
+
+    // And Docker's, for the same reason. `rm` is what takes a worktree's
+    // compose volumes with it, and the record naming the project is about
+    // to go: removed while the daemon is down, the volumes survive with
+    // nothing in pando able to find them again. So that is refused unless
+    // forced, before anything is stopped — and forced, it goes ahead and
+    // says how to remove them by hand.
+    let asked: Vec<String> = seen
+        .worktrees
+        .get(name)
+        .map(compose_projects)
+        .unwrap_or_default();
+    if !force {
+        refuse_docker_down(paths, &shown, &asked)?;
+    }
+
+    let mut claim = claim_removal(
+        paths, &discovery, target, name, yes, force, &asked, &stop, progress,
+    )?;
+    if let Err(e) = stop_claimed(paths, &mut claim, &stop) {
+        return Err(abandon_removal(paths, claim, e));
+    }
+    match take_down(paths, &claim, target, force, progress) {
+        Ok(()) => finish_removal(paths, claim, progress),
+        Err(e) => Err(abandon_removal(paths, claim, e)),
+    }
+}
+
+/// What `rm` says it did not do when another `rm` is removing the same
+/// worktree.
+const ALREADY_REMOVING: &str = "nothing was stopped or removed here";
+
+/// Refuses `rm` of a worktree pando did not create, unless `--yes` says
+/// to; whether pando created it.
+fn refuse_unowned(
+    store: &state::State,
+    target: Option<&Worktree>,
+    name: &str,
+    yes: bool,
+    shown: &str,
+    recorded_at: &Path,
+) -> Result<bool> {
+    let created_by_pando = store.worktrees.get(name).is_some_and(|r| {
+        r.created_by_pando && target.is_none_or(|target| record_is_for(r, target))
+    });
+    if !created_by_pando && !yes {
+        bail!(
+            "pando did not create {shown} ({}) — {}",
+            recorded_at.display(),
+            remedy::REMOVE_ANYWAY
+        );
+    }
+    Ok(created_by_pando)
+}
+
+/// Refuses `rm` of a worktree whose compose projects Docker cannot be
+/// asked to take down — see the comment where `rm` asks.
+fn refuse_docker_down(paths: &PandoPaths, shown: &str, projects: &[String]) -> Result<()> {
+    if let Some((project, how)) = docker_down_for(paths, projects) {
+        bail!(
+            "Docker {how}, so the services of {shown} cannot be removed with it — {}; \
+             its data volumes then stay until `docker compose -p {project} down -v`",
+            remedy::REMOVE_WITHOUT_DOCKER
+        );
+    }
+    Ok(())
+}
+
+/// What `rm` holds from the lock it marked the record under to the one it
+/// drops it under.
+struct Claim {
+    name: String,
+    shown: String,
+    /// State as it was saved with the mark. Its record of this worktree
+    /// names what the slow part takes down; the rest is what the guard on
+    /// each namespace drop reads.
+    marked: state::State,
+    /// Whether the mark made the record: an adopted worktree pando had
+    /// none of, which a removal that fails leaves with none again.
+    made_record: bool,
+    created_by_pando: bool,
+    /// The process groups the claim marked as its stop's and signals once
+    /// the lock is let go; none when nothing was running.
+    planned: Vec<crate::process::Group>,
+    stopped: StopOutcome,
+    /// The compose projects the record named, taken down before git runs.
+    projects: Vec<String>,
+    /// The worktree's removal lock, held to the end. Let go any other way
+    /// — a crash, a Ctrl-C, a panic on a TUI worker — it says the removal
+    /// was interrupted.
+    _held: state::StateLock,
+}
+
+impl Claim {
+    fn record(&self) -> Option<&WorktreeRecord> {
+        self.marked.worktrees.get(&self.name)
+    }
+
+    /// Whether `store`'s record of this worktree still carries this
+    /// removal's mark — with whatever projects a racing start has added to
+    /// it ([`state::Removal::raced`]).
+    fn still_ours(&self, store: &state::State) -> bool {
+        let Some(mark) = self.record().and_then(|record| record.removing.as_ref()) else {
+            return false;
+        };
+        store
+            .worktrees
+            .get(&self.name)
+            .and_then(|record| record.removing.as_ref())
+            .is_some_and(|now| now.same_claim(mark))
+    }
+}
+
+/// `rm`'s first step, under the state lock: the refusals state answers,
+/// asked of it as it is now; then what runs is marked as this removal's
+/// stop, the record marked as being removed, and both saved — with the
+/// compose projects the record names, so the `rm` that finishes an
+/// interrupted removal has them. Nothing is signalled here unless nothing
+/// is running, when it is all settled at once.
+#[allow(clippy::too_many_arguments)]
+fn claim_removal(
+    paths: &PandoPaths,
+    discovery: &worktree::Discovery,
+    target: Option<&Worktree>,
+    name: &str,
+    yes: bool,
+    force: bool,
+    asked: &[String],
+    stop: &(impl Fn(crate::process::Group) -> Result<()> + Sync),
+    progress: &dyn Fn(&str),
+) -> Result<Claim> {
     let _lock = state::lock(&paths.lock_file())?;
     let mut store = state::load(&paths.state_file())?;
     // Before any record is dropped, whichever worktree it belongs to.
@@ -1587,7 +1906,7 @@ pub fn rm(
             (target.display_name(), target.path.clone())
         }
         // Not dropped as stale: that record is the one this removes.
-        None => match forgotten_record(&discovery, &store, name) {
+        None => match forgotten_record(discovery, &store, name) {
             Some(record) => {
                 progress(&format!(
                     "git no longer lists {name} — taking down what pando still has for it"
@@ -1597,45 +1916,37 @@ pub fn rm(
             None => bail!("no worktree named {name:?}"),
         },
     };
-    let created_by_pando = store.worktrees.get(name).is_some_and(|r| {
-        r.created_by_pando && target.is_none_or(|target| record_is_for(r, target))
-    });
-    if !created_by_pando && !yes {
-        bail!(
-            "pando did not create {shown} ({}) — {}",
-            recorded_at.display(),
-            remedy::REMOVE_ANYWAY
-        );
+    let interrupted = match removal_of(paths, &store, name) {
+        Some(RemovalState::UnderWay(mark)) => {
+            bail!(being_removed(&shown, &mark, ALREADY_REMOVING))
+        }
+        Some(RemovalState::Interrupted(_)) => true,
+        None => false,
+    };
+    let created_by_pando = refuse_unowned(&store, target, name, yes, &shown, &recorded_at)?;
+    // Docker again, for a compose project recorded since it was asked.
+    if !force {
+        let since: Vec<String> = store
+            .worktrees
+            .get(name)
+            .map(compose_projects)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|project| !asked.contains(project))
+            .collect();
+        refuse_docker_down(paths, &shown, &since)?;
     }
-
-    // git's own refusal is the last one, so it is asked first: stopping the
-    // dev server and *then* being told the worktree stays leaves a process
-    // that is gone, a worktree that is not, and a record blaming the
-    // process for pando's kill. The questions are the two git asks without
-    // `--force`, in its order; ignored files never block a removal and do
-    // not show here.
-    if let Some(target) = target {
-        refuse_foreign_checkouts(&shown, target)?;
-    }
-    if !force && let Some(target) = target {
-        refuse_unforced(&shown, target)?;
-    }
-
-    // And Docker's, for the same reason. `rm` is what takes a worktree's
-    // compose volumes with it, and the record naming the project is about
-    // to go: removed while the daemon is down, the volumes survive with
-    // nothing in pando able to find them again. So that is refused unless
-    // forced, before anything is stopped — and forced, it goes ahead and
-    // says how to remove them by hand.
-    if !force
-        && let Some(record) = store.worktrees.get(name)
-        && let Some((project, how)) = docker_down_for(paths, &compose_projects(record))
-    {
-        bail!(
-            "Docker {how}, so the services of {shown} cannot be removed with it — {}; \
-             its data volumes then stay until `docker compose -p {project} down -v`",
-            remedy::REMOVE_WITHOUT_DOCKER
-        );
+    // The removal lock, before anything is stopped. Nobody holds it now:
+    // `removal_of` said so above, under the lock everything reads the mark
+    // under.
+    let lock_file = paths.removal_lock_file(name);
+    let Some(held) = state::try_lock_past_a_fork(&lock_file)? else {
+        bail!("{shown} {BEING_REMOVED} — {ALREADY_REMOVING}");
+    };
+    if interrupted {
+        progress(&format!(
+            "a removal of {shown} was interrupted — finishing it"
+        ));
     }
 
     // Whatever is running goes next. A dev server whose working directory
@@ -1652,23 +1963,123 @@ pub fn rm(
     if !running.is_empty() {
         progress(&format!("stopping {}", running.join(", ")));
     }
-    let stopped = stop_recorded(&mut store, name, None, &mut projects)?;
+    // Marked, and signalled and waited for once the lock is let go
+    // ([`stop_claimed`]). With nothing to wait on — no process up, only the
+    // records a stopped worktree keeps — settled here at once.
+    let stopping = mark_stop(&mut store, name, None).and_then(|planned| {
+        match planned.is_empty() {
+            true => stop_recorded_with(&mut store, name, None, stop, &mut projects),
+            false => Ok(StopOutcome::NotRunning),
+        }
+        .map(|stopped| (planned, stopped))
+    });
+    let (planned, stopped) = match stopping {
+        Ok(stopping) => stopping,
+        Err(e) => {
+            let _ = std::fs::remove_file(&lock_file);
+            return Err(e);
+        }
+    };
 
+    // And the removal's mark, saved with the stop's.
+    let made_record = !store.worktrees.contains_key(name);
+    store
+        .worktrees
+        .entry(name.to_string())
+        .or_insert_with(|| WorktreeRecord::new(recorded_at, false))
+        .removing = Some(state::Removal {
+        owner_pid: std::process::id(),
+        since: chrono::Utc::now(),
+        raced: Vec::new(),
+    });
+    state::save(&paths.state_file(), &store)?;
+    Ok(Claim {
+        name: name.to_string(),
+        shown,
+        marked: store,
+        made_record,
+        created_by_pando,
+        planned,
+        stopped,
+        projects,
+        _held: held,
+    })
+}
+
+/// `rm`'s stop of what was running, when its claim marked any: every
+/// group signalled and waited for together, with no lock held — a dev
+/// server that ignores SIGTERM takes its whole grace, and every other
+/// command, and every other removal, used to wait it out too — then the
+/// records settled under the lock by what the wait found, as `stop`
+/// settles them. A group that would not end fails the removal before
+/// anything is removed, its record kept for a retry to signal.
+fn stop_claimed(
+    paths: &PandoPaths,
+    claim: &mut Claim,
+    stop: &(impl Fn(crate::process::Group) -> Result<()> + Sync),
+) -> Result<()> {
+    if claim.planned.is_empty() {
+        return Ok(());
+    }
+    let waited = wait_for(&claim.planned, stop);
+    let _lock = state::lock(&paths.lock_file())?;
+    let mut store = state::load(&paths.state_file())?;
+    let before = store.clone();
+    let mut projects = Vec::new();
+    match settle_stop(
+        &mut store,
+        &claim.name,
+        None,
+        &claim.planned,
+        &waited,
+        stop,
+        &mut projects,
+    ) {
+        Ok(stopped) => {
+            state::save(&paths.state_file(), &store)?;
+            claim.stopped = stopped;
+            claim.projects = projects;
+            claim.marked = store;
+            Ok(())
+        }
+        Err(e) => {
+            let mut kept = before;
+            unmark_stop(&mut kept, &claim.name, &claim.planned);
+            state::save(&paths.state_file(), &kept)?;
+            Err(e)
+        }
+    }
+}
+
+/// `rm`'s slow part, without the state lock: the containers and their
+/// volumes, then git's removal of the tree, then pando's own files of the
+/// worktree, then its namespaces. An error is a removal that kept the
+/// worktree.
+fn take_down(
+    paths: &PandoPaths,
+    claim: &Claim,
+    target: Option<&Worktree>,
+    force: bool,
+    progress: &dyn Fn(&str),
+) -> Result<()> {
+    let (name, shown) = (claim.name.as_str(), claim.shown.as_str());
     // The containers, the network, and the volumes, before git is asked to
     // remove anything: the record that names the compose project is about
     // to be dropped, and a `down -v` that failed after the worktree was
-    // gone would leave a database nothing could ever find. Saved first, so
-    // a retry of `rm` has the record it needs.
+    // gone would leave a database nothing could ever find. The mark's save
+    // kept the record, so a retry of `rm` has what it needs.
     //
     // Forced past a Docker that cannot be asked, it is not asked again: a
-    // wedged daemon would hold `down -v` — under the state lock — for the
-    // whole teardown deadline and then fail the removal `--force` was
-    // passed to get. Said instead, with the command that finishes it.
-    if !projects.is_empty() {
-        state::save(&paths.state_file(), &store)?;
-        match force.then(|| docker_down_for(paths, &projects)).flatten() {
+    // wedged daemon would hold `down -v` for the whole teardown deadline
+    // and then fail the removal `--force` was passed to get. Said instead,
+    // with the command that finishes it.
+    if !claim.projects.is_empty() {
+        match force
+            .then(|| docker_down_for(paths, &claim.projects))
+            .flatten()
+        {
             Some((_, how)) => {
-                for project in &projects {
+                for project in &claim.projects {
                     progress(&format!(
                         "Docker {how}, so the services of {project} could not be removed — \
                          their data volumes survive; once Docker is up, `docker compose -p \
@@ -1676,7 +2087,7 @@ pub fn rm(
                     ));
                 }
             }
-            None => remove_containers(paths, &projects, progress).with_context(|| {
+            None => remove_containers(paths, &claim.projects, progress).with_context(|| {
                 format!("{shown} was left in place; its services could not be taken down")
             })?,
         }
@@ -1692,10 +2103,17 @@ pub fn rm(
     // clears a prunable entry, and only that one. `git worktree prune` is
     // global and would sweep entries pando has no business touching. A
     // worktree git no longer lists has nothing left for it to remove.
+    //
+    // Two at once, of two worktrees, are safe: each deletes its own tree
+    // and its own `.git/worktrees/<id>`, and the one shared write — the
+    // rmdir of `.git/worktrees` once it is empty — is one git tolerates
+    // failing. Beside a create, an add that has just made `.git/worktrees`
+    // and not yet its own entry in it dies on that rmdir; it leaves
+    // nothing, and the create tries again (`retrying_git_locks`).
     if let Some(target) = target {
-        remove_checkouts(paths, &store, target, force, &stopped)?;
+        remove_checkouts(paths, target, force, &claim.stopped)?;
         if target.is_set() {
-            for line in clear_set_dir(target, created_by_pando) {
+            for line in clear_set_dir(target, claim.created_by_pando) {
                 progress(&line);
             }
         }
@@ -1705,7 +2123,7 @@ pub fn rm(
     // Every native service's data directory is under this one, so this is
     // also what makes "`rm` wipes the database" true for them.
     let _ = std::fs::remove_dir_all(paths.data_dir(name));
-    if let Some(record) = store.worktrees.get(name) {
+    if let Some(record) = claim.record() {
         clear_native_sockets(paths, name, record);
     }
     // And the compose override, which is regenerated on every isolated
@@ -1714,11 +2132,331 @@ pub fn rm(
     // Its namespaces last, once the worktree is gone for certain: a
     // removal git refused must not have cost the worktree its database.
     // Each goes through the guard, on the server it was made on; one pando
-    // cannot drop is said, with the command that does.
-    drop_namespaces(paths, &store, name, progress);
-    store.worktrees.remove(name);
-    state::save(&paths.state_file(), &store)?;
+    // cannot drop is said, with the command that does. Read from state as
+    // it was marked: the record is still there, naming them, so no other
+    // worktree is given one of them meanwhile.
+    drop_namespaces(paths, &claim.marked, name, progress);
     Ok(())
+}
+
+/// `rm`'s last step, under the state lock again: the record goes, and
+/// with it the mark.
+///
+/// What a start that raced the removal recorded after the mark — one
+/// whose own lock-free part began before it — is taken down first, the
+/// way the rest was. Almost always there is nothing.
+fn finish_removal(paths: &PandoPaths, claim: Claim, progress: &dyn Fn(&str)) -> Result<()> {
+    let _lock = state::lock(&paths.lock_file())?;
+    let mut store = state::load(&paths.state_file())?;
+    if claim.still_ours(&store) {
+        take_down_since(paths, &mut store, &claim, progress)?;
+        store.worktrees.remove(&claim.name);
+        state::save(&paths.state_file(), &store)?;
+    }
+    let _ = std::fs::remove_file(paths.removal_lock_file(&claim.name));
+    Ok(())
+}
+
+/// What was recorded for the worktree after its mark: a process or a
+/// share a start spawned, stopped; a compose project it named, taken down
+/// with its volumes; a namespace it made, dropped through the guard.
+///
+/// And a compose project the claim named that a start brought up again
+/// after `take_down`'s `down -v`: one whose first hold recorded it before
+/// the mark, and whose `up` — pulling an image, say — outlasted the
+/// removal's. Such a start, refused at its second hold while this removal
+/// is under way, names the project in the mark ([`state::Removal::raced`])
+/// once its `up` is done, under the state lock. This step reads the mark
+/// under the same lock, and it is the step that takes the mark off: so it
+/// runs after that write, after that `up`, and its `down -v` removes what
+/// the `up` made, whichever `down -v` ran first. A start that loses after
+/// this step finds no record, and takes its project down itself
+/// ([`leave_to_removal`]).
+fn take_down_since(
+    paths: &PandoPaths,
+    store: &mut state::State,
+    claim: &Claim,
+    progress: &dyn Fn(&str),
+) -> Result<()> {
+    let name = claim.name.as_str();
+    let raced: Vec<String> = store
+        .worktrees
+        .get(name)
+        .and_then(|record| record.removing.as_ref())
+        .map(|mark| mark.raced.clone())
+        .unwrap_or_default();
+    let mut projects = Vec::new();
+    stop_recorded(store, name, None, &mut projects)?;
+    projects.retain(|project| !claim.projects.contains(project) || raced.contains(project));
+    for project in raced {
+        if !projects.contains(&project) {
+            projects.push(project);
+        }
+    }
+    remove_containers(paths, &projects, progress)?;
+    let dropped = claim
+        .record()
+        .map(|r| r.namespaces.as_slice())
+        .unwrap_or_default();
+    let Some(record) = store.worktrees.get(name) else {
+        return Ok(());
+    };
+    let since: Vec<state::NamespaceRecord> = record
+        .namespaces
+        .iter()
+        .filter(|ns| {
+            !dropped
+                .iter()
+                .any(|was| crate::namespace::same_namespace(was, ns))
+        })
+        .cloned()
+        .collect();
+    if since.is_empty() {
+        return Ok(());
+    }
+    // Those alone: the rest were dropped, or said, once already.
+    let mut only = store.clone();
+    if let Some(record) = only.worktrees.get_mut(name) {
+        record.namespaces = since;
+        record.mode = None;
+    }
+    drop_namespaces(paths, &only, name, progress);
+    Ok(())
+}
+
+/// Takes the mark off a worktree whose removal failed and kept it — git
+/// refused, or its services would not go down — so it reads as what it
+/// is: a worktree, there, that a start or the next `rm` can act on. The
+/// error is the removal's, and says so when the mark stayed.
+fn abandon_removal(paths: &PandoPaths, claim: Claim, err: anyhow::Error) -> anyhow::Error {
+    let cleared = (|| -> Result<()> {
+        let _lock = state::lock(&paths.lock_file())?;
+        let mut store = state::load(&paths.state_file())?;
+        if claim.still_ours(&store)
+            && let Some(record) = store.worktrees.get_mut(&claim.name)
+        {
+            record.removing = None;
+            if claim.made_record && *record == WorktreeRecord::new(record.path.clone(), false) {
+                store.worktrees.remove(&claim.name);
+            }
+            state::save(&paths.state_file(), &store)?;
+        }
+        let _ = std::fs::remove_file(paths.removal_lock_file(&claim.name));
+        Ok(())
+    })();
+    match cleared {
+        Ok(()) => err,
+        Err(e) => anyhow::anyhow!(
+            "{err:#} — and it is still marked as being removed ({e:#}); `pando rm {}` finishes \
+             the removal",
+            claim.shown
+        ),
+    }
+}
+
+/// Where a removal of a worktree stands, for one a removal has begun on,
+/// as its record's mark and its removal lock say. Each carries the mark:
+/// which pando began it, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemovalState {
+    /// An `rm` is at it now. Everything else asked of the worktree is
+    /// refused, and the record goes when it is done.
+    UnderWay(state::Removal),
+    /// One began and stopped — a Ctrl-C, a crash, a TUI quit — leaving
+    /// the record for the next `rm` of the name to finish, containers
+    /// and namespaces included. A start, a share and a `new` of the name
+    /// are refused until then.
+    Interrupted(state::Removal),
+}
+
+/// Every worktree of the project a removal has begun on, by name, and
+/// where each stands: the one rule anything outside `rm` reads it by.
+///
+/// Asked under the state lock, which asking needs: finding out whether a
+/// removal holds its lock means taking that lock for a moment, and done
+/// outside the state lock, the moment could fall on an `rm` claiming it,
+/// which would then refuse as if another were under way
+/// ([`state::is_held`]). Never waited for, as no read waits: while
+/// another pando holds the state lock, the answer is the state as it
+/// stands with nothing asked of any removal's lock, and every mark in it
+/// reads as under way — something holds the lock right now — until a read
+/// that finds it free. For a caller that holds no lock — the TUI's
+/// refresh worker, after `refresh` — and so never for one that does.
+/// Nothing is made, and nothing is asked, where there is no state yet.
+pub fn removals(paths: &PandoPaths) -> Result<BTreeMap<String, RemovalState>> {
+    if !paths.state_file().exists() {
+        return Ok(BTreeMap::new());
+    }
+    let Some(_lock) = state::try_lock(&paths.lock_file())? else {
+        let store = state::load(&paths.state_file())?;
+        return Ok(store
+            .worktrees
+            .into_iter()
+            .filter_map(|(name, record)| Some((name, RemovalState::UnderWay(record.removing?))))
+            .collect());
+    };
+    let store = state::load(&paths.state_file())?;
+    // Asked once each: a reader shows a forked child's copy of a removal's
+    // lock as the removal under way, for a moment, rather than holding the
+    // state lock while it asks again.
+    Ok(store
+        .worktrees
+        .keys()
+        .filter_map(|name| {
+            Some((
+                name.clone(),
+                removal_as(paths, &store, name, state::is_held)?,
+            ))
+        })
+        .collect())
+}
+
+/// Where a removal of `name` stands, if one has begun, for a caller that
+/// refuses on the answer. Asked under the state lock: see
+/// [`state::is_held`].
+///
+/// A removal lock that reads as held is asked again for a moment
+/// ([`state::is_held_past_a_fork`]), so a forked child's copy of it does
+/// not refuse a start, a share, a `new` or an `rm` as if a removal were
+/// under way. That can never hide one that is: the state lock is held
+/// throughout, and the `rm` holding a removal lock lets go of it only
+/// after the step that takes its mark off, which needs the state lock. A
+/// lock that reads as free within the moment was let go by an `rm` that
+/// died, whose removal is interrupted.
+pub(super) fn removal_of(
+    paths: &PandoPaths,
+    store: &state::State,
+    name: &str,
+) -> Option<RemovalState> {
+    removal_as(paths, store, name, state::is_held_past_a_fork)
+}
+
+/// [`removal_of`], with whether the removal lock is held asked by `held`.
+fn removal_as(
+    paths: &PandoPaths,
+    store: &state::State,
+    name: &str,
+    held: fn(&Path) -> bool,
+) -> Option<RemovalState> {
+    let mark = store.worktrees.get(name)?.removing.clone()?;
+    Some(match held(&paths.removal_lock_file(name)) {
+        true => RemovalState::UnderWay(mark),
+        false => RemovalState::Interrupted(mark),
+    })
+}
+
+/// The refusal of anything asked of a worktree an `rm` is removing.
+fn being_removed(shown: &str, mark: &state::Removal, nothing: &str) -> String {
+    format!(
+        "{shown} {BEING_REMOVED} (pid {}) — {nothing}",
+        mark.owner_pid
+    )
+}
+
+/// The words every refusal of a worktree an `rm` is removing has in it.
+pub const BEING_REMOVED: &str = "is being removed";
+
+/// Refuses what would run in, or make, a worktree a removal has begun on:
+/// a start, a share, a `new` of the name. `nothing` says what was not
+/// done. Asked under the state lock.
+pub(super) fn refuse_while_removed(
+    paths: &PandoPaths,
+    store: &state::State,
+    name: &str,
+    shown: &str,
+    nothing: &str,
+) -> Result<()> {
+    match removal_of(paths, store, name) {
+        None => Ok(()),
+        Some(RemovalState::UnderWay(mark)) => bail!(being_removed(shown, &mark, nothing)),
+        Some(RemovalState::Interrupted(_)) => bail!(
+            "a removal of {shown} was interrupted — {nothing}; `pando rm {shown}` finishes it"
+        ),
+    }
+}
+
+/// [`refuse_while_removed`] under a moment of the state lock, for a
+/// command about to do something slow before it takes the lock itself.
+/// Nothing to ask, and no home made, where there is no state yet.
+pub(super) fn refuse_while_removed_now(
+    paths: &PandoPaths,
+    name: &str,
+    shown: &str,
+    nothing: &str,
+) -> Result<()> {
+    if !paths.state_file().exists() {
+        return Ok(());
+    }
+    let _lock = state::lock(&paths.lock_file())?;
+    let store = state::load(&paths.state_file())?;
+    refuse_while_removed(paths, &store, name, shown, nothing)
+}
+
+/// What an isolated start that brought `projects` up does with them when
+/// it ends without spawning — refused, or failed — and its worktree was
+/// removed, or began to be, since its first hold recorded them. Called
+/// with no lock held, once the start's `up` has returned; takes the lock.
+///
+/// A removal's `down -v` may have run before that `up` made its
+/// containers and volumes, and the removal then forgets the record that
+/// names them. So, by where the removal stands now, under the lock:
+///
+/// - Under way: the projects go into its mark ([`state::Removal::raced`]),
+///   and its last step, which reads the mark under this lock after this,
+///   takes them down again. Not here: its own `down -v` of them may be
+///   running, and two at once can fail the removal.
+/// - Finished, the record gone: taken down here, with `-v`, still under
+///   the lock — no `new` and start of the name can bring the same project
+///   up meanwhile — since nothing else will ever name them again.
+/// - Interrupted, or none: the record names them, and the `rm` that
+///   finishes it takes them down after this.
+///
+/// Best effort: the error being reported is the start's. A down that
+/// fails says how to finish it by hand.
+pub(super) fn leave_to_removal(
+    paths: &PandoPaths,
+    name: &str,
+    projects: &[String],
+    progress: &dyn Fn(&str),
+) {
+    if projects.is_empty() {
+        return;
+    }
+    let Ok(_lock) = state::lock(&paths.lock_file()) else {
+        return;
+    };
+    let Ok(mut store) = state::load(&paths.state_file()) else {
+        return;
+    };
+    let under_way = matches!(
+        removal_of(paths, &store, name),
+        Some(RemovalState::UnderWay(_))
+    );
+    match store.worktrees.get_mut(name) {
+        None => {
+            if let Err(e) = remove_containers(paths, projects, progress) {
+                for project in projects {
+                    progress(&format!(
+                        "{name} was removed while this start brought {project} up, and it \
+                         could not be taken down ({e:#}) — `docker compose -p {project} down -v` \
+                         removes it"
+                    ));
+                }
+            }
+        }
+        Some(record) if under_way => {
+            let Some(mark) = record.removing.as_mut() else {
+                return;
+            };
+            for project in projects {
+                if !mark.raced.contains(project) {
+                    mark.raced.push(project.clone());
+                }
+            }
+            let _ = state::save(&paths.state_file(), &store);
+        }
+        Some(_) => {}
+    }
 }
 
 /// A checkout pando can run: a worktree, or the main checkout itself.
@@ -2140,13 +2878,16 @@ fn fetch_pr_head(
     timeout: std::time::Duration,
 ) -> Result<()> {
     let refspec = format!("refs/pull/{number}/head:refs/heads/{branch}");
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(root)
-        .args(["fetch", "--quiet", remote, &refspec])
-        .env("GIT_TERMINAL_PROMPT", "0");
-    match crate::platform::process::output_within(command, timeout) {
+    let fetch = || {
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(root)
+            .args(["fetch", "--quiet", remote, &refspec])
+            .env("GIT_TERMINAL_PROMPT", "0");
+        crate::platform::process::output_within(command, timeout)
+    };
+    match retrying_git_locks(fetch, |_| true) {
         Ok(out) if out.status.success() => Ok(()),
         Ok(out) => bail!(
             "could not fetch #{number} from {remote}: {}",
@@ -2193,13 +2934,19 @@ fn forgotten_record<'a>(
 /// Drops records for worktrees git no longer lists. Callers hold the flock;
 /// best effort, because a porcelain that cannot be read is not a reason to
 /// refuse the command that is running.
+///
+/// Never a record a removal has marked: git stops listing a worktree half
+/// way through its `rm`, which drops the record itself once the rest is
+/// down; and one an interrupted removal left names the containers and
+/// namespaces the `rm` that finishes it takes down, which nothing else
+/// could find once it was gone.
 fn drop_stale_worktree_records(store: &mut state::State, project: &ProjectRef) {
     let Ok(live) = worktree::listed_paths(project) else {
         return;
     };
-    store
-        .worktrees
-        .retain(|_, record| live.contains(&crate::paths::resolve_for_compare(&record.path)));
+    store.worktrees.retain(|_, record| {
+        record.removing.is_some() || live.contains(&crate::paths::resolve_for_compare(&record.path))
+    });
 }
 
 /// `requested` is the base the caller or config named, if any; none forks
@@ -2260,13 +3007,18 @@ pub(super) fn fetch_branch(
     branch: &str,
     timeout: std::time::Duration,
 ) -> Result<bool> {
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(root)
-        .args(["fetch", "--quiet", "origin", branch])
-        .env("GIT_TERMINAL_PROMPT", "0");
-    match crate::platform::process::output_within(command, timeout) {
+    // A fetch another git's lock failed is no answer either, and would
+    // read as "not on the remote": tried again a moment later.
+    let fetch = || {
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(root)
+            .args(["fetch", "--quiet", "origin", branch])
+            .env("GIT_TERMINAL_PROMPT", "0");
+        crate::platform::process::output_within(command, timeout)
+    };
+    match retrying_git_locks(fetch, |_| true) {
         Ok(out) => Ok(out.status.success()),
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => bail!(
             "`git fetch origin {branch}` did not answer in {}s, so pando cannot tell whether \
@@ -2652,11 +3404,17 @@ fn remotes(root: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The last non-empty stderr line: git narrates before it fails, so the
-/// closing line is the reason and everything above it is progress noise.
-fn git_failure_reason(out: &std::process::Output) -> String {
+/// The last non-empty stderr line that is not a hint: git narrates before
+/// it fails, so the closing line is the reason and everything above it is
+/// progress noise — and the hints it can print after it, a branch whose
+/// upstream could not be written, are advice for git's own command line.
+pub(super) fn git_failure_reason(out: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&out.stderr);
-    match stderr.lines().rev().find(|l| !l.trim().is_empty()) {
+    match stderr
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty() && !l.starts_with("hint:"))
+    {
         Some(line) => line.trim().trim_start_matches("fatal: ").to_string(),
         None => format!("exit {}", out.status.code().unwrap_or(-1)),
     }

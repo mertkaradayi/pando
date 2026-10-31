@@ -10,10 +10,12 @@
 //! ─────────────────────────────┼────────┼────────┼──────────
 //!  ▸ ● feat/checkout ▣         │ ◍ #482 │ :17342 │ ↓1  ↑2 ✎
 //!    ✗ fix/crash        failed │ ✓ #463 │        │ ↓14
+//! +  ○ spike/old               │ ✓ #401 │        │ ↓90
 //! ```
 //!
 //! Faint lines divide the columns and rule the header off; the rows sit
-//! one under the other, and the highlight is what marks the cursor's. The
+//! one under the other, and the highlight is what marks the cursor's. A
+//! `+` before the cursor's column is a row `+` marked. The
 //! columns after the label are as wide as their widest cells and sit
 //! against the right edge; the label takes whatever room is left.
 //!
@@ -61,8 +63,12 @@ use super::{distinct_offsets, pad, text_width, truncate, truncate_distinct, trun
 /// when the words have gone.
 const ROW_RUN_WIDTH: usize = 2;
 
-/// `" ▸ "` — the list's own highlight column.
+/// `"+▸ "` — the list's own columns: a mark `+` puts on the row, the
+/// cursor, and a blank before the glyph.
 const ROW_CHROME_WIDTH: usize = 3;
+
+/// What a row `+` marked has in its first cell.
+const MARK: &str = "+";
 
 /// Between two columns: a faint rule with a space either side, so each
 /// value reads as under its title.
@@ -199,6 +205,8 @@ struct RowCells {
     /// full brightness, and a stopped one's recedes, so the eye goes to
     /// the few rows that run in a list of thirty.
     live: bool,
+    /// `+` marked it, so `s` `x` `r` and `d` act on it with the rest.
+    marked: bool,
     cells: Vec<(Col, Cell)>,
 }
 
@@ -235,9 +243,14 @@ fn row_cells(app: &App, wt: &Worktree) -> RowCells {
     let phase = app.phase_of(&wt.name);
     let pending = app.pending_on(&wt.name);
     let (glyph, color) = row_marker(app, &wt.name);
+    let removal = app.removal_elsewhere(&wt.name);
     let word = match pending {
         Some(_) if app.awaiting_answer() => Some("waiting"),
-        Some(pending) => Some(pending.kind.verb()),
+        Some(pending) => Some(pending.doing()),
+        // A removal another pando runs, as one of this TUI's would read;
+        // one stopped half way, until `d` finishes it.
+        None if matches!(removal, Some(actions::RemovalState::UnderWay(_))) => Some("removing"),
+        None if removal.is_some() => Some("rm interrupted"),
         // Running and stopped are the glyph's to say; the rest have
         // something worth reading.
         None => match &phase {
@@ -254,8 +267,13 @@ fn row_cells(app: &App, wt: &Worktree) -> RowCells {
             Some(Aggregate::Starting { .. } | Aggregate::Failed { .. })
         )
         && wt.in_progress.is_some();
+    let interrupted = matches!(removal, Some(actions::RemovalState::Interrupted(_)));
     let status = word.map(|word| {
-        let color = if halfway { orange() } else { color };
+        let color = if halfway || interrupted {
+            orange()
+        } else {
+            color
+        };
         let mut style = Style::new().fg(color);
         if matches!(phase, Some(Aggregate::Failed { .. })) && pending.is_none() {
             style = style.add_modifier(Modifier::BOLD);
@@ -310,7 +328,8 @@ fn row_cells(app: &App, wt: &Worktree) -> RowCells {
         },
         status,
         git: git_parts(app, wt),
-        live: phase.is_some() || pending.is_some(),
+        live: phase.is_some() || pending.is_some() || removal.is_some(),
+        marked: app.is_marked(&wt.name),
         cells,
     }
 }
@@ -328,7 +347,13 @@ pub(super) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
             .count();
         format!("{matched}/{}", app.linked_count())
     };
-    let title = format!(" worktrees ({count}) · {} ", app.sort.title());
+    // And how many are marked, where a filter may hide some of them.
+    let marked = match (app.marks.len(), app.marks_hidden()) {
+        (0, _) => String::new(),
+        (n, 0) => format!("{n} marked · "),
+        (n, hidden) => format!("{n} marked, {hidden} hidden · "),
+    };
+    let title = format!(" worktrees ({count}) · {marked}{} ", app.sort.title());
     let block = Block::bordered()
         .title(Span::styled(title, Style::new().fg(text_dim())))
         .border_type(BorderType::Rounded)
@@ -527,10 +552,16 @@ pub(super) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         let is_selected = selected == Some(i);
         let (glyph, color) = row.glyph;
         let mut spans = vec![
+            // A mark in the cursor's accent, beside it: both say which
+            // rows a key acts on.
+            Span::styled(
+                if row.marked { MARK } else { " " },
+                Style::new().fg(blue()).add_modifier(Modifier::BOLD),
+            ),
             // The cursor in the accent, not only the band behind it: a
             // highlight alone is easy to lose on a low-contrast screen.
             Span::styled(
-                if is_selected { " ▸ " } else { "   " },
+                if is_selected { "▸ " } else { "  " },
                 Style::new().fg(blue()),
             ),
             Span::styled(glyph, Style::new().fg(color)),
@@ -546,9 +577,14 @@ pub(super) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         };
         let label = truncate_distinct(&row.label, label_width - mark - status, differs_at);
         let used = text_width(&label) + mark + status;
+        // A marked row is one the next key acts on: it does not recede.
         spans.push(Span::styled(
             label,
-            Style::new().fg(if row.live { text() } else { text_dim() }),
+            Style::new().fg(if row.live || row.marked {
+                text()
+            } else {
+                text_dim()
+            }),
         ));
         if let Some((glyph, color)) = row.mode
             && mark > 0
@@ -609,6 +645,13 @@ pub(super) fn row_marker(app: &App, name: &str) -> (&'static str, Color) {
     match app.pending_on(name) {
         Some(_) if app.awaiting_answer() => ("? ", orange()),
         Some(_) => ("◌ ", yellow()),
+        None if matches!(
+            app.removal_elsewhere(name),
+            Some(actions::RemovalState::UnderWay(_))
+        ) =>
+        {
+            ("◌ ", yellow())
+        }
         None => run_marker(app.phase_of(name).as_ref()),
     }
 }

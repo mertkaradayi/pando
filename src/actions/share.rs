@@ -23,7 +23,7 @@ use super::services::{
     UrlOwner, observed_port_for_role, resolved_env, share_owner, share_owner_not_running,
     share_role,
 };
-use super::worktree::find_worktree;
+use super::worktree::{find_worktree, refuse_while_removed, refuse_while_removed_now};
 
 /// Signals both halves of a worktree's share and drops the record, as part
 /// of stopping it. Returns whether there was one.
@@ -90,6 +90,56 @@ pub struct ShareOutcome {
     pub already: bool,
 }
 
+/// What a share refused over a removal says it did not do.
+const SHARED_NOTHING: &str = "nothing was shared";
+
+/// What an unshare refused over a removal says of the share.
+const UNSHARED_NOTHING: &str = "its share goes down with it";
+
+/// The share lock of `name`, held by one share or unshare of the worktree
+/// at a time, taken without ever making the worktree's logs directory —
+/// where it lives — again once a removal has deleted it. `waiting` is said
+/// before a wait for another share.
+///
+/// Taken in place ([`state::try_lock_in_place`]). A directory that is gone
+/// is made again only under the state lock, once [`refuse_while_removed`]
+/// has found no removal begun: a removal that claims the worktree after
+/// that deletes the directory after it too, in its `take_down`, and one
+/// that claimed it before is refused here. A directory deleted after that
+/// read is asked about again, so a removal never leaves one behind.
+fn take_share_lock(
+    paths: &PandoPaths,
+    name: &str,
+    shown: &str,
+    nothing: &str,
+    waiting: &dyn Fn(),
+) -> Result<state::StateLock> {
+    let lock_path = paths.share_lock_file(name);
+    let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+    let context = || format!("lock {}", lock_path.display());
+    for _ in 0..3 {
+        match state::try_lock_in_place(&lock_path) {
+            Ok(Some(held)) => return Ok(held),
+            Ok(None) => {
+                waiting();
+                match state::lock_in_place(&lock_path) {
+                    Ok(held) => return Ok(held),
+                    Err(e) if gone(&e) => {}
+                    Err(e) => return Err(e).with_context(context),
+                }
+            }
+            Err(e) if gone(&e) => {}
+            Err(e) => return Err(e).with_context(context),
+        }
+        let _lock = state::lock(&paths.lock_file())?;
+        let store = state::load(&paths.state_file())?;
+        refuse_while_removed(paths, &store, name, shown, nothing)?;
+        let logs = paths.logs_dir(name);
+        std::fs::create_dir_all(&logs).with_context(|| format!("create {}", logs.display()))?;
+    }
+    bail!("the logs directory of {shown} was deleted again and again — {nothing}")
+}
+
 /// Publishes a running worktree at a public URL.
 ///
 /// The lock is held for the refusals and for recording the result, and
@@ -140,20 +190,17 @@ pub fn share_with(
     let worktree = find_worktree(paths, name)?;
     let canonical = std::fs::canonicalize(&worktree.path).unwrap_or_else(|_| worktree.path.clone());
     let shown = worktree.display_name();
+    // Before anything else: a worktree being removed is not shared.
+    refuse_while_removed_now(paths, name, &shown, SHARED_NOTHING)?;
 
     // One share of a worktree at a time, for the whole of it. Each tunnel
     // of a worktree writes the same log, and two opening at once both read
     // the URL printed first: one recorded the other's, and the other,
     // giving way, closed the tunnel that served it. A second share waits
     // here, and then finds the first one's record.
-    let lock_path = paths.share_lock_file(name);
-    let _one_share = match state::try_lock(&lock_path)? {
-        Some(held) => held,
-        None => {
-            progress(&format!("waiting for another share of {shown} to finish"));
-            state::lock(&lock_path)?
-        }
-    };
+    let _one_share = take_share_lock(paths, name, &shown, SHARED_NOTHING, &|| {
+        progress(&format!("waiting for another share of {shown} to finish"))
+    })?;
 
     // Outside the state lock, because `refresh` takes it: a worktree
     // `start` returned from a moment ago is still `Starting`, and refusing
@@ -174,6 +221,9 @@ pub fn share_with(
         // refusal that forgot that signalled them all again on the next
         // call — an agent polling a share it already has, every time.
         state::save(&paths.state_file(), &store)?;
+        // Again, now the share's lock is held: a removal that began since
+        // the first refusal is deleting the logs this share would write.
+        refuse_while_removed(paths, &store, name, &shown, SHARED_NOTHING)?;
 
         let record = store
             .worktrees
@@ -278,10 +328,30 @@ pub fn share_with(
     // No longer pending from here, whichever way it goes: recorded, or
     // stopped. Every way out saves the store without it.
     drop_pending(&mut store, name);
+    // A removal that claimed the worktree after this share's last look
+    // may have deleted its logs before the tunnel and the proxy wrote
+    // theirs, making the directory again: closed, they are removed with
+    // it, and a directory with anything else in it is the removal's still.
+    let leave_logs = || {
+        let _ = std::fs::remove_file(&record.log_path);
+        if let Some(proxy) = &proxy {
+            let _ = std::fs::remove_file(&proxy.log_path);
+        }
+        let _ = std::fs::remove_dir(paths.logs_dir(name));
+    };
     let Some(existing_record) = store.worktrees.get(name) else {
         let _ = tunnel::stop_share(&record);
+        leave_logs();
         bail!("{shown} was removed while its tunnel was starting; the tunnel was closed again");
     };
+    if let Err(e) = refuse_while_removed(paths, &store, name, &shown, SHARED_NOTHING) {
+        let _ = tunnel::stop_share(&record);
+        leave_logs();
+        let _ = state::save(&paths.state_file(), &store);
+        return Err(anyhow::anyhow!(
+            "{e:#}; the tunnel that was starting was closed again"
+        ));
+    }
     if let Some(won) = &existing_record.share {
         let public_url = won.public_url.clone();
         let pre_authed = won.proxy_pid.is_some();
@@ -444,25 +514,63 @@ fn forget_pending(paths: &PandoPaths, name: &str) {
 }
 
 /// Takes a worktree's public URL down.
+///
+/// The share is read under the state lock and signalled without it: each
+/// half gets up to five seconds to exit, and every other command waited
+/// that out. The record keeps naming the share until both halves are
+/// down — signal first, drop second — so one that would not stop, or an
+/// unshare that died half way, leaves the pgids a retry signals. A share
+/// of the worktree started meanwhile waits on the share's own lock, as a
+/// second share does, rather than opening a tunnel beside one going away.
 pub fn unshare(paths: &PandoPaths, name: &str) -> Result<()> {
+    unshare_with(paths, name, |pgid| proc::stop(pgid, STOP_GRACE))
+}
+
+/// [`unshare`] with the signal injected, so a test can see what is held
+/// while it runs.
+pub(super) fn unshare_with(
+    paths: &PandoPaths,
+    name: &str,
+    stop: impl Fn(proc::Group) -> Result<()>,
+) -> Result<()> {
     paths.ensure_home()?;
+    let read = |store: &state::State| -> Result<ShareRecord> {
+        let record = store
+            .worktrees
+            .get(name)
+            .with_context(|| format!("pando has no record of {name}"))?;
+        record
+            .share
+            .clone()
+            .with_context(|| format!("{name} is not shared"))
+    };
+    // Read first, so a name with no share makes no lock in its logs.
+    {
+        let _lock = state::lock(&paths.lock_file())?;
+        read(&state::load(&paths.state_file())?)?;
+    }
+    let _one_share = take_share_lock(paths, name, name, UNSHARED_NOTHING, &|| {})?;
+    // And again, now no share of it can be on its way up.
+    let share = {
+        let _lock = state::lock(&paths.lock_file())?;
+        read(&state::load(&paths.state_file())?)?
+    };
+    let stopped = tunnel::stop_share_with(&share, &stop);
     let _lock = state::lock(&paths.lock_file())?;
     let mut store = state::load(&paths.state_file())?;
-    let record = store
-        .worktrees
-        .get_mut(name)
-        .with_context(|| format!("pando has no record of {name}"))?;
-    let Some(share) = record.share.take() else {
-        bail!("{name} is not shared");
-    };
-    if let Err(e) = tunnel::stop_share(&share) {
-        // Still alive, so the record goes back: state has to match what is
+    if let Err(e) = stopped {
+        // Still alive, so the record stays: state has to match what is
         // really running, or a retry has no pgid to signal.
-        record.share = Some(share);
-        state::save(&paths.state_file(), &store)?;
         return Err(e.context(format!("could not take {name}'s share down")));
     }
-    state::save(&paths.state_file(), &store)?;
+    // A stop or a sweep may have dropped it meanwhile, having signalled
+    // the same groups; a share recorded since is another one.
+    if let Some(record) = store.worktrees.get_mut(name)
+        && record.share.as_ref() == Some(&share)
+    {
+        record.share = None;
+        state::save(&paths.state_file(), &store)?;
+    }
     Ok(())
 }
 
@@ -498,6 +606,11 @@ pub(super) fn sweep_dead_shares_with(
     let mut notices = Vec::new();
     for (name, record) in store.worktrees.iter_mut() {
         sweep_interrupted_shares(name, record, &is_alive, &group_alive, &stop, &mut notices);
+        // A stop in flight takes the share down itself, once what it
+        // points at is gone, and says so.
+        if record.stop_in_flight(&is_alive) {
+            continue;
+        }
         let Some(share) = record.share.clone() else {
             continue;
         };

@@ -351,6 +351,58 @@ fn ls_lists_the_worktrees_once_beyond_what_every_command_does() {
     }
 }
 
+// A `rm` or a stop holds the state lock for as long as a `docker compose
+// down` takes. Every `ls` and `status` waited all that time with nothing
+// on screen, and a mutation waited as long in silence.
+#[test]
+fn reads_answer_while_another_pando_holds_the_lock_and_a_mutation_says_it_waits() {
+    use std::time::{Duration, Instant};
+    let e = env();
+    let out = e.pando(&["new", "feat/one"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    let lock = common::paths_for(&e.home, &e.root).lock_file();
+    // Held by a thread of its own that lets go when told, or after a while
+    // regardless, so a read that still waits fails here rather than hangs.
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (taken, held) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _lock = pando::state::lock(&lock).unwrap();
+        taken.send(()).unwrap();
+        let _ = released.recv_timeout(Duration::from_secs(30));
+    });
+    held.recv().unwrap();
+
+    for args in [
+        &["ls"][..],
+        &["ls", "--json"],
+        &["status"],
+        &["status", "feat+one"],
+        &["status", "--json"],
+    ] {
+        let began = Instant::now();
+        let out = e.pando(args);
+        let took = began.elapsed();
+        assert_eq!(code(&out), EXIT_OK, "{args:?}: {}", stderr(&out));
+        assert!(stdout(&out).contains("feat"), "{args:?}: {}", stdout(&out));
+        assert!(took < Duration::from_secs(10), "{args:?} waited {took:?}");
+    }
+
+    let out = std::thread::scope(|scope| {
+        let stopping = scope.spawn(|| e.pando(&["stop", "feat+one"]));
+        std::thread::sleep(pando::state::LOCK_WAIT_NOTICE_AFTER + Duration::from_millis(1500));
+        release.send(()).unwrap();
+        stopping.join().unwrap()
+    });
+    holder.join().unwrap();
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    let said = stderr(&out);
+    assert_eq!(
+        said.matches("waiting for another pando to finish").count(),
+        1,
+        "{said}"
+    );
+}
+
 // A verb that takes a name finds the worktree and names it for its
 // messages from one listing: resolving, naming and `path`'s own lookup
 // each listed the worktrees again, for answers the first one had.
@@ -553,6 +605,238 @@ fn removing_a_worktree_pando_did_not_create_needs_yes() {
     let out = e.pando(&["rm", "adopted", "--yes"]);
     assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
     assert!(!adopted.exists());
+}
+
+// `pando rm a b c`: removed side by side, each said as it finishes. One
+// refused leaves the others to finish, and the command fails naming it; a
+// worktree named twice, by its branch and by its directory, is removed
+// once. One name reads exactly as it always did.
+#[test]
+fn rm_takes_several_names_and_says_what_became_of_each() {
+    let e = env();
+    for branch in ["feat/one", "feat/two", "feat/three"] {
+        let out = e.pando(&["new", branch]);
+        assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    }
+    let two = stdout(&e.pando(&["path", "feat/two"])).trim().to_string();
+    std::fs::write(Path::new(&two).join("scratch.txt"), "wip\n").unwrap();
+
+    let out = e.pando(&["rm", "feat/one", "feat/two", "feat+three", "feat/three"]);
+    assert_eq!(code(&out), EXIT_ERROR, "stderr: {}", stderr(&out));
+    let printed = stdout(&out);
+    let mut removed: Vec<&str> = printed.lines().collect();
+    removed.sort();
+    assert_eq!(
+        removed,
+        ["removed feat+one", "removed feat+three"],
+        "{printed}"
+    );
+    let said = stderr(&out);
+    assert!(
+        said.contains("pando: feat+two was not removed: ") && said.contains("--force"),
+        "{said}"
+    );
+    assert!(
+        said.contains("1 of 3 worktrees was not removed: feat+two"),
+        "{said}"
+    );
+    assert!(Path::new(&two).exists());
+
+    let out = e.pando(&["rm", "feat/two", "--force"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "removed feat+two\n");
+    assert_eq!(status_porcelain(&e.root), "", "the fixture must stay clean");
+}
+
+/// The lines of `out`'s stdout, sorted: several worktrees are said in the
+/// order they finish.
+fn sorted_lines(out: &Output) -> Vec<String> {
+    let mut lines: Vec<String> = stdout(out).lines().map(str::to_string).collect();
+    lines.sort();
+    lines
+}
+
+/// The processes the state file records for `name`.
+fn recorded_processes(e: &Env, name: &str) -> Vec<String> {
+    pando::state::load(&e.project_dir().join("state.json"))
+        .unwrap()
+        .worktrees
+        .get(name)
+        .map(|record| record.processes.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+// `pando start a b`, `restart a b`, `stop a b`: side by side, each said
+// as it finishes. A name that does not resolve is said under its own name
+// and leaves the others to go ahead, and the command then exits 1 naming
+// it. A worktree typed twice, by branch and by directory, is acted on once.
+#[test]
+fn start_restart_and_stop_take_several_names() {
+    let e = env();
+    e.write_config(SLEEPER);
+    for branch in ["feat/one", "feat/two"] {
+        let out = e.pando(&["new", branch]);
+        assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    }
+
+    let out = e.pando(&["start", "feat/one", "feat/nope", "feat/two", "feat+two"]);
+    assert_eq!(code(&out), EXIT_ERROR, "stderr: {}", stderr(&out));
+    let lines = sorted_lines(&out);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("started feat+one"), "{lines:?}");
+    assert!(lines[1].starts_with("started feat+two"), "{lines:?}");
+    let said = stderr(&out);
+    assert!(
+        said.contains("pando: feat/nope was not started: "),
+        "{said}"
+    );
+    assert!(
+        said.contains("1 of 3 worktrees was not started: feat/nope"),
+        "{said}"
+    );
+    for name in ["feat+one", "feat+two"] {
+        assert_eq!(recorded_processes(&e, name), ["dev"], "{name}");
+    }
+
+    let out = e.pando(&["restart", "feat/one", "feat/two"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    let lines = sorted_lines(&out);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("restarted feat+one"), "{lines:?}");
+    assert!(lines[1].starts_with("restarted feat+two"), "{lines:?}");
+
+    let out = e.pando(&["stop", "feat/one", "feat/nope", "feat/two"]);
+    assert_eq!(code(&out), EXIT_ERROR, "stderr: {}", stderr(&out));
+    assert_eq!(
+        sorted_lines(&out),
+        ["stopped feat+one", "stopped feat+two"],
+        "stderr: {}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("1 of 3 worktrees was not stopped: feat/nope"),
+        "{}",
+        stderr(&out)
+    );
+    for name in ["feat+one", "feat+two"] {
+        assert!(recorded_processes(&e, name).is_empty(), "{name}");
+    }
+
+    // One name reads exactly as it always did.
+    let out = e.pando(&["stop", "feat/one"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "feat+one was not running\n");
+}
+
+// A question is the whole command's: several names whose start needs an
+// answer exit 3 with the question, and start none of them.
+#[test]
+fn a_question_before_several_starts_starts_none_of_them() {
+    let e = env_pinning_an_impossible_runtime();
+    assert_eq!(code(&e.pando(&["new", "feat/two"])), EXIT_OK);
+
+    let out = e.pando(&["start", "feat/one", "feat/two"]);
+    assert_eq!(code(&out), EXIT_NEEDS_ANSWER, "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("node 99 (.nvmrc)"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(stdout(&out), "");
+    for name in ["feat+one", "feat+two"] {
+        assert!(recorded_processes(&e, name).is_empty(), "{name}");
+    }
+}
+
+// A `pando rm` killed half way — here while its containers go down — lets
+// go of its removal lock as it dies, and leaves its record marked: a start
+// of the worktree is refused with the command that finishes it, and that
+// command takes the containers down again and removes the rest.
+#[test]
+fn an_rm_killed_half_way_is_finished_by_the_next_one() {
+    use std::os::unix::fs::PermissionsExt;
+    let e = env();
+    e.write_config(SLEEPER);
+    assert_eq!(code(&e.pando(&["new", "feat/one"])), EXIT_OK);
+    let state_file = e.project_dir().join("state.json");
+    let mut store = pando::state::load(&state_file).unwrap();
+    store
+        .worktrees
+        .get_mut("feat+one")
+        .expect("new recorded it")
+        .services
+        .push(pando::state::ServiceRecord {
+            name: "db".to_string(),
+            kind: pando::state::ServiceKind::Compose,
+            port: None,
+            pid: None,
+            pgid: None,
+            compose_project: Some("pando-plain-feat-one".to_string()),
+        });
+    pando::state::save(&state_file, &store).unwrap();
+    let gate = e.home.parent().unwrap().join("gate");
+    std::fs::create_dir_all(&gate).unwrap();
+    let docker = e.home.join("bin").join("docker");
+    std::fs::create_dir_all(docker.parent().unwrap()).unwrap();
+    std::fs::write(
+        &docker,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{g}/calls'\ncase \"$*\" in\n  *' down -v')\n    \
+             touch '{g}/down'; i=0\n    while [ ! -e '{g}/release' ] && [ $i -lt 600 ]; do sleep \
+             0.05; i=$((i+1)); done ;;\nesac\nexit 0\n",
+            g = gate.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut removal = Command::new(env!("CARGO_BIN_EXE_pando"))
+        .env("PANDO_HOME", &e.home)
+        .current_dir(&e.root)
+        .args(["rm", "feat/one"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("run pando");
+    let reached = (0..400).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        gate.join("down").exists()
+    });
+    removal.kill().unwrap();
+    removal.wait().unwrap();
+    assert!(reached, "the removal never reached its containers");
+    let marked = pando::state::load(&state_file).unwrap();
+    assert!(
+        marked.worktrees["feat+one"].removing.is_some(),
+        "{marked:?}"
+    );
+
+    let out = e.pando(&["start", "feat/one"]);
+    assert_eq!(code(&out), EXIT_ERROR, "stdout: {}", stdout(&out));
+    assert!(
+        stderr(&out).contains("was interrupted") && stderr(&out).contains("`pando rm feat/one`"),
+        "{}",
+        stderr(&out)
+    );
+
+    std::fs::write(gate.join("release"), "").unwrap();
+    let out = e.pando(&["rm", "feat/one"]);
+    assert_eq!(code(&out), EXIT_OK, "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("was interrupted — finishing it"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(stdout(&out), "removed feat+one\n");
+    let calls = std::fs::read_to_string(gate.join("calls")).unwrap();
+    assert_eq!(
+        calls.lines().filter(|l| l.ends_with(" down -v")).count(),
+        2,
+        "{calls}"
+    );
+    let after = pando::state::load(&state_file).unwrap();
+    assert!(!after.worktrees.contains_key("feat+one"), "{after:?}");
+    assert_eq!(status_porcelain(&e.root), "", "the fixture must stay clean");
 }
 
 // A fixture with a real origin is what makes the tracking rules testable:

@@ -1380,6 +1380,9 @@ pub fn wait_ready(
                 want.service
             );
         }
+        // A start cancelled while it waits stops here, within a round,
+        // rather than at the deadline: the bring-up stops what it started.
+        crate::cancel::check()?;
         if Instant::now() >= deadline {
             let names: Vec<&str> = pending.iter().map(|w| w.service.as_str()).collect();
             bail!(

@@ -21,7 +21,7 @@ use super::refresh::advance_before_reconcile;
 use super::runtime::with_prelude;
 use super::services::{
     FRESH_DATA_DIR, Fresh, bring_up_services, changed_kinds, clear_native_sockets,
-    compose_projects, forget_hooks_after_services, forget_unstarted_services,
+    compose_project_of, compose_projects, forget_hooks_after_services, forget_unstarted_services,
     has_interrupted_compose, has_live_services, leave_changed_kinds, planned_services,
     preflight_isolation, replace_stopped_containers, resolve_service_env, service_roles,
     shared_service_env, stop_containers, stop_service_containers, stop_service_pumps,
@@ -32,8 +32,12 @@ use super::share::{share_closed, share_target_is_up, sweep_dead_shares_with, tak
 #[cfg(doc)]
 use super::share::sweep_dead_shares;
 use super::worktree::{
-    Checkout, MAIN_RUNS_ONLY, find_live_checkout, find_worktree, provision_at_start,
+    Checkout, MAIN_RUNS_ONLY, find_live_checkout, find_worktree, leave_to_removal,
+    provision_at_start, refuse_while_removed, refuse_while_removed_now,
 };
+
+/// What a start refused over a removal says it did not do.
+const STARTED_NOTHING: &str = "nothing was started";
 
 /// How long a process group gets to exit on its own before SIGKILL.
 pub(super) const STOP_GRACE: Duration = Duration::from_secs(5);
@@ -271,6 +275,15 @@ fn start_checked(
         restarting,
         skip_after_services,
     } = preflight;
+    // A start cancelled before it began — while its question was open —
+    // has nothing to undo. The safe points after this one are marked
+    // "a cancelled start": each fails through the undo any failure there
+    // runs, so a cancel leaves what a failure would, and the caller that
+    // cancelled stops whatever that is. See `crate::cancel`.
+    crate::cancel::check()?;
+    // Before anything is read of the tree, or made for it: a worktree an
+    // `rm` is removing is going, and its directory may be half gone.
+    refuse_while_removed_now(paths, name, name, STARTED_NOTHING)?;
     let Checkout { worktree, main } = find_live_checkout(paths, name)?;
     if main {
         refuse_main_mode(name, mode)?;
@@ -352,8 +365,23 @@ fn start_checked(
     }
 
     paths.ensure_home()?;
-    let _lock = state::lock(&paths.lock_file())?;
-    let mut store = state::load(&paths.state_file())?;
+    let (_lock, mut store) = loop {
+        let lock = state::lock(&paths.lock_file())?;
+        let store = state::load(&paths.state_file())?;
+        // Again, where it is decided. Namespaces made above are recorded in
+        // the removal's record by now, and its `rm` drops them with the rest.
+        refuse_while_removed(paths, &store, name, name, STARTED_NOTHING)?;
+        // A stop of this worktree waiting without the lock: what it is
+        // taking down reads as running until it is gone. Decided once it
+        // is — see `wait_out_stop` — and what was up when this start began
+        // read again, since the stop took it down.
+        if !stop_in_flight(&store, name) {
+            break (lock, store);
+        }
+        drop(lock);
+        wait_out_stop(paths, name, progress)?;
+        everything_up = !restarting && every_process_running(paths, name, &selection);
+    };
 
     // A record only vouches for the worktree it was written for; a stale
     // one at another path is replaced rather than inherited. Every group it
@@ -777,10 +805,32 @@ fn start_checked(
     // freeze `pando ls` and the TUI's tick.
     drop(_lock);
 
+    // The compose projects this start's `up` may make containers and a
+    // volume under, and whether it has asked for them yet. A removal can
+    // claim the worktree while that `up` runs — the record named them at
+    // the hold above, so its `down -v` comes first — and the `up` then
+    // makes them again after it: every way this start ends without
+    // spawning hands them to the removal, or takes them down itself
+    // (`leave_to_removal`).
+    let mut own_projects: Vec<String> = store
+        .worktrees
+        .get(name)
+        .map(compose_projects)
+        .unwrap_or_default();
+    if let Some(project) = compose_project_of(paths, config, name)
+        && !own_projects.contains(&project)
+    {
+        own_projects.push(project);
+    }
+    let brought_up = std::cell::Cell::new(false);
+
     // Every failure between here and the services being up leaves a
     // worktree that is still the shared one it was: nothing of the
     // isolated attempt may outlive it.
     let undo = |e: anyhow::Error| -> anyhow::Error {
+        if brought_up.get() {
+            leave_to_removal(paths, name, &own_projects, progress);
+        }
         if becoming_isolated {
             undo_failed_isolation(paths, config, name, &shared_ports);
         }
@@ -878,6 +928,9 @@ fn start_checked(
     // The main checkout runs none of them, nor a probe: each is a command
     // run in the repository, and Invariant 1 has no exception for it. It
     // is the developer's own checkout, installed and migrated by them.
+    // A cancelled start: before the hooks, which can take minutes and run
+    // to their end once begun.
+    crate::cancel::check().map_err(undo)?;
     let not_own = ready.as_ref().and_then(Ready::not_own_data);
     let hook_ctx = HookContext {
         name,
@@ -907,10 +960,17 @@ fn start_checked(
         .map_err(undo)?;
     }
 
+    // A cancelled start: after the install, before the services come up.
+    // Their readiness waits look again on every round.
+    crate::cancel::check().map_err(undo)?;
     let mut fresh = Fresh(false);
     if isolate {
+        brought_up.set(true);
         fresh = bring_up_services(paths, config, name, &canonical, &assignment.ports, progress)
             .map_err(undo)?;
+        // A cancelled start: the services are up, and the hooks that run
+        // against them have not begun.
+        crate::cancel::check().map_err(undo)?;
     }
 
     // The database the hooks after this point run against has changed, and
@@ -960,16 +1020,48 @@ fn start_checked(
         run_probes(paths, config, &hook_ctx, progress).map_err(undo)?;
     }
 
-    let _lock = state::lock(&paths.lock_file()).map_err(undo)?;
+    // A cancelled start: the last safe point, after the hooks and the
+    // probes and before the second lock. Past it the start spawns.
+    crate::cancel::check().map_err(undo)?;
     // The undo takes this same lock, and a second `flock` from this process
     // on a second descriptor waits for the first one: undoing with it held
     // is a start that never returns. Every undo below lets go first.
-    let mut store = match state::load(&paths.state_file()) {
-        Ok(store) => store,
-        Err(e) => {
-            drop(_lock);
+    let (_lock, mut store) = loop {
+        let lock = state::lock(&paths.lock_file()).map_err(undo)?;
+        let store = match state::load(&paths.state_file()) {
+            Ok(store) => store,
+            Err(e) => {
+                drop(lock);
+                return Err(undo(e));
+            }
+        };
+        // And once more before anything is spawned: an `rm` that began
+        // while the services came up has stopped what was recorded and is
+        // deleting the tree, and a process spawned now would run in it with
+        // a record that `rm` then drops. The undo hands what this start
+        // brought up to that `rm` (`leave_to_removal`): its `down -v` may
+        // have come before this start's `up`.
+        if let Err(e) = refuse_while_removed(paths, &store, name, name, STARTED_NOTHING) {
+            drop(lock);
             return Err(undo(e));
         }
+        // And an `rm` that has finished: the first hold saved this record,
+        // and only a removal drops it. Spawning would run in a deleted
+        // tree, and the undo takes down what this start brought up, which
+        // nothing will name again.
+        if !store.worktrees.contains_key(name) {
+            drop(lock);
+            return Err(undo(anyhow::anyhow!(
+                "{name} was removed while this start was starting — {STARTED_NOTHING}"
+            )));
+        }
+        // A stop of this worktree that began while the hooks ran, waited
+        // out as at the first lock; what it ended is started below.
+        if !stop_in_flight(&store, name) {
+            break (lock, store);
+        }
+        drop(lock);
+        wait_out_stop(paths, name, progress).map_err(undo)?;
     };
     // The record this call left behind, unless something removed the
     // worktree while the services were coming up.
@@ -977,6 +1069,41 @@ fn start_checked(
         .worktrees
         .entry(name.to_string())
         .or_insert_with(|| WorktreeRecord::new(canonical.clone(), false));
+
+    // What the first lock found running is left out of the spawn, so it
+    // has to be running still: a stop waited out above, or one that ran
+    // whole between the locks, may have ended it. Started again instead —
+    // reported as already running, it was a start that returned with it
+    // down.
+    let ended: Vec<String> = already
+        .iter()
+        .filter(|process| {
+            !record.processes.get(*process).is_some_and(|p| {
+                matches!(p.phase, Phase::Starting { .. } | Phase::Running { .. })
+                    && p.alive(proc::is_alive, proc::group_alive)
+            })
+        })
+        .cloned()
+        .collect();
+    if !ended.is_empty() {
+        already.retain(|process| !ended.contains(process));
+        progress(&format!(
+            "{} stopped while this start was starting — starting it again",
+            ended.join(", ")
+        ));
+        everything_up = false;
+        // One that died by itself keeps its record, and its group is
+        // signalled before the record goes, as the first lock clears one.
+        for process in &ended {
+            if let Some(gone) = record.processes.remove(process)
+                && !gone.swept
+                && let Err(e) = proc::stop(gone.pgid, STOP_GRACE)
+            {
+                drop(_lock);
+                return Err(undo(e.context(format!("stopping {process}"))));
+            }
+        }
+    }
 
     // And the namespaces this start was given have to still be this
     // worktree's. Its record named them when the lock was let go, with none
@@ -1293,6 +1420,52 @@ fn every_process_running(
     })
 }
 
+/// Whether a stop of `name` — in another pando, or on another thread of
+/// this one — is waiting on any of its groups without the lock
+/// ([`state::StopMark`]).
+fn stop_in_flight(store: &state::State, name: &str) -> bool {
+    store
+        .worktrees
+        .get(name)
+        .is_some_and(|record| record.stop_in_flight(&proc::is_alive))
+}
+
+/// How often a start waiting out a stop looks again.
+const STOP_POLL: Duration = Duration::from_millis(50);
+
+/// Waits, with no lock held, until no stop of `name` is in flight, and
+/// says so first.
+///
+/// What a stop has marked is still alive and still `Running` while it
+/// waits: the stop takes the record down only once the group is gone. A
+/// start that read it then called it already running, started nothing,
+/// and returned with nothing running once the stop was done. So a start
+/// that finds a live mark lets the stop finish, then decides again under
+/// the lock, as it did when the stop held the lock throughout.
+///
+/// Read without the lock, which the stop needs to settle. Bounded: a mark
+/// is void once [`state::STOP_MARK_LIFETIME_SECS`] have passed, or once
+/// its pando is gone. Cancelled at once, from the TUI.
+fn wait_out_stop(paths: &PandoPaths, name: &str, progress: &dyn Fn(&str)) -> Result<()> {
+    progress(&format!("waiting for the stop of {name} to finish"));
+    let bound = Duration::from_secs(state::STOP_MARK_LIFETIME_SECS.unsigned_abs() + 1);
+    let began = std::time::Instant::now();
+    loop {
+        crate::cancel::check()?;
+        if !stop_in_flight(&state::load(&paths.state_file())?, name) {
+            return Ok(());
+        }
+        if began.elapsed() >= bound {
+            bail!(
+                "a stop of {name} is still not done after {}s, so {STARTED_NOTHING} — `pando stop \
+                 {name}`, then start it again",
+                bound.as_secs()
+            );
+        }
+        std::thread::sleep(STOP_POLL);
+    }
+}
+
 /// Stops a worktree's processes — every one it is running, or the one
 /// `only` names. The worktree, its ports, and its logs survive.
 pub fn stop(
@@ -1301,27 +1474,86 @@ pub fn stop(
     only: Option<&str>,
     progress: &dyn Fn(&str),
 ) -> Result<StopOutcome> {
+    stop_with(
+        paths,
+        name,
+        only,
+        |pgid| proc::stop(pgid, STOP_GRACE),
+        progress,
+    )
+}
+
+/// [`stop`] with the signal injected, so a test can watch the wait happen
+/// with the lock let go.
+///
+/// In three steps. Under the lock, what the stop takes down is read — by
+/// the same [`stop_recorded_with`] that settles it, on a copy — and each
+/// group is marked as this stop's ([`state::StopMark`]). Without the lock,
+/// every group is signalled and waited on together. Under the lock again,
+/// the records are settled by what the wait found. A dev server that
+/// ignores SIGTERM costs its grace period either way, but it used to cost
+/// it under the lock: the TUI's stops of several worktrees, or two `pando
+/// stop`s in two panes, ended one grace after another, and every start
+/// and refresh waited behind them.
+pub(super) fn stop_with(
+    paths: &PandoPaths,
+    name: &str,
+    only: Option<&str>,
+    stop: impl Fn(proc::Group) -> Result<()> + Sync,
+    progress: &dyn Fn(&str),
+) -> Result<StopOutcome> {
     paths.ensure_home()?;
-    let mut projects: Vec<String> = Vec::new();
-    let outcome = {
+    let (shared, planned) = {
         let _lock = state::lock(&paths.lock_file())?;
         let mut store = state::load(&paths.state_file())?;
         let shared = public_url(&store, name);
-        let outcome = stop_recorded(&mut store, name, only, &mut projects)?;
-        say_if_closed(&store, name, shared, progress);
-        // `reconcile` drops dead-leader records for every worktree in the
-        // project, not only this one, so every one is signalled first — and
-        // a sibling's half-dead share along with them.
-        for notice in sweep_orphaned_groups(&mut store)? {
-            progress(&notice);
-        }
-        advance_before_reconcile(&mut store);
-        state::reconcile(&mut store, proc::is_alive, proc::group_alive);
-        if let Some(record) = store.worktrees.get(name) {
-            clear_native_sockets(paths, name, record);
+        // A refusal — `--only` of a process it is not running — comes from
+        // here, before anything is marked or signalled.
+        let planned = mark_stop(&mut store, name, only)?;
+        if planned.is_empty() {
+            // Nothing to wait on: settled now, in one go.
+            let mut projects = Vec::new();
+            let outcome = stop_recorded_with(&mut store, name, only, &stop, &mut projects)?;
+            finish_stop(paths, &mut store, name, shared, progress)?;
+            drop(_lock);
+            stop_containers(paths, &projects, progress)?;
+            return Ok(outcome);
         }
         state::save(&paths.state_file(), &store)?;
-        outcome
+        (shared, planned)
+    };
+
+    let waited = wait_for(&planned, &stop);
+
+    let mut projects = Vec::new();
+    let outcome = {
+        let _lock = state::lock(&paths.lock_file())?;
+        let mut store = state::load(&paths.state_file())?;
+        let before = store.clone();
+        let settled = settle_stop(
+            &mut store,
+            name,
+            only,
+            &planned,
+            &waited,
+            &stop,
+            &mut projects,
+        )
+        .and_then(|outcome| {
+            finish_stop(paths, &mut store, name, shared, progress)?;
+            Ok(outcome)
+        });
+        match settled {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                // As a stop that failed always has: nothing settled, and
+                // the records kept — but no longer marked as this stop's.
+                let mut kept = before;
+                unmark_stop(&mut kept, name, &planned);
+                state::save(&paths.state_file(), &kept)?;
+                return Err(e);
+            }
+        }
     };
     // Outside the lock: `docker compose stop` takes as long as the
     // containers take to shut down, and the records that name the project
@@ -1329,6 +1561,194 @@ pub fn stop(
     // `stop` again.
     stop_containers(paths, &projects, progress)?;
     Ok(outcome)
+}
+
+/// The first step of a stop that waits without the lock, under it: the
+/// groups a stop of `name` signals, each marked in `store` as this
+/// stop's ([`state::StopMark`]) for the caller to save. None marked when
+/// there are none to wait on.
+pub(super) fn mark_stop(
+    store: &mut state::State,
+    name: &str,
+    only: Option<&str>,
+) -> Result<Vec<proc::Group>> {
+    let planned = groups_to_stop(store, name, only)?;
+    if let Some(record) = store.worktrees.get_mut(name)
+        && !planned.is_empty()
+    {
+        let since = Utc::now();
+        record.stopping.extend(
+            planned
+                .iter()
+                .map(|pgid| state::StopMark::ours(*pgid, since)),
+        );
+    }
+    Ok(planned)
+}
+
+/// What the wait of a stop found, group by group: `Err` with why for one
+/// that would not end.
+pub(super) type Waited = BTreeMap<proc::Group, std::result::Result<(), String>>;
+
+/// The second step, with no lock held: every group signalled and waited
+/// on at once, each on a thread of its own.
+pub(super) fn wait_for(
+    planned: &[proc::Group],
+    stop: &(impl Fn(proc::Group) -> Result<()> + Sync),
+) -> Waited {
+    std::thread::scope(|scope| {
+        let waits: Vec<_> = planned
+            .iter()
+            .map(|pgid| {
+                let pgid = *pgid;
+                scope.spawn(move || (pgid, stop(pgid).map_err(|e| format!("{e:#}"))))
+            })
+            .collect();
+        waits
+            .into_iter()
+            .zip(planned)
+            .map(|(wait, pgid)| {
+                wait.join()
+                    .unwrap_or_else(|_| (*pgid, Err("the stop panicked".to_string())))
+            })
+            .collect()
+    })
+}
+
+/// Takes this stop's marks off `name`'s record.
+pub(super) fn unmark_stop(store: &mut state::State, name: &str, planned: &[proc::Group]) {
+    if let Some(record) = store.worktrees.get_mut(name) {
+        record.stopping.retain(|mark| !planned.contains(&mark.pgid));
+    }
+}
+
+/// The last step, under the lock again: the marks taken off, and the
+/// records settled by what the wait found. On an error `store` is left
+/// part settled; the caller saves what it had before, less the marks.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn settle_stop(
+    store: &mut state::State,
+    name: &str,
+    only: Option<&str>,
+    planned: &[proc::Group],
+    waited: &Waited,
+    stop: &(impl Fn(proc::Group) -> Result<()> + Sync),
+    projects: &mut Vec<String>,
+) -> Result<StopOutcome> {
+    // What the wait found, for the groups it waited on; anything else the
+    // settle would signal is a group nobody has stopped yet.
+    let waited_for = |pgid: proc::Group| match waited.get(&pgid) {
+        Some(Ok(())) => Ok(()),
+        Some(Err(e)) => Err(anyhow::anyhow!("{e}")),
+        None => stop(pgid),
+    };
+    // A start of this worktree in the meantime — its processes died under
+    // the wait, and it spawned new ones — is not this stop's to undo: only
+    // the groups this stop waited on are settled then.
+    let unchanged = groups_to_stop(store, name, only)
+        .is_ok_and(|now| now.iter().all(|pgid| planned.contains(pgid)));
+    unmark_stop(store, name, planned);
+    match unchanged {
+        true => stop_recorded_with(store, name, only, waited_for, projects),
+        false => settle_only_ours(store, name, waited),
+    }
+}
+
+/// The groups a stop of `name` would signal, read by running
+/// [`stop_recorded_with`] on a copy with a signal that only writes them
+/// down: the one place that decides it decides this too.
+fn groups_to_stop(
+    store: &state::State,
+    name: &str,
+    only: Option<&str>,
+) -> Result<Vec<proc::Group>> {
+    let mut copy = state::State::new();
+    if let Some(record) = store.worktrees.get(name) {
+        copy.worktrees.insert(name.to_string(), record.clone());
+    }
+    let seen = std::sync::Mutex::new(Vec::new());
+    stop_recorded_with(
+        &mut copy,
+        name,
+        only,
+        |pgid| {
+            seen.lock().expect("never poisoned").push(pgid);
+            Ok(())
+        },
+        &mut Vec::new(),
+    )?;
+    let mut seen = seen.into_inner().expect("never poisoned");
+    seen.sort();
+    seen.dedup();
+    Ok(seen)
+}
+
+/// What a stop does to the rest of the state once its own records are
+/// settled, under the lock, and the save.
+fn finish_stop(
+    paths: &PandoPaths,
+    store: &mut state::State,
+    name: &str,
+    shared: Option<String>,
+    progress: &dyn Fn(&str),
+) -> Result<()> {
+    say_if_closed(store, name, shared, progress);
+    // `reconcile` drops dead-leader records for every worktree in the
+    // project, not only this one, so every one is signalled first — and
+    // a sibling's half-dead share along with them.
+    for notice in sweep_orphaned_groups(store)? {
+        progress(&notice);
+    }
+    advance_before_reconcile(store);
+    state::reconcile(store, proc::is_alive, proc::group_alive);
+    if let Some(record) = store.worktrees.get(name) {
+        clear_native_sockets(paths, name, record);
+    }
+    state::save(&paths.state_file(), store)
+}
+
+/// Settles only the groups this stop waited on, for a worktree a start
+/// changed while it waited: their records go, and nothing else — not the
+/// processes, log pumps or share the start brought, and not its
+/// containers.
+fn settle_only_ours(
+    store: &mut state::State,
+    name: &str,
+    waited: &BTreeMap<proc::Group, std::result::Result<(), String>>,
+) -> Result<StopOutcome> {
+    let Some(record) = store.worktrees.get_mut(name) else {
+        return Ok(StopOutcome::NotRunning);
+    };
+    let ended = |pgid: &proc::Group| matches!(waited.get(pgid), Some(Ok(())));
+    let mut stopped = Vec::new();
+    record.processes.retain(|process, p| {
+        let ours = ended(&p.pgid);
+        if ours {
+            stopped.push(process.clone());
+        }
+        !ours
+    });
+    for service in record.services.iter_mut() {
+        if service.pgid.as_ref().is_some_and(ended) {
+            service.pid = None;
+            service.pgid = None;
+        }
+    }
+    if record
+        .share
+        .as_ref()
+        .is_some_and(|share| ended(&share.tunnel_pgid))
+    {
+        record.share = None;
+    }
+    let failures: Vec<String> = waited
+        .iter()
+        .filter_map(|(pgid, result)| result.as_ref().err().map(|e| format!("group {pgid}: {e}")))
+        .collect();
+    if !failures.is_empty() {
+        bail!("{name}: {}", failures.join("; "));
+    }
+    Ok(StopOutcome::Stopped(stopped))
 }
 
 /// Stops every worktree pando has a process for, returning their names.
@@ -1359,6 +1779,13 @@ pub fn stop_all_listed(
 /// [`stop_all`] or [`stop_all_listed`] with the signal injected, so a
 /// test can drive the path where a group refuses to die without needing
 /// one that really does.
+///
+/// In the three steps `stop` takes, for every worktree at once:
+/// each one's groups marked under the lock, all of them signalled and
+/// waited on together without it, and each worktree settled by what its
+/// wait found under it again. One after another, a dev server slow to
+/// stop cost `STOP_GRACE` per worktree; together it is as long as the
+/// slowest, and no start, stop or refresh waits behind it.
 pub fn stop_all_with(
     paths: &PandoPaths,
     listed: Option<&[String]>,
@@ -1366,45 +1793,88 @@ pub fn stop_all_with(
     progress: &dyn Fn(&str),
 ) -> Result<StopAllReport> {
     paths.ensure_home()?;
-    let _lock = state::lock(&paths.lock_file())?;
-    let mut store = state::load(&paths.state_file())?;
-    // Services as well as processes: a worktree whose dev server crashed
-    // still has a database up, and `stop` with no name is how you make
-    // sure nothing of pando's is left running. A share too: its tunnel
-    // outlives the processes it pointed at.
-    let mut names: Vec<String> = Vec::new();
-    let mut kept: Vec<String> = Vec::new();
-    for (name, record) in &store.worktrees {
-        if record.processes.is_empty() && record.services.is_empty() && record.share.is_none() {
-            continue;
-        }
-        if listed.is_some_and(|listed| !listed.contains(name)) && record.is_live() {
-            progress(&format!(
-                "{} came up after the list of what stops was shown — left running",
-                worktree::label(name)
-            ));
-            kept.push(name.clone());
-            continue;
-        }
-        names.push(name.clone());
-    }
     let mut stopped = Vec::new();
     let mut failures = Vec::new();
     let mut projects: Vec<String> = Vec::new();
-    for name in names {
-        // One worktree that will not die must not leave the rest running —
-        // and must not lose its record either. The failures are collected
-        // and reported once every other group has been signalled.
-        let shared = public_url(&store, &name);
-        match stop_recorded_with(&mut store, &name, None, &stop, &mut projects) {
-            Ok(StopOutcome::Stopped(_)) => {
-                say_if_closed(&store, &name, shared, progress);
-                stopped.push(name);
-            }
-            Ok(StopOutcome::NotRunning) => {}
-            Err(e) => failures.push(format!("stopping {}: {e:#}", worktree::label(&name))),
+    let mut kept: Vec<String> = Vec::new();
+    let mut settle = |store: &state::State,
+                      name: String,
+                      shared: Option<String>,
+                      outcome: Result<StopOutcome>| match outcome {
+        Ok(StopOutcome::Stopped(_)) => {
+            say_if_closed(store, &name, shared, progress);
+            stopped.push(name);
         }
+        Ok(StopOutcome::NotRunning) => {}
+        Err(e) => failures.push(format!("stopping {}: {e:#}", worktree::label(&name))),
+    };
+    let planned: Vec<(String, Option<String>, Vec<proc::Group>)> = {
+        let _lock = state::lock(&paths.lock_file())?;
+        let mut store = state::load(&paths.state_file())?;
+        // Services as well as processes: a worktree whose dev server
+        // crashed still has a database up, and `stop` with no name is how
+        // you make sure nothing of pando's is left running. A share too:
+        // its tunnel outlives the processes it pointed at.
+        let mut names: Vec<String> = Vec::new();
+        for (name, record) in &store.worktrees {
+            if record.processes.is_empty() && record.services.is_empty() && record.share.is_none() {
+                continue;
+            }
+            if listed.is_some_and(|listed| !listed.contains(name)) && record.is_live() {
+                progress(&format!(
+                    "{} came up after the list of what stops was shown — left running",
+                    worktree::label(name)
+                ));
+                kept.push(name.clone());
+                continue;
+            }
+            names.push(name.clone());
+        }
+        let mut planned = Vec::new();
+        for name in names {
+            let shared = public_url(&store, &name);
+            match mark_stop(&mut store, &name, None) {
+                Ok(groups) if !groups.is_empty() => planned.push((name, shared, groups)),
+                // Nothing to wait on: settled now.
+                Ok(_) => {
+                    let outcome = stop_recorded_with(&mut store, &name, None, &stop, &mut projects);
+                    settle(&store, name, shared, outcome);
+                }
+                Err(e) => settle(&store, name, shared, Err(e)),
+            }
+        }
+        state::save(&paths.state_file(), &store)?;
+        planned
+    };
+
+    let every: Vec<proc::Group> = planned
+        .iter()
+        .flat_map(|(_, _, groups)| groups.iter().copied())
+        .collect();
+    let waited = wait_for(&every, &stop);
+
+    let _lock = state::lock(&paths.lock_file())?;
+    let mut store = state::load(&paths.state_file())?;
+    for (name, shared, groups) in planned {
+        let theirs: Waited = groups
+            .iter()
+            .filter_map(|pgid| Some((*pgid, waited.get(pgid)?.clone())))
+            .collect();
+        // On a failure the record stays part settled, as it was: a group
+        // whose stop failed keeps its record, the pgid in it being the only
+        // way back to it, and the ones that ended are cleared.
+        let outcome = settle_stop(
+            &mut store,
+            &name,
+            None,
+            &groups,
+            &theirs,
+            &stop,
+            &mut projects,
+        );
+        settle(&store, name, shared, outcome);
     }
+    stopped.sort();
     // Nothing is dropped while a group is still unaccounted for: the pgid
     // in that record is the only way back to it.
     let mut sweep_failed = None;
@@ -1568,10 +2038,13 @@ pub(super) fn stop_recorded_with(
     let mut stopped = Vec::new();
     let mut failures = Vec::new();
     // Every group at once, each waited for on a thread of its own: a dev
-    // server takes up to `STOP_GRACE` over SIGTERM, and this runs under
-    // the project's lock, so one after another a stop of one worktree held
-    // up every other worktree's start, and the TUI's refresh, for that
-    // long per process. Together it is as long as the slowest.
+    // server takes up to `STOP_GRACE` over SIGTERM, and what this signals
+    // for real it signals under the project's lock — what a racing start
+    // recorded for a worktree being removed, a group a stop's settle
+    // finds nobody waited on; a stop hands it its waits done. One after
+    // another, that held up every other worktree's start, and the TUI's
+    // refresh, for that long per process; together it is as long as the
+    // slowest.
     let signalled: Vec<Result<()>> = std::thread::scope(|scope| {
         let waits: Vec<_> = groups
             .iter()
@@ -1662,7 +2135,13 @@ pub(super) fn sweep_orphaned_groups_with(
     let notices = sweep_dead_shares_with(store, proc::is_alive, proc::group_alive, &stop);
     let mut failures = Vec::new();
     for (name, record) in &mut store.worktrees {
+        // A group a stop in flight is taking down is that stop's: it is
+        // signalled already, and waited on.
+        let stopping = record.groups_being_stopped(&proc::is_alive);
         for (process, p) in &mut record.processes {
+            if stopping.contains(&p.pgid) {
+                continue;
+            }
             // Once, not on every mutation. A dead leader is not a dead
             // group, so the group is signalled — but a `Failed` record now
             // survives `reconcile` until its own worktree is started,
@@ -1698,7 +2177,7 @@ pub(super) fn sweep_orphaned_groups_with(
             let (Some(pid), Some(pgid)) = (service.pid, service.pgid) else {
                 continue;
             };
-            if proc::is_alive(pid) {
+            if proc::is_alive(pid) || stopping.contains(&pgid) {
                 continue;
             }
             match stop(pgid) {

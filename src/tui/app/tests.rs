@@ -3977,7 +3977,7 @@ fn a_list_every_key_can_act_on() -> (tempfile::TempDir, App) {
 /// What a key press can visibly change on the list.
 fn list_fingerprint(app: &App) -> String {
     format!(
-        "{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}|{:?}|{:?}|{}|{}|{}|{:?}|{}",
+        "{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}|{:?}|{:?}|{}|{}|{}|{:?}|{}|{:?}",
         app.modal.as_ref().map(std::mem::discriminant),
         app.mode,
         app.status.as_ref().map(|s| s.message.clone()),
@@ -3992,6 +3992,7 @@ fn list_fingerprint(app: &App) -> String {
         app.filter,
         app.launch,
         app.leader,
+        app.marks,
     )
 }
 
@@ -4667,6 +4668,69 @@ fn a_stop_all_runs_alone_and_repository_writes_take_turns() {
             Err("let go".to_string())
         })
     );
+    drop(hold);
+}
+
+// "We can't delete several worktrees at the same time": `d` on a second
+// worktree while the first was being removed said "already busy removing
+// feat/one". A removal keeps the branch and writes no ref, so it takes no
+// turns with another removal, nor with a git move on another worktree.
+#[test]
+fn a_second_removal_starts_while_the_first_runs() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending(
+        "feat+three".into(),
+        PendingKind::Git(crate::actions::git::GitAction::Fetch),
+        move || {
+            let _ = held.recv();
+            Err("let go".to_string())
+        },
+    );
+    for _ in 0..2 {
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('y'));
+        press(&mut app, KeyCode::Char('j'));
+    }
+    let removing: Vec<&str> = app
+        .pending
+        .iter()
+        .filter(|p| p.kind == PendingKind::Remove)
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(removing, vec!["feat+one", "feat+two"]);
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.message.contains("already busy")),
+        "{:?}",
+        app.messages
+    );
+    // One worktree still has one action at a time.
+    assert!(
+        !app.spawn_pending("feat+one".into(), PendingKind::Remove, || {
+            Err("never runs".to_string())
+        })
+    );
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("already busy removing feat/one".to_string())
+    );
+    drop(hold);
+}
+
+// Only a create and a git move write refs: a create runs beside a
+// removal.
+#[test]
+fn a_create_runs_beside_a_removal() {
+    let mut app = test_app(&["feat+one"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+one".into(), PendingKind::Remove, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    assert!(app.spawn_create("feat/pay".into(), None));
+    assert_eq!(app.pending.len(), 2);
     drop(hold);
 }
 
@@ -7053,6 +7117,64 @@ fn the_gated_refresh_reads_a_quiet_state_as_is_and_advances_a_death() {
         advanced.refreshed.state.worktrees["feat+a"].processes["dev"].phase,
         Phase::Failed { .. }
     ));
+}
+
+// The first frame is drawn from one read made before the terminal opens.
+// It took the state lock, so while a `rm` or a stop held it — a `docker
+// compose down` can take minutes — `pando` opened onto nothing at all.
+#[test]
+fn the_first_frames_read_never_waits_for_the_state_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("acme-shop");
+    crate::testutil::init_repo(&root);
+    let paths = PandoPaths::new(
+        dir.path().join("pando-home"),
+        crate::project::ProjectRef::from_root(&root).unwrap(),
+    );
+    paths.ensure_home().unwrap();
+    // A process whose pid is gone, so the read cannot take the file as it
+    // stands without asking for the refresh that takes the lock.
+    let mut store = State::new();
+    let mut record = WorktreeRecord::new("/trees/feat+a", true);
+    let gone = ProcessRecord {
+        pid: i32::MAX as u32 - 1,
+        pgid: Group::from_raw(i32::MAX - 11),
+        started_at: Utc::now(),
+        log_path: dir.path().join("dev.log"),
+        ready_port: None,
+        ready_timeout_s: None,
+        observed_ports: Vec::new(),
+        swept: false,
+        phase: running_phase(),
+    };
+    record.processes.insert("dev".to_string(), gone);
+    store.worktrees.insert("feat+a".to_string(), record);
+    crate::state::save(&paths.state_file(), &store).unwrap();
+
+    let _held = crate::state::lock(&paths.lock_file()).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reading = paths.clone();
+    let began = Instant::now();
+    std::thread::spawn(move || {
+        let _ = tx.send(background::snapshot(&reading, None, false).map(|s| s.state));
+    });
+    let state = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the first frame waited for the state lock")
+        .unwrap();
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        began.elapsed()
+    );
+    assert!(
+        matches!(
+            state.worktrees["feat+a"].processes["dev"].phase,
+            Phase::Running { .. }
+        ),
+        "and it shows the state as it stands: a death under another pando's lock may be its \
+         stop, and is not called a failure"
+    );
 }
 
 // The answer arrives from a worker; a repeat of the same answer is not a
@@ -10146,6 +10268,1081 @@ fn every_theme_reads_the_same_hints_as_the_default_and_nothing_else() {
                     theme.name
                 );
             }
+        }
+    }
+}
+
+// ---- marks -----------------------------------------------------------------
+
+/// The marked worktrees, in the list's order.
+fn marked(app: &App) -> Vec<String> {
+    app.marked()
+}
+
+// `+` marks the row under the cursor and moves down, as a file manager's
+// selection key does; on a marked row it unmarks it.
+#[test]
+fn plus_marks_a_row_and_moves_down_and_unmarks_it_again() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    press(&mut app, KeyCode::Char('+'));
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["feat+one", "feat+two"]);
+    assert_eq!(app.selected_worktree().unwrap().name, "feat+three");
+    press(&mut app, KeyCode::Char('k'));
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["feat+one"], "+ again unmarks it");
+    // On the last row it stays there.
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(app.selected_worktree().unwrap().name, "feat+three");
+    assert_eq!(marked(&app), vec!["feat+one", "feat+three"]);
+}
+
+// Marks are names, not rows: a discovery that lists the same worktrees,
+// one that reorders them, and `,` re-sorting the list keep every mark on
+// its worktree. One that no longer lists a worktree drops its mark.
+#[test]
+fn marks_survive_a_refresh_and_a_re_sort_and_go_with_their_worktree() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    app.apply_snapshot(listing(&app, &["feat+one", "feat+two", "feat+three"]));
+    app.marks = ["feat+one", "feat+three"].map(String::from).into();
+    app.apply_snapshot(listing(&app, &["feat+three", "feat+one", "feat+two"]));
+    assert_eq!(marked(&app), vec!["feat+three", "feat+one"]);
+    for _ in ListSort::ALL {
+        press(&mut app, KeyCode::Char(','));
+        let mut names = marked(&app);
+        names.sort();
+        assert_eq!(names, vec!["feat+one", "feat+three"], "{:?}", app.sort);
+    }
+    app.apply_snapshot(listing(&app, &["feat+one", "feat+two"]));
+    assert_eq!(marked(&app), vec!["feat+one"], "feat+three went");
+    assert!(!app.marks.contains("feat+three"));
+}
+
+// esc unwinds a filter first, keeping the marks made under it; then it
+// unmarks every row; only then does it quit.
+#[test]
+fn esc_clears_the_filter_then_the_marks_then_quits() {
+    let mut app = test_app(&["feat+one", "fix+two", "fix+three"]);
+    press(&mut app, KeyCode::Char('/'));
+    type_str(&mut app, "fix");
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Char('+'));
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["fix+two", "fix+three"]);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.filter.is_empty(), "the filter went first");
+    assert_eq!(marked(&app), vec!["fix+two", "fix+three"]);
+    press(&mut app, KeyCode::Esc);
+    assert!(app.marks.is_empty(), "then the marks");
+    assert!(!app.should_quit);
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("unmarked 2 worktrees".to_string())
+    );
+    press(&mut app, KeyCode::Esc);
+    assert!(app.should_quit, "then esc quits");
+}
+
+// The main checkout can be marked: it starts, stops and restarts as any
+// row does. Only a removal skips it.
+#[test]
+fn the_main_checkout_can_be_marked() {
+    let mut app = test_app(&["feat+one"]);
+    app.apply_snapshot(listing(&app, &["feat+one"]));
+    press(&mut app, KeyCode::Char('g'));
+    assert_eq!(app.selected_worktree().unwrap().name, "acme-shop");
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["acme-shop"]);
+}
+
+// A marked row has `+` before the cursor's column, the list's title says
+// how many are marked and how many a filter hides, and so does the
+// footer.
+#[test]
+fn a_marked_row_shows_its_mark_and_the_list_counts_them() {
+    let mut app = test_app(&["feat+one", "fix+two", "fix+three"]);
+    press(&mut app, KeyCode::Char('+'));
+    press(&mut app, KeyCode::Char('+'));
+    let rows = frame(&mut app, 140, 24);
+    for row in ["│+  ○ feat/one", "│+  ○ fix/two", "│ ▸ ○ fix/three"] {
+        assert!(
+            rows.iter().any(|r| r.starts_with(row)),
+            "{row:?} is not on screen:\n{}",
+            rows.join("\n")
+        );
+    }
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("worktrees (3) · 2 marked · by PR")),
+        "{}",
+        rows.join("\n")
+    );
+    assert!(
+        rows.last().unwrap().starts_with(" 2 marked · "),
+        "{}",
+        rows.last().unwrap()
+    );
+    press(&mut app, KeyCode::Char('/'));
+    type_str(&mut app, "fix");
+    press(&mut app, KeyCode::Enter);
+    let rows = frame(&mut app, 140, 24);
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("worktrees (2/3) · 2 marked, 1 hidden · by PR")),
+        "{}",
+        rows.join("\n")
+    );
+}
+
+/// Marks every row of `app` with `+`, top to bottom.
+fn mark_all(app: &mut App) {
+    press(app, KeyCode::Char('g'));
+    for _ in 0..app.filtered_indices.len() {
+        press(app, KeyCode::Char('+'));
+    }
+}
+
+/// The worktrees with a removal in flight, oldest first.
+fn removing(app: &App) -> Vec<String> {
+    app.pending
+        .iter()
+        .filter(|p| p.kind == PendingKind::Remove)
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+// "We can't delete several worktrees at the same time." Three marked, `d`,
+// one confirm: three removals in flight at once, each on its own worker,
+// and their marks gone with them.
+#[test]
+fn d_with_three_marked_removes_all_three_at_once() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    let Some(Modal::RemoveMarked { names }) = &app.modal else {
+        panic!("one dialog for all of them: {:?}", app.modal);
+    };
+    assert_eq!(names, &["feat+one", "feat+two", "feat+three"]);
+    press(&mut app, KeyCode::Char('y'));
+    assert!(app.modal.is_none());
+    let names = removing(&app);
+    assert_eq!(names, vec!["feat+one", "feat+two", "feat+three"]);
+    assert_eq!(app.pending.len(), 3, "all three in flight together");
+    assert!(app.marks.is_empty(), "the marks went with them");
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.message.contains("already busy")),
+        "{:?}",
+        app.messages
+    );
+}
+
+// One marked row gets the dialog one row always gets, for that row
+// wherever the cursor is.
+#[test]
+fn d_with_one_marked_opens_the_dialog_for_it() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(app.selected_worktree().unwrap().name, "feat+two");
+    press(&mut app, KeyCode::Char('d'));
+    assert!(
+        matches!(&app.modal, Some(Modal::Remove { name, .. }) if name == "feat+one"),
+        "{:?}",
+        app.modal
+    );
+}
+
+// A marked worktree with uncommitted changes needs F, as one alone does:
+// `y` removes the others, keeps it marked and says so; `d` then `F`
+// removes it. With only such ones marked, `y` keeps the dialog open.
+#[test]
+fn a_dirty_marked_worktree_needs_f() {
+    let mut app = test_app(&["feat+one", "feat+dirty", "feat+three"]);
+    app.worktrees[1].dirty = Some(true);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    on_frame(
+        &rows,
+        "* feat/dirty — uncommitted changes · only F removes it",
+    );
+    on_frame(&rows, "y remove 2");
+    on_frame(&rows, "F remove all 3, discarding changes");
+    press(&mut app, KeyCode::Char('y'));
+    let names = removing(&app);
+    assert_eq!(names, vec!["feat+one", "feat+three"]);
+    assert_eq!(marked(&app), vec!["feat+dirty"], "it stays marked");
+    let (message, is_error) = app.active_status().unwrap();
+    assert!(is_error);
+    assert!(
+        message.contains("feat/dirty kept for its changes — still marked, d then F removes it"),
+        "{message}"
+    );
+
+    // Alone now: `y` is refused in the dialog, and F removes it.
+    let mut app = test_app(&["feat+dirty", "feat+also"]);
+    app.worktrees[0].dirty = Some(true);
+    app.worktrees[1].dirty = Some(true);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('y'));
+    assert!(
+        matches!(app.modal, Some(Modal::RemoveMarked { .. })),
+        "the dialog stays"
+    );
+    assert!(app.pending.is_empty());
+    let (message, _) = app.active_status().unwrap();
+    assert!(message.contains("F removes them anyway"), "{message}");
+    press(&mut app, KeyCode::Char('F'));
+    assert!(app.modal.is_none());
+    assert_eq!(removing(&app).len(), 2);
+}
+
+// A locked worktree and the main checkout are never removed: the dialog
+// says each stays and why, and the confirm removes the rest.
+#[test]
+fn removing_the_marks_skips_a_locked_one_and_the_main_checkout() {
+    let mut app = test_app(&["feat+one", "locked+two"]);
+    app.apply_snapshot(listing(&app, &["feat+one", "locked+two"]));
+    let locked = app
+        .worktrees
+        .iter_mut()
+        .find(|w| w.name == "locked+two")
+        .unwrap();
+    locked.locked = true;
+    locked.lock_reason = Some("benchmarking".into());
+    app.created_by_pando = [("feat+one", true), ("locked+two", true)]
+        .map(|(n, b)| (n.to_string(), b))
+        .into();
+    mark_all(&mut app);
+    assert_eq!(marked(&app), vec!["acme-shop", "feat+one", "locked+two"]);
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    on_frame(&rows, "remove 1 marked worktree?");
+    on_frame(
+        &rows,
+        "– acme-shop — stays: the main checkout, never removed",
+    );
+    on_frame(&rows, "– locked/two — stays: locked (benchmarking)");
+    on_frame(&rows, "✕ feat/one");
+    press(&mut app, KeyCode::Char('y'));
+    let names = removing(&app);
+    assert_eq!(names, vec!["feat+one"]);
+    let (message, _) = app.active_status().unwrap();
+    assert!(
+        message.contains("locked/two skipped: locked (benchmarking)"),
+        "{message}"
+    );
+    // Nothing left that can go: the dialog says so, and closes.
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    on_frame(&rows, "none of the marked worktrees can be removed");
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(removing(&app).len(), 1, "nothing more started");
+}
+
+// Each row says what its removal takes or stops on the way, the most
+// serious first: what stays, what only F removes, the data that goes.
+#[test]
+fn the_dialog_for_the_marks_says_what_each_removal_costs() {
+    let mut app = test_app(&["feat+plain", "feat+up", "feat+adopted"]);
+    with_process(&mut app, "feat+up", running_phase());
+    app.created_by_pando.insert("feat+adopted".into(), false);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    let at = |text: &str| on_frame(&rows, text).1;
+    on_frame(&rows, "remove 3 marked worktrees?");
+    on_frame(
+        &rows,
+        "the branches are kept; their logs and data are deleted",
+    );
+    on_frame(&rows, "✕ feat/up — running, stopped first");
+    on_frame(&rows, "✕ feat/adopted — not made by pando");
+    assert!(at("✕ feat/up") < at("✕ feat/plain"), "the plain row last");
+    on_frame(&rows, "y remove 3");
+    on_frame(&rows, "F force");
+    every_hint_presses_a_key(&mut app, "the dialog for the marks");
+}
+
+// The dialog's hints are buttons like any other's: a click on `y remove`
+// is `y`.
+#[test]
+fn a_click_on_the_marks_dialogs_hint_removes_them() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    mark_all(&mut app);
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    assert!(click_at(&mut app, on_frame(&rows, "y remove 2")));
+    assert_eq!(removing(&app).len(), 2);
+}
+
+/// The actions in flight, by worktree and kind, oldest first.
+fn in_flight(app: &App) -> Vec<(String, PendingKind)> {
+    app.pending
+        .iter()
+        .map(|p| (p.name.clone(), p.kind))
+        .collect()
+}
+
+// `s` with rows marked starts every marked one that is not up, at once,
+// and says which it left alone.
+#[test]
+fn s_starts_every_marked_worktree_that_is_not_up() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+up", "feat+other"]);
+    with_process(&mut app, "feat+up", running_phase());
+    for name in ["feat+one", "feat+two", "feat+up"] {
+        app.marks.insert(name.into());
+    }
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+one".to_string(), PendingKind::Start),
+            ("feat+two".to_string(), PendingKind::Start),
+        ]
+    );
+    let (message, _) = app.active_status().unwrap();
+    assert_eq!(message, "left alone: feat/up is up already");
+}
+
+// `x` with rows marked asks once for the whole set, and the second `x`
+// stops every marked worktree that runs, at once. A mark changed between
+// the two presses asks again.
+#[test]
+fn x_twice_stops_every_marked_worktree_that_runs() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    with_process(&mut app, "feat+one", running_phase());
+    with_process(&mut app, "feat+two", running_phase());
+    app.marks = ["feat+one", "feat+two", "feat+three"]
+        .map(String::from)
+        .into();
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.pending.is_empty(), "the first press only asks");
+    let (message, _) = app.active_status().unwrap();
+    assert_eq!(
+        message,
+        "stop feat/one and feat/two? x again to confirm · esc cancels"
+    );
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+one".to_string(), PendingKind::Stop),
+            ("feat+two".to_string(), PendingKind::Stop),
+        ],
+        "feat+three has nothing up"
+    );
+
+    // `+` between the presses unmarks feat+one under the cursor: the set
+    // the second `x` would stop is not the one asked about.
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    with_process(&mut app, "feat+one", running_phase());
+    with_process(&mut app, "feat+two", running_phase());
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Char('+'));
+    assert_eq!(marked(&app), vec!["feat+two"]);
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.pending.is_empty(), "asked again");
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("stop feat/two? x again to confirm · esc cancels".to_string())
+    );
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        in_flight(&app),
+        vec![("feat+two".to_string(), PendingKind::Stop)]
+    );
+}
+
+// With nothing marked up, `x` says so and stops nothing.
+#[test]
+fn x_with_no_marked_worktree_running_says_so() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+up"]);
+    with_process(&mut app, "feat+up", running_phase());
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.pending.is_empty());
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("none of the 2 marked worktrees is running".to_string())
+    );
+}
+
+// `r` with rows marked asks once while any of them runs; the second `r`
+// restarts the ones that run and starts the ones that do not, at once.
+// With none up, the first `r` starts them all, as it does for one.
+#[test]
+fn r_twice_restarts_every_marked_worktree() {
+    let mut app = test_app(&["feat+up", "feat+down"]);
+    with_process(&mut app, "feat+up", running_phase());
+    app.marks = ["feat+up", "feat+down"].map(String::from).into();
+    press(&mut app, KeyCode::Char('r'));
+    assert!(app.pending.is_empty(), "the first press only asks");
+    assert!(
+        app.active_status()
+            .unwrap()
+            .0
+            .starts_with("restart feat/up and feat/down? r again"),
+        "{:?}",
+        app.active_status()
+    );
+    press(&mut app, KeyCode::Char('r'));
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+up".to_string(), PendingKind::Restart),
+            ("feat+down".to_string(), PendingKind::Start),
+        ]
+    );
+
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('r'));
+    assert_eq!(app.pending.len(), 2, "nothing runs, so nothing to ask");
+}
+
+// A marked worktree with an action in flight is left alone, and the set
+// says so once rather than an "already busy" apiece.
+#[test]
+fn a_key_on_the_marks_leaves_a_busy_one_alone_and_says_so() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+one".into(), PendingKind::Remove, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+one".to_string(), PendingKind::Remove),
+            ("feat+two".to_string(), PendingKind::Start),
+        ]
+    );
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("left alone: feat/one waits for removing feat/one".to_string())
+    );
+    drop(hold);
+}
+
+// While rows are marked the footer offers the keys that act on them,
+// every one a button; esc's only once no filter would take it first.
+#[test]
+fn the_footer_with_rows_marked_offers_what_acts_on_them() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    press(&mut app, KeyCode::Char('+'));
+    every_hint_presses_a_key(&mut app, "the footer with rows marked");
+    let rows = frame(&mut app, 160, 24);
+    let footer = rows.last().unwrap();
+    assert!(
+        footer.starts_with(
+            " 1 marked · s start · x stop · r restart · d remove · + mark · esc unmark all"
+        ),
+        "{footer}"
+    );
+    click_at(&mut app, in_footer(&rows, "esc unmark all"));
+    assert!(app.marks.is_empty(), "a click on esc unmarks them");
+
+    press(&mut app, KeyCode::Char('/'));
+    type_str(&mut app, "feat");
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Char('+'));
+    let rows = frame(&mut app, 160, 24);
+    assert!(
+        !rows.last().unwrap().contains("esc"),
+        "{}",
+        rows.last().unwrap()
+    );
+}
+
+// A marked worktree with an action in flight waits for it: removing the
+// marks says so once, and removes the rest.
+#[test]
+fn removing_the_marks_leaves_a_busy_one_and_says_so_once() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+one".into(), PendingKind::Start, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('d'));
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(removing(&app), vec!["feat+two"]);
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("feat/one waits for starting feat/one".to_string())
+    );
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.message.contains("already busy")),
+        "{:?}",
+        app.messages
+    );
+    assert_eq!(marked(&app), vec!["feat+one"], "still marked");
+    drop(hold);
+}
+
+// A create held the repository's refs through its whole install, so a
+// git move waited the minutes `npm install` took. Its git work is done
+// once its worker says the install began: from then on a git move goes
+// ahead beside it.
+#[test]
+fn a_create_lets_a_git_move_go_once_its_install_begins() {
+    let mut app = test_app(&["feat+one"]);
+    let (hold, held) = mpsc::channel::<()>();
+    let (say, said) = mpsc::channel::<String>();
+    app.spawn_pending("feat+new".into(), PendingKind::Create, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.pending.last_mut().unwrap().progress_rx = Some(said);
+    let fetch = || -> Result<PendingOutcome, String> { Err("let go".to_string()) };
+    say.send("checking out feat/new".into()).unwrap();
+    app.poll_pending();
+    assert!(
+        !app.spawn_pending(
+            "feat+one".into(),
+            PendingKind::Git(crate::actions::git::GitAction::Fetch),
+            fetch,
+        ),
+        "git is still checking it out"
+    );
+    say.send(crate::actions::INSTALLING.into()).unwrap();
+    app.poll_pending();
+    assert!(app.spawn_pending(
+        "feat+one".into(),
+        PendingKind::Git(crate::actions::git::GitAction::Fetch),
+        fetch,
+    ));
+    // Its own worktree is still its own.
+    assert!(
+        !app.spawn_pending("feat+new".into(), PendingKind::Start, fetch),
+        "one action per worktree"
+    );
+    drop(hold);
+}
+
+// A create starts nothing a stop-all stops: `X` goes ahead while a
+// worktree is being made, and `n` while everything is being stopped.
+#[test]
+fn a_stop_all_and_a_create_run_beside_each_other() {
+    let mut app = test_app(&["feat+one"]);
+    let (hold, held) = mpsc::channel::<()>();
+    app.spawn_pending("feat+new".into(), PendingKind::Create, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.stop_everything(vec!["feat+one".into()]);
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+new".to_string(), PendingKind::Create),
+            (String::new(), PendingKind::StopAll),
+        ]
+    );
+    drop(hold);
+
+    // Nothing is polled, so the stop-all is in flight however soon its
+    // worker gives up on paths that do not exist.
+    let mut app = test_app(&["feat+one"]);
+    app.stop_everything(vec!["feat+one".into()]);
+    assert!(app.spawn_create("feat/pay".into(), None));
+    // Everything else still waits for it.
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("already busy stopping everything".to_string())
+    );
+}
+
+// ---- cancelling a start ------------------------------------------------
+
+/// A project on disk whose worktree `feat/one` has one native service,
+/// `stuckdb`, whose server never listens: an isolated start of it waits in
+/// readiness for the whole minute a service is given by default.
+fn app_with_a_stuck_service() -> (tempfile::TempDir, App, Receiver<AppEvent>) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("acme-shop");
+    crate::testutil::init_repo(&root);
+    let paths = PandoPaths::new(
+        dir.path().join("pando-home"),
+        ProjectRef::from_root(&root).unwrap(),
+    );
+    std::fs::create_dir_all(paths.recipes_dir()).unwrap();
+    std::fs::create_dir_all(paths.config_file().parent().unwrap()).unwrap();
+    std::fs::write(
+        paths.config_file(),
+        "[dev]\ncmd = \"sleep 30\"\nports = []\n\n[[services]]\nkind = \"native\"\nname = \"stuckdb\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        paths.recipes_dir().join("stuckdb.toml"),
+        "kind = \"service\"\nname = \"stuckdb\"\nbinaries = [\"pando-fake-stuckdb\"]\n\n\
+         [service]\ninit = \"mkdir -p {datadir}\"\ncmd = \"exec pando-fake-stuckdb {port}\"\n",
+    )
+    .unwrap();
+    let bin = paths.home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(
+        bin.join("pando-fake-stuckdb"),
+        "#!/bin/sh\nexec sleep 300\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        bin.join("pando-fake-stuckdb"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let config = crate::config::load(&paths).unwrap().config;
+    actions::new(&paths, &config, "feat/one", None, &|_| {}).unwrap();
+    let mut app = App::new_for_test(paths, config, Vec::new());
+    let rx = app.event_rx.take().expect("the app owns its receiver");
+    app.apply_snapshot(snapshot(&app.paths, None, false).unwrap());
+    let row = app
+        .filtered_indices
+        .iter()
+        .position(|&i| app.worktrees[i].name == "feat+one")
+        .expect("feat/one is listed");
+    app.select_index(row);
+    (dir, app, rx)
+}
+
+/// Runs the app's loop, events and ticks' polls, until `done` says so,
+/// failing on a question nobody here would answer.
+fn run_until(
+    app: &mut App,
+    rx: &Receiver<AppEvent>,
+    within: Duration,
+    what: &str,
+    done: impl Fn(&App) -> bool,
+) {
+    let deadline = Instant::now() + within;
+    while !done(app) {
+        assert!(Instant::now() < deadline, "{what}: not within {within:?}");
+        while let Ok(event) = rx.try_recv() {
+            app.handle_event(event);
+        }
+        if let Some(Modal::Question { question, .. }) = &app.modal {
+            panic!("{what}: asked {:?}", question.prompt);
+        }
+        app.poll_pending();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+// `x` on a row whose start is in flight said "already busy starting", and
+// a start waits up to a minute for a service. It cancels the start now: a
+// start blocked in readiness stops within a round of its wait, its undo
+// takes down the server it spawned and puts the worktree back on the
+// shared services, and the row ends up stopped — well inside the minute.
+#[test]
+fn x_cancels_a_start_blocked_in_readiness_and_the_row_ends_stopped() {
+    let (_dir, mut app, rx) = app_with_a_stuck_service();
+    press(&mut app, KeyCode::Char('i'));
+    let saw_wait = |app: &App| {
+        app.pending_on("feat+one").is_some_and(|p| {
+            p.said
+                .iter()
+                .chain(&p.stage)
+                .any(|line| line.starts_with("waiting for stuckdb"))
+        })
+    };
+    run_until(
+        &mut app,
+        &rx,
+        Duration::from_secs(20),
+        "the start waits",
+        saw_wait,
+    );
+    let server = crate::state::load(&app.paths.state_file())
+        .unwrap()
+        .worktrees["feat+one"]
+        .services[0]
+        .clone();
+    let _server = server.pgid.map(|pgid| crate::testutil::Detached {
+        pid: server.pid.unwrap(),
+        pgid,
+    });
+    assert!(server.pid.is_some_and(crate::process::is_alive));
+
+    let asked = Instant::now();
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("cancelling the start of feat/one…".to_string())
+    );
+    assert_eq!(
+        app.pending_on("feat+one").map(|p| p.doing()),
+        Some("cancelling"),
+        "the row says so"
+    );
+    run_until(
+        &mut app,
+        &rx,
+        Duration::from_secs(10),
+        "the start is cancelled",
+        |app| app.pending.is_empty(),
+    );
+    let took = asked.elapsed();
+    assert!(
+        took < Duration::from_secs(5),
+        "cancelled within a round of the wait, not at its minute: {took:?}"
+    );
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.message == "cancelled the start of feat/one"),
+        "{:?}",
+        app.messages.iter().map(|m| &m.message).collect::<Vec<_>>()
+    );
+    let record = &crate::state::load(&app.paths.state_file())
+        .unwrap()
+        .worktrees["feat+one"];
+    assert!(
+        record.mode() != ServiceMode::Isolated,
+        "the switch to isolated was undone"
+    );
+    assert!(!server.pid.is_some_and(crate::process::is_alive));
+    assert!(!record.is_live() && record.processes.is_empty());
+    // And the row, once the refresh the outcome asked for lands.
+    run_until(
+        &mut app,
+        &rx,
+        Duration::from_secs(10),
+        "the row is stopped",
+        |app| !app.refreshing && app.phase_of("feat+one").is_none(),
+    );
+    assert!(app.pending_on("feat+one").is_none());
+}
+
+/// A start in flight that `x` can cancel, whose worker waits for the
+/// cancel and reports it, as a cancelled start's does once undone.
+fn a_start_that_waits_to_be_cancelled(app: &mut App, name: &str, kind: PendingKind) {
+    let cancel = crate::cancel::Cancel::new();
+    let seen = cancel.clone();
+    let worker_name = name.to_string();
+    assert!(app.spawn_pending(name.into(), kind, move || {
+        while !seen.is_cancelled() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(PendingOutcome::Cancelled {
+            name: worker_name,
+            stopped: false,
+        })
+    }));
+    app.pending.last_mut().unwrap().cancel = Some(cancel);
+}
+
+// `x` on a row being restarted cancels the restart, as on one being
+// started: the worktree ends stopped either way, which is what `x` asks.
+#[test]
+fn x_cancels_a_restart_in_flight_too() {
+    let mut app = test_app(&["feat+one"]);
+    a_start_that_waits_to_be_cancelled(&mut app, "feat+one", PendingKind::Restart);
+    press(&mut app, KeyCode::Char('x'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("cancelling the restart of feat/one…".to_string())
+    );
+    wait_for_pending(&mut app);
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some("cancelled the restart of feat/one".to_string())
+    );
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.message.contains("already busy")),
+        "{:?}",
+        app.messages
+    );
+}
+
+// While a start is in flight the footer offers `x cancel`, a button like
+// every other hint.
+#[test]
+fn the_footer_of_a_row_being_started_offers_x_to_cancel_it() {
+    let mut app = test_app(&["feat+one"]);
+    a_start_that_waits_to_be_cancelled(&mut app, "feat+one", PendingKind::Start);
+    every_hint_presses_a_key(&mut app, "the footer of a row being started");
+    let rows = frame(&mut app, 160, 24);
+    assert!(
+        rows.last().unwrap().starts_with(" j/k move · x cancel"),
+        "{}",
+        rows.last().unwrap()
+    );
+    click_at(&mut app, in_footer(&rows, "x cancel"));
+    assert!(app.pending[0].cancelled(), "a click on it cancels");
+    wait_for_pending(&mut app);
+}
+
+// `x` with rows marked cancels a marked start in flight and stops the
+// marked one that runs, once the set is confirmed.
+#[test]
+fn x_on_the_marks_cancels_a_marked_start_and_stops_the_rest() {
+    let mut app = test_app(&["feat+up", "feat+starting"]);
+    with_process(&mut app, "feat+up", running_phase());
+    a_start_that_waits_to_be_cancelled(&mut app, "feat+starting", PendingKind::Start);
+    app.marks = ["feat+up", "feat+starting"].map(String::from).into();
+    press(&mut app, KeyCode::Char('x'));
+    assert!(!app.pending[0].cancelled(), "the first press only asks");
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.pending[0].cancelled());
+    assert_eq!(
+        in_flight(&app),
+        vec![
+            ("feat+starting".to_string(), PendingKind::Start),
+            ("feat+up".to_string(), PendingKind::Stop),
+        ]
+    );
+}
+
+// `q` twice with a start in flight cancels it, and pando quits once it has
+// run its undo, rather than abandoning it halfway; a `q` meanwhile quits
+// at once.
+#[test]
+fn q_twice_cancels_a_start_and_quits_once_it_is_undone() {
+    let mut app = test_app(&["feat+one"]);
+    a_start_that_waits_to_be_cancelled(&mut app, "feat+one", PendingKind::Start);
+    press(&mut app, KeyCode::Char('q'));
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some(
+            "cancel the start of feat/one and quit once it is undone? q again to confirm · esc \
+             cancels"
+                .to_string()
+        )
+    );
+    press(&mut app, KeyCode::Char('q'));
+    assert!(app.pending[0].cancelled());
+    assert!(!app.should_quit, "not until it is undone");
+    assert!(app.quitting);
+    wait_for_pending(&mut app);
+    assert!(app.should_quit, "quit once it was");
+
+    let mut app = test_app(&["feat+one"]);
+    let (hold, held) = mpsc::channel::<()>();
+    let cancel = crate::cancel::Cancel::new();
+    app.spawn_pending("feat+one".into(), PendingKind::Start, move || {
+        let _ = held.recv();
+        Err("let go".to_string())
+    });
+    app.pending[0].cancel = Some(cancel);
+    press(&mut app, KeyCode::Char('q'));
+    press(&mut app, KeyCode::Char('q'));
+    assert!(!app.should_quit);
+    press(&mut app, KeyCode::Char('q'));
+    assert!(app.should_quit, "a q while it undoes quits now");
+    drop(hold);
+}
+
+// Removing a set of marks says what it kept, and why, on the header; a
+// removal that finished at once wrote its `✓ removed` over it. The row
+// going says that one too, and `m` keeps it.
+#[test]
+fn a_removal_that_finishes_leaves_a_fresh_error_on_the_header() {
+    let mut app = test_app(&["feat+one"]);
+    // In the order the dialog's confirm does it: the removals, then what
+    // stays.
+    app.spawn_pending("feat+one".into(), PendingKind::Remove, || {
+        Ok(PendingOutcome::Removed("feat+one".into()))
+    });
+    app.set_error("feat/dirty kept for its changes — still marked, d then F removes it");
+    wait_for_pending(&mut app);
+    assert_eq!(
+        app.active_status(),
+        Some((
+            "feat/dirty kept for its changes — still marked, d then F removes it",
+            true
+        ))
+    );
+    assert!(app.messages.iter().any(|m| m.message == "removed feat/one"));
+}
+
+// ---- removals another pando runs ---------------------------------------
+
+/// The mark `rm` leaves on a worktree it is removing, as pid 4242's.
+fn a_removal_mark() -> crate::state::Removal {
+    crate::state::Removal {
+        owner_pid: 4242,
+        since: Utc::now(),
+        raced: Vec::new(),
+    }
+}
+
+/// `app` as a refresh would leave it with `name` being removed by another
+/// pando: under way, or interrupted.
+fn removed_elsewhere(app: &mut App, name: &str, under_way: bool) {
+    let state = match under_way {
+        true => actions::RemovalState::UnderWay(a_removal_mark()),
+        false => actions::RemovalState::Interrupted(a_removal_mark()),
+    };
+    let removals = BTreeMap::from([(name.to_string(), state)]);
+    assert!(app.handle_event(AppEvent::Removals(Box::new(removals))));
+}
+
+// `pando rm feat/one` in another pane: its row reads as a removal of this
+// TUI's own does, `◌ removing`, and the detail pane says whose.
+#[test]
+fn a_worktree_another_pando_removes_reads_as_removing() {
+    let mut app = test_app(&["feat+one", "feat+two"]);
+    removed_elsewhere(&mut app, "feat+one", true);
+    let rows = frame(&mut app, 140, 24);
+    let row = rows
+        .iter()
+        .find(|r| r.starts_with('│') && r.contains("◌ feat/one"))
+        .unwrap_or_else(|| panic!("{}", rows.join("\n")));
+    assert!(row.contains("removing"), "{row}");
+    on_frame(&rows, "◌ removing…  by another pando (pid 4242)");
+}
+
+// Every key that would start, stop or remove it again is refused in the
+// words `rm`'s own refusals use, and no worker is sent.
+#[test]
+fn the_keys_leave_a_worktree_another_pando_removes_alone() {
+    for (key, nothing) in [
+        (KeyCode::Char('s'), "nothing was started"),
+        (KeyCode::Char('r'), "nothing was started"),
+        (KeyCode::Char('i'), "nothing was started"),
+        (KeyCode::Char('x'), "it stops what runs itself"),
+        (KeyCode::Char('d'), "it is going already"),
+        (KeyCode::Char('t'), "nothing was shared"),
+    ] {
+        let mut app = test_app(&["feat+one"]);
+        removed_elsewhere(&mut app, "feat+one", true);
+        press(&mut app, key);
+        assert!(app.pending.is_empty(), "{key:?} sent a worker");
+        assert!(app.modal.is_none(), "{key:?} opened {:?}", app.modal);
+        assert_eq!(
+            app.active_status(),
+            Some((
+                format!("feat/one {} (pid 4242) — {nothing}", actions::BEING_REMOVED).as_str(),
+                true
+            )),
+            "{key:?}"
+        );
+    }
+}
+
+// A removal stopped half way refuses a start until `d` finishes it, and
+// `d` is what finishes it.
+#[test]
+fn an_interrupted_removal_refuses_a_start_and_d_finishes_it() {
+    let mut app = test_app(&["feat+one"]);
+    removed_elsewhere(&mut app, "feat+one", false);
+    let rows = frame(&mut app, 140, 24);
+    assert!(
+        rows.iter()
+            .any(|r| r.starts_with('│') && r.contains("feat/one") && r.contains("rm interrupted")),
+        "{}",
+        rows.join("\n")
+    );
+    press(&mut app, KeyCode::Char('s'));
+    assert!(app.pending.is_empty());
+    assert_eq!(
+        app.active_status(),
+        Some((
+            "a removal of feat/one was interrupted — nothing was started; d finishes it",
+            true
+        ))
+    );
+    press(&mut app, KeyCode::Char('d'));
+    assert!(
+        matches!(app.modal, Some(Modal::Remove { .. })),
+        "{:?}",
+        app.modal
+    );
+}
+
+// The marks leave it alone too: a start of the set says so once, and the
+// dialog that removes the marks lists it as staying.
+#[test]
+fn the_marks_leave_a_worktree_another_pando_removes_alone() {
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    removed_elsewhere(&mut app, "feat+one", true);
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('s'));
+    assert_eq!(
+        in_flight(&app),
+        vec![("feat+two".to_string(), PendingKind::Start)]
+    );
+    assert_eq!(
+        app.active_status().map(|(m, _)| m.to_string()),
+        Some(format!(
+            "left alone: feat/one {} (pid 4242) — nothing was started",
+            actions::BEING_REMOVED
+        ))
+    );
+
+    let mut app = test_app(&["feat+one", "feat+two", "feat+three"]);
+    removed_elsewhere(&mut app, "feat+one", true);
+    app.marks = ["feat+one", "feat+two"].map(String::from).into();
+    press(&mut app, KeyCode::Char('d'));
+    let rows = frame(&mut app, 140, 30);
+    on_frame(
+        &rows,
+        "– feat/one — stays: already being removed (pid 4242)",
+    );
+    press(&mut app, KeyCode::Char('y'));
+    assert_eq!(removing(&app), vec!["feat+two"]);
+}
+
+// The refresh worker asks where each marked removal stands after its
+// refresh, and only when the state marks one: under way while the
+// removal's lock is held, interrupted once it is free.
+#[test]
+fn the_refresh_reads_where_each_marked_removal_stands() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("acme-shop");
+    crate::testutil::init_repo(&root);
+    let paths = PandoPaths::new(
+        dir.path().join("pando-home"),
+        ProjectRef::from_root(&root).unwrap(),
+    );
+    paths.ensure_home().unwrap();
+    let mut store = State::new();
+    let mut record = WorktreeRecord::new(root.join("gone"), true);
+    assert!(super::removing::removals_in(&paths, &store).is_empty());
+    record.removing = Some(a_removal_mark());
+    store.worktrees.insert("feat+one".into(), record);
+    crate::state::save(&paths.state_file(), &store).unwrap();
+
+    let held = crate::state::try_lock(&paths.removal_lock_file("feat+one"))
+        .unwrap()
+        .expect("nobody holds it");
+    assert!(matches!(
+        super::removing::removals_in(&paths, &store).get("feat+one"),
+        Some(actions::RemovalState::UnderWay(_))
+    ));
+    drop(held);
+    // Asked again for a moment: a child another test forks in this
+    // process can hold a copy of the lock's descriptor until it execs.
+    assert!(crate::testutil::wait_until(Duration::from_secs(2), || {
+        matches!(
+            super::removing::removals_in(&paths, &store).get("feat+one"),
+            Some(actions::RemovalState::Interrupted(_))
+        )
+    }));
+
+    // And it reaches the app from the refresh worker itself.
+    let mut app = App::new_for_test(paths, Config::default(), Vec::new());
+    let rx = app.event_rx.take().unwrap();
+    app.spawn_refresh();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !app.removals.contains_key("feat+one") {
+        let left = deadline
+            .checked_duration_since(Instant::now())
+            .expect("the refresh sends where the removal stands");
+        if let Ok(event) = rx.recv_timeout(left) {
+            app.handle_event(event);
         }
     }
 }

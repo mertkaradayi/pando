@@ -23,11 +23,111 @@ may change behaviour.
   `use <branch>` made it a branch's build. `pando update` on a branch's
   build names it, and `scripts/dev rm` of the branch `pando` runs goes
   back to the release rather than to the main checkout's build.
+- `pando rm` takes several worktrees: `pando rm feat/a feat/b fix/c`
+  removes them side by side, says each as it finishes, and exits 1
+  naming any it could not remove; `--yes` and `--force` apply to each.
+  One name reads exactly as before.
+- `pando start`, `stop` and `restart` take several worktrees too:
+  `pando start feat/a feat/b` settles every question first, one name
+  after another, then starts them side by side, each said as it
+  finishes; one that fails leaves the others, and the exit code is then
+  1. A question still open is the whole command's exit 3, and nothing is
+  started. Every flag applies to each; one name, or none, reads exactly
+  as before.
+- Marks in the TUI: `+` marks the row under the cursor, or unmarks it,
+  and moves down. A marked row has a `+` before the cursor's column,
+  and the list's title and the footer say how many are marked. A mark
+  stays on its worktree through a refresh, a re-sort or a filter, and
+  goes with it; esc unmarks every row, after clearing a filter.
+- `d` with rows marked removes every marked worktree from one dialog.
+  It lists each with what its removal stops or takes with it, says
+  which only `F` removes (uncommitted changes) and which stay (locked,
+  the main checkout), and one confirm starts every removal at once.
+  `y` keeps the ones that need `F` marked, so `d` then `F` finishes
+  them.
+- `s`, `x` and `r` with rows marked start, stop or restart every marked
+  worktree at once, each on its own worker. `x` and `r` ask for their
+  second press once for the whole set, while any of it runs; a marked
+  worktree that is up already, or busy with something else, is left
+  alone and said once. The other keys still act on the row under the
+  cursor.
+- `x` on a worktree being started or restarted in the TUI cancels it,
+  where it said `already busy starting …` and a start could wait a
+  minute for a service. The start stops at its next safe point — a
+  readiness wait looks every quarter second, a hook already running
+  finishes first — through the undo a failure there runs, and the
+  worktree ends stopped. `q` twice with a start in flight cancels it
+  and quits once it is undone, rather than leaving it half up; `q`
+  again quits at once.
+- The TUI shows a worktree another pando is removing — `pando rm` in
+  another pane — as `◌ removing`, as it shows its own, and `s`, `x`,
+  `r`, `d` and sharing leave it alone, saying it is being removed. One
+  whose removal was stopped half way reads `rm interrupted`: nothing
+  starts it, and `d` finishes the removal.
 
 ### Fixed
 
 - A panic in the TUI no longer leaves the terminal reporting focus
   changes, which the shell then printed as `^[[I` and `^[[O`.
+- `ls`, `status`, `open`, `start --wait` and the TUI no longer wait for
+  another pando's lock: while a `rm` or a `stop` held it — a `docker
+  compose down` can take minutes — they printed nothing, and `pando`
+  opened onto nothing, until it let go. They now answer from the state
+  as it stands. A command that does have to wait says `waiting for
+  another pando to finish` after a second, rather than looking hung,
+  and the socket scan behind every read no longer holds the lock.
+- `pando stop --all` and the TUI's `X` stop every worktree at once:
+  one after another, each dev server slow to stop took its own five
+  seconds' grace, under the lock every other command waits for — four
+  of them, twenty seconds; now five. Their compose projects are asked
+  to stop together too.
+- A `pando stop` no longer holds the lock while its processes take
+  their grace period to end, so two stops of two worktrees — the TUI's,
+  or two panes' — end together, and a refresh or a start of another
+  worktree never waits behind one: two worktrees whose servers ignore
+  SIGTERM stop in 5.3s at once, from 10.3s. A process a stop is taking
+  down is never shown as failed while it waits, nor a native database
+  it is stopping said to have exited, and a start of the same worktree
+  waits for the stop, says so, and then starts it fresh. `restart`,
+  `stop --all` and the TUI's `X` stop the same way.
+- A folder of repositories is read one repository at a time no more:
+  its listing on every refresh and the TUI's first frame, its branches,
+  its pull requests, each set's git status, and each repository's base
+  for `new` (a fetch, sometimes) are asked of every repository at once.
+  On six repositories `ls` takes 0.15s, from 0.57s, and the TUI shows a
+  set's status as soon as its own repositories have answered.
+- `pando check` and `pando new` stop their install when they are told
+  to stop. A Ctrl-C that landed just before the install started, or a
+  `kill` of pando alone — an agent's, CI's — reached pando and not the
+  install, and the check sat until the install ended by itself. Now no
+  hook starts once pando has been told to stop, and outside a terminal
+  a running one leads a process group of its own, which pando stops.
+- Removing a worktree no longer holds up every other command. `rm`
+  stops what runs and marks the worktree as being removed under the
+  state lock, then takes its containers, its tree and its namespaces
+  down without it, so several removals — from the TUI, or from several
+  terminals — run side by side, and nothing else waits for one. A
+  worktree being removed refuses a start, a share, a second `rm` and a
+  `new` of its name; a removal stopped half way, by Ctrl-C or a crash,
+  is finished by the next `pando rm` of it, containers and namespaces
+  included.
+- `rm` of a running worktree stops it as `stop` now does, waiting for
+  its processes without the lock: two removals of worktrees whose
+  servers ignore SIGTERM end in 5.3s together, from 10.3s.
+- `unshare` no longer holds every other command up while the tunnel and
+  its proxy get their five seconds to exit; the share stays recorded
+  until both are down.
+- The TUI no longer removes one worktree at a time: `d` on another
+  while one was being removed said `already busy removing …`. A removal
+  keeps the branch and writes no ref, so it runs beside another
+  removal, a new worktree being made, or a git move elsewhere.
+- A worktree being made in the TUI holds up git moves only while git
+  checks it out, not through the minutes its install takes, and `X`
+  goes ahead while one is being made: a create starts nothing a stop
+  of everything would stop. A create beside another's install no
+  longer fails when that install holds the repository's config a
+  moment (`husky install` setting `core.hooksPath`): `new` tries git's
+  lock errors again for up to three seconds.
 
 ## 0.11.1 — 2026-10-26
 
