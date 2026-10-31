@@ -3,34 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pando · 404 · no stem here</title>
+<title>Not found · pando</title>
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#050505">
-
+<link rel="icon" href="/pando/assets/favicon.svg" type="image/svg+xml">
 <style>
   @font-face { font-family: "JetBrains Mono"; font-weight: 400; font-display: swap; src: url("/pando/assets/fonts/JetBrainsMono-Regular.woff2") format("woff2"); }
-  @font-face { font-family: "JetBrains Mono"; font-weight: 500; font-display: swap; src: url("/pando/assets/fonts/JetBrainsMono-Medium.woff2") format("woff2"); }
-  @font-face { font-family: "JetBrains Mono"; font-weight: 700; font-display: swap; src: url("/pando/assets/fonts/JetBrainsMono-Bold.woff2") format("woff2"); }
-  html, body { margin: 0; background: #050505; color: rgba(236,236,236,.94); font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; }
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: #050505; color: #F5F5F7; font: 400 17px/1.47 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif; -webkit-font-smoothing: antialiased; letter-spacing: -0.016em; }
   main { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 20px; box-sizing: border-box; text-align: center; }
-  .n { color: #F2B84B; font-weight: 700; text-shadow: 0 0 14px rgba(242,184,75,.5); }
-  h1 { font-size: clamp(28px, 5vw, 52px); font-weight: 500; margin: 14px 0 6px; }
-  h1 .chev { color: #F2B84B; margin-right: .35em; }
-  h1 .cur { display: inline-block; width: .5em; height: .9em; background: #F2B84B; vertical-align: -.08em; margin-left: .1em; animation: b 1.1s steps(1) infinite; }
-  @keyframes b { 50% { opacity: 0; } }
-  p { color: rgba(236,236,236,.62); margin: 0 0 28px; }
-  pre { font-size: clamp(5px, 1.05vw, 11px); line-height: 1.12; margin: 0 0 34px; color: rgba(236,236,236,.28); }
-  pre .rt { color: rgba(242,184,75,.75); }
-  a { display: inline-block; color: #050505; background: #F2B84B; padding: 11px 18px; border-radius: 8px; font-weight: 700; text-decoration: none; }
-  a:hover { background: #FCE4A5; }
-  a:focus-visible { outline: 2px solid #F2B84B; outline-offset: 3px; }
-  @media (prefers-reduced-motion: reduce) { h1 .cur { animation: none; } }
+  .eyebrow { color: #F2B84B; font-size: 17px; font-weight: 600; margin: 0 0 12px; }
+  h1 { font-size: clamp(36px, 6vw, 56px); line-height: 1.07; font-weight: 600; letter-spacing: -0.005em; margin: 0; text-wrap: balance; }
+  p { color: #A1A1A6; font-size: 19px; line-height: 1.38; margin: 16px 0 40px; }
+  pre { font: 400 clamp(5px, 1.05vw, 11px)/1.12 "JetBrains Mono", ui-monospace, Menlo, monospace; margin: 0 0 40px; color: rgba(236, 236, 236, 0.28); max-width: 100%; overflow: hidden; }
+  pre .rt { color: rgba(242, 184, 75, 0.75); }
+  a { display: inline-flex; align-items: center; height: 48px; padding: 0 24px; border-radius: 980px; background: #F2B84B; color: #050505; font-weight: 600; text-decoration: none; transition: background-color 120ms; }
+  a:hover { background: #F7C96E; }
+  a:focus-visible { outline: none; box-shadow: 0 0 0 2px #050505, 0 0 0 4px #F2B84B; }
 </style>
 </head>
 <body>
 <main>
-  <div><span class="n">404</span> · <span style="color:#f2f2f2">pando</span> <span style="color:rgba(236,236,236,.5)">// no stem here</span></div>
-  <h1><span class="chev" aria-hidden="true">›</span>This branch never grew.<span class="cur" aria-hidden="true"></span></h1>
+  <p class="eyebrow">404</p>
+  <h1>This branch never grew.</h1>
   <p>The page you asked for is not in this grove. The root is fine.</p>
 <pre aria-hidden="true">  ▒░░  ░▒▓▓▒        ▒▓█▓▓                                     ░▒█▓▒    ░▓▒        ░░░     ▒
  ░▓██▒ ▒███▓░▓▒▒░  ░████▒            ░░░    ░             ░   ▒███░   ░███▒ ░░   ▒▓█▓░   ██▓
@@ -43,7 +38,7 @@
 ░░▒█▒░░░░█░░░░█░▒░▒░▒░█░░░░░▒░█░░░▒░▒░█░░░▒░█░░░▒░░░█░░░░░▒█░░▒░█░░░░░░░█░░░▒█░░░░▒█░░▒░▒░█░░░░░▒░▒░
 <span class="rt">   ┃     ┃    ┃       ┃       ┃       ┃     ┃       ┃      ┃    ┃       ┃    ┃     ┃      ┃
 ╺━━┻━━━━━┻━━━━┻━━━━━━━┻━━━━━━━┻━━━━━━━┻━━━━━┻━━━━━━━┻━━━━━━┻━━━━┻━━━━━━━┻━━━━┻━━━━━┻━━━━━━┻━━━━━━━━╸</span></pre>
-  <a id="home" href="/pando/">back to the grove</a>
+  <a id="home" href="/pando/">Back to the grove</a>
 </main>
 <script>
   // the site lives at /pando/ on GitHub Pages; anywhere else, its root
