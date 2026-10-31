@@ -208,7 +208,9 @@
     if (slot >= SLOTX.length) { say('this replica has room for five worktrees — d removes one', '✗', 'rd'); return; }
     const wt = mkWt(branch, Object.assign({ slot, born: now(), busy: { what: 'creating', stage: 'installing', t: now(), until: now() + 1.4 } }, o || {}));
     wt.logs = [{ src: 'install', text: 'pnpm install --frozen-lockfile', lvl: '' }];
-    S.wts.splice(1, 0, wt); // newest first, after the main checkout
+    // newest first, after the main checkout and every worktree that runs, as the real list sorts
+    let at = 1; while (at < S.wts.length && S.wts[at].st !== 'stopped') at++;
+    S.wts.splice(at, 0, wt);
     S.sel = vis().indexOf(wt);
     if (!o || !o.pr) { setCap('A new branch, in a checkout of its own.', `pando new ${branch}`); note('created', wt); mission('created'); }
     return wt;
@@ -1033,7 +1035,12 @@
     if ((e.key === 'Escape' || e.key === 'q') && (!AP.user || (!S.ov && !S.armed))) {
       e.preventDefault();
       if (AP.user) say('q quits the real one; here it hands the keyboard back'); else tell('The keyboard is back with the page');
-      const b = keysEl.querySelector('button[tabindex="0"]') || keysEl.querySelector('button'); if (b) b.focus();
+      const b = keysEl.querySelector('button[tabindex="0"]') || keysEl.querySelector('button');
+      if (b) { // never a jump: the bar comes into view only when it is off screen
+        b.focus({ preventScroll: true });
+        const r = b.getBoundingClientRect();
+        if (r.bottom > innerHeight || r.top < 0) b.scrollIntoView({ block: 'nearest' });
+      }
       kickLoop();
       return;
     }
