@@ -365,11 +365,23 @@ fn start_checked(
     }
 
     paths.ensure_home()?;
-    let _lock = state::lock(&paths.lock_file())?;
-    let mut store = state::load(&paths.state_file())?;
-    // Again, where it is decided. Namespaces made above are recorded in
-    // the removal's record by now, and its `rm` drops them with the rest.
-    refuse_while_removed(paths, &store, name, name, STARTED_NOTHING)?;
+    let (_lock, mut store) = loop {
+        let lock = state::lock(&paths.lock_file())?;
+        let store = state::load(&paths.state_file())?;
+        // Again, where it is decided. Namespaces made above are recorded in
+        // the removal's record by now, and its `rm` drops them with the rest.
+        refuse_while_removed(paths, &store, name, name, STARTED_NOTHING)?;
+        // A stop of this worktree waiting without the lock: what it is
+        // taking down reads as running until it is gone. Decided once it
+        // is — see `wait_out_stop` — and what was up when this start began
+        // read again, since the stop took it down.
+        if !stop_in_flight(&store, name) {
+            break (lock, store);
+        }
+        drop(lock);
+        wait_out_stop(paths, name, progress)?;
+        everything_up = !restarting && every_process_running(paths, name, &selection);
+    };
 
     // A record only vouches for the worktree it was written for; a stale
     // one at another path is replaced rather than inherited. Every group it
@@ -988,31 +1000,75 @@ fn start_checked(
     // A cancelled start: the last safe point, after the hooks and the
     // probes and before the second lock. Past it the start spawns.
     crate::cancel::check().map_err(undo)?;
-    let _lock = state::lock(&paths.lock_file()).map_err(undo)?;
     // The undo takes this same lock, and a second `flock` from this process
     // on a second descriptor waits for the first one: undoing with it held
     // is a start that never returns. Every undo below lets go first.
-    let mut store = match state::load(&paths.state_file()) {
-        Ok(store) => store,
-        Err(e) => {
-            drop(_lock);
+    let (_lock, mut store) = loop {
+        let lock = state::lock(&paths.lock_file()).map_err(undo)?;
+        let store = match state::load(&paths.state_file()) {
+            Ok(store) => store,
+            Err(e) => {
+                drop(lock);
+                return Err(undo(e));
+            }
+        };
+        // And once more before anything is spawned: an `rm` that began
+        // while the services came up has stopped what was recorded and is
+        // deleting the tree, and a process spawned now would run in it with
+        // a record that `rm` then drops.
+        if let Err(e) = refuse_while_removed(paths, &store, name, name, STARTED_NOTHING) {
+            drop(lock);
             return Err(undo(e));
         }
+        // A stop of this worktree that began while the hooks ran, waited
+        // out as at the first lock; what it ended is started below.
+        if !stop_in_flight(&store, name) {
+            break (lock, store);
+        }
+        drop(lock);
+        wait_out_stop(paths, name, progress).map_err(undo)?;
     };
-    // And once more before anything is spawned: an `rm` that began while
-    // the services came up has stopped what was recorded and is deleting
-    // the tree, and a process spawned now would run in it with a record
-    // that `rm` then drops.
-    if let Err(e) = refuse_while_removed(paths, &store, name, name, STARTED_NOTHING) {
-        drop(_lock);
-        return Err(undo(e));
-    }
     // The record this call left behind, unless something removed the
     // worktree while the services were coming up.
     let record = store
         .worktrees
         .entry(name.to_string())
         .or_insert_with(|| WorktreeRecord::new(canonical.clone(), false));
+
+    // What the first lock found running is left out of the spawn, so it
+    // has to be running still: a stop waited out above, or one that ran
+    // whole between the locks, may have ended it. Started again instead —
+    // reported as already running, it was a start that returned with it
+    // down.
+    let ended: Vec<String> = already
+        .iter()
+        .filter(|process| {
+            !record.processes.get(*process).is_some_and(|p| {
+                matches!(p.phase, Phase::Starting { .. } | Phase::Running { .. })
+                    && p.alive(proc::is_alive, proc::group_alive)
+            })
+        })
+        .cloned()
+        .collect();
+    if !ended.is_empty() {
+        already.retain(|process| !ended.contains(process));
+        progress(&format!(
+            "{} stopped while this start was starting — starting it again",
+            ended.join(", ")
+        ));
+        everything_up = false;
+        // One that died by itself keeps its record, and its group is
+        // signalled before the record goes, as the first lock clears one.
+        for process in &ended {
+            if let Some(gone) = record.processes.remove(process)
+                && !gone.swept
+                && let Err(e) = proc::stop(gone.pgid, STOP_GRACE)
+            {
+                drop(_lock);
+                return Err(undo(e.context(format!("stopping {process}"))));
+            }
+        }
+    }
 
     // And the namespaces this start was given have to still be this
     // worktree's. Its record named them when the lock was let go, with none
@@ -1327,6 +1383,52 @@ fn every_process_running(
                 && p.alive(proc::is_alive, proc::group_alive)
         })
     })
+}
+
+/// Whether a stop of `name` — in another pando, or on another thread of
+/// this one — is waiting on any of its groups without the lock
+/// ([`state::StopMark`]).
+fn stop_in_flight(store: &state::State, name: &str) -> bool {
+    store
+        .worktrees
+        .get(name)
+        .is_some_and(|record| record.stop_in_flight(&proc::is_alive))
+}
+
+/// How often a start waiting out a stop looks again.
+const STOP_POLL: Duration = Duration::from_millis(50);
+
+/// Waits, with no lock held, until no stop of `name` is in flight, and
+/// says so first.
+///
+/// What a stop has marked is still alive and still `Running` while it
+/// waits: the stop takes the record down only once the group is gone. A
+/// start that read it then called it already running, started nothing,
+/// and returned with nothing running once the stop was done. So a start
+/// that finds a live mark lets the stop finish, then decides again under
+/// the lock, as it did when the stop held the lock throughout.
+///
+/// Read without the lock, which the stop needs to settle. Bounded: a mark
+/// is void once [`state::STOP_MARK_LIFETIME_SECS`] have passed, or once
+/// its pando is gone. Cancelled at once, from the TUI.
+fn wait_out_stop(paths: &PandoPaths, name: &str, progress: &dyn Fn(&str)) -> Result<()> {
+    progress(&format!("waiting for the stop of {name} to finish"));
+    let bound = Duration::from_secs(state::STOP_MARK_LIFETIME_SECS.unsigned_abs() + 1);
+    let began = std::time::Instant::now();
+    loop {
+        crate::cancel::check()?;
+        if !stop_in_flight(&state::load(&paths.state_file())?, name) {
+            return Ok(());
+        }
+        if began.elapsed() >= bound {
+            bail!(
+                "a stop of {name} is still not done after {}s, so {STARTED_NOTHING} — `pando stop \
+                 {name}`, then start it again",
+                bound.as_secs()
+            );
+        }
+        std::thread::sleep(STOP_POLL);
+    }
 }
 
 /// Stops a worktree's processes — every one it is running, or the one

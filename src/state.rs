@@ -20,7 +20,7 @@
 //!
 //! | | Under the lock | Without it | Under it again |
 //! |---|---|---|---|
-//! | `start` | refusals, mode, ports and service records, saved | hooks, install, services | refusals again, races checked, spawned, saved; the `dev` hook after |
+//! | `start` | refusals, a stop in flight waited out, mode, ports and service records, saved | hooks, install, services | refusals again, a stop waited out again, races checked, spawned, saved; the `dev` hook after |
 //! | `stop`, `restart`'s stop | `mark_stop`: a [`StopMark`] per group | `wait_for`: every group signalled and waited for at once | `settle_stop`, `finish_stop` |
 //! | `stop --all` | `mark_stop` of every worktree it stops | `wait_for`: all of their groups at once | `settle_stop` of each, the sweep and `reconcile` |
 //! | `rm` | `claim_removal`: refusals, the removal lock, stop marks, a [`Removal`] | `stop_claimed`'s wait, settled under the lock; `take_down` | `finish_removal`, or `abandon_removal` |
@@ -70,7 +70,12 @@
 //! neither forgets nor reports the server, the orphan sweep leaves it
 //! alone, and neither share sweep closes the worktree's share. The stop
 //! settles them, and removes a native server's socket directory by its
-//! record.
+//! record. And a start of the worktree waits the stop out
+//! (`wait_out_stop`), at either hold, rather than call what the stop is
+//! ending already running: it lets the lock go, polls an unlocked
+//! [`load`] until no mark of the worktree is live, and decides again
+//! under the lock — and a process its first hold found running that is
+//! down by its second is spawned again, not reported as up.
 //!
 //! A mark is void once the pando that wrote it is gone — a process handed
 //! its pid since is not it, for the mark says when that pando started —
