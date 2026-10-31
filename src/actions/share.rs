@@ -93,6 +93,53 @@ pub struct ShareOutcome {
 /// What a share refused over a removal says it did not do.
 const SHARED_NOTHING: &str = "nothing was shared";
 
+/// What an unshare refused over a removal says of the share.
+const UNSHARED_NOTHING: &str = "its share goes down with it";
+
+/// The share lock of `name`, held by one share or unshare of the worktree
+/// at a time, taken without ever making the worktree's logs directory —
+/// where it lives — again once a removal has deleted it. `waiting` is said
+/// before a wait for another share.
+///
+/// Taken in place ([`state::try_lock_in_place`]). A directory that is gone
+/// is made again only under the state lock, once [`refuse_while_removed`]
+/// has found no removal begun: a removal that claims the worktree after
+/// that deletes the directory after it too, in its `take_down`, and one
+/// that claimed it before is refused here. A directory deleted after that
+/// read is asked about again, so a removal never leaves one behind.
+fn take_share_lock(
+    paths: &PandoPaths,
+    name: &str,
+    shown: &str,
+    nothing: &str,
+    waiting: &dyn Fn(),
+) -> Result<state::StateLock> {
+    let lock_path = paths.share_lock_file(name);
+    let gone = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
+    let context = || format!("lock {}", lock_path.display());
+    for _ in 0..3 {
+        match state::try_lock_in_place(&lock_path) {
+            Ok(Some(held)) => return Ok(held),
+            Ok(None) => {
+                waiting();
+                match state::lock_in_place(&lock_path) {
+                    Ok(held) => return Ok(held),
+                    Err(e) if gone(&e) => {}
+                    Err(e) => return Err(e).with_context(context),
+                }
+            }
+            Err(e) if gone(&e) => {}
+            Err(e) => return Err(e).with_context(context),
+        }
+        let _lock = state::lock(&paths.lock_file())?;
+        let store = state::load(&paths.state_file())?;
+        refuse_while_removed(paths, &store, name, shown, nothing)?;
+        let logs = paths.logs_dir(name);
+        std::fs::create_dir_all(&logs).with_context(|| format!("create {}", logs.display()))?;
+    }
+    bail!("the logs directory of {shown} was deleted again and again — {nothing}")
+}
+
 /// Publishes a running worktree at a public URL.
 ///
 /// The lock is held for the refusals and for recording the result, and
@@ -143,8 +190,7 @@ pub fn share_with(
     let worktree = find_worktree(paths, name)?;
     let canonical = std::fs::canonicalize(&worktree.path).unwrap_or_else(|_| worktree.path.clone());
     let shown = worktree.display_name();
-    // Before the share's own lock, which is made in the worktree's logs: a
-    // removal deletes those, and would leave the one made after.
+    // Before anything else: a worktree being removed is not shared.
     refuse_while_removed_now(paths, name, &shown, SHARED_NOTHING)?;
 
     // One share of a worktree at a time, for the whole of it. Each tunnel
@@ -152,14 +198,9 @@ pub fn share_with(
     // the URL printed first: one recorded the other's, and the other,
     // giving way, closed the tunnel that served it. A second share waits
     // here, and then finds the first one's record.
-    let lock_path = paths.share_lock_file(name);
-    let _one_share = match state::try_lock(&lock_path)? {
-        Some(held) => held,
-        None => {
-            progress(&format!("waiting for another share of {shown} to finish"));
-            state::lock(&lock_path)?
-        }
-    };
+    let _one_share = take_share_lock(paths, name, &shown, SHARED_NOTHING, &|| {
+        progress(&format!("waiting for another share of {shown} to finish"))
+    })?;
 
     // Outside the state lock, because `refresh` takes it: a worktree
     // `start` returned from a moment ago is still `Starting`, and refusing
@@ -180,6 +221,9 @@ pub fn share_with(
         // refusal that forgot that signalled them all again on the next
         // call — an agent polling a share it already has, every time.
         state::save(&paths.state_file(), &store)?;
+        // Again, now the share's lock is held: a removal that began since
+        // the first refusal is deleting the logs this share would write.
+        refuse_while_removed(paths, &store, name, &shown, SHARED_NOTHING)?;
 
         let record = store
             .worktrees
@@ -284,12 +328,25 @@ pub fn share_with(
     // No longer pending from here, whichever way it goes: recorded, or
     // stopped. Every way out saves the store without it.
     drop_pending(&mut store, name);
+    // A removal that claimed the worktree after this share's last look
+    // may have deleted its logs before the tunnel and the proxy wrote
+    // theirs, making the directory again: closed, they are removed with
+    // it, and a directory with anything else in it is the removal's still.
+    let leave_logs = || {
+        let _ = std::fs::remove_file(&record.log_path);
+        if let Some(proxy) = &proxy {
+            let _ = std::fs::remove_file(&proxy.log_path);
+        }
+        let _ = std::fs::remove_dir(paths.logs_dir(name));
+    };
     let Some(existing_record) = store.worktrees.get(name) else {
         let _ = tunnel::stop_share(&record);
+        leave_logs();
         bail!("{shown} was removed while its tunnel was starting; the tunnel was closed again");
     };
     if let Err(e) = refuse_while_removed(paths, &store, name, &shown, SHARED_NOTHING) {
         let _ = tunnel::stop_share(&record);
+        leave_logs();
         let _ = state::save(&paths.state_file(), &store);
         return Err(anyhow::anyhow!(
             "{e:#}; the tunnel that was starting was closed again"
@@ -492,7 +549,7 @@ pub(super) fn unshare_with(
         let _lock = state::lock(&paths.lock_file())?;
         read(&state::load(&paths.state_file())?)?;
     }
-    let _one_share = state::lock(&paths.share_lock_file(name))?;
+    let _one_share = take_share_lock(paths, name, name, UNSHARED_NOTHING, &|| {})?;
     // And again, now no share of it can be on its way up.
     let share = {
         let _lock = state::lock(&paths.lock_file())?;

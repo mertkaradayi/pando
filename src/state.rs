@@ -24,7 +24,7 @@
 //! | `stop`, `restart`'s stop | `mark_stop`: a [`StopMark`] per group | `wait_for`: every group signalled and waited for at once | `settle_stop`, `finish_stop` |
 //! | `stop --all` | `mark_stop` of every worktree it stops | `wait_for`: all of their groups at once | `settle_stop` of each, the sweep and `reconcile` |
 //! | `rm` | `claim_removal`: refusals, the removal lock, stop marks, a [`Removal`] | `stop_claimed`'s wait, settled under the lock; `take_down` | `finish_removal`, or `abandon_removal` |
-//! | `share` | refusals, the proxy's port | proxy and tunnel, each group noted as a [`PendingShare`] | recorded, or closed again |
+//! | `share` | refusals, again once its own lock is held; the proxy's port | proxy and tunnel, each group noted as a [`PendingShare`] | recorded, or closed again |
 //! | `unshare` | the share read, again under the share's own lock | both halves signalled | the record dropped if it names that share still |
 //! | `new` | the target directory claimed | the checkout | the record written, let go before the install |
 //!
@@ -123,6 +123,15 @@
 //! taking it for a moment, so it is asked only under the state lock
 //! (`removal_of`): `rm` claims under it too, and a look outside it could
 //! fall on a claim, which would then refuse as if another were under way.
+//!
+//! A share's own lock is the other way round: it lives in the worktree's
+//! logs, which `take_down` deletes. So it is taken in place
+//! ([`try_lock_in_place`], [`lock_in_place`]), never making the directory,
+//! and one that finds the directory gone makes it again only under the
+//! state lock, once no removal has begun (`take_share_lock`): a removal
+//! that claims after that deletes it after too. A share refused at its
+//! last hold removes the logs its tunnel and proxy wrote, and the
+//! directory once nothing else is in it.
 //!
 //! # Lock order
 //!
@@ -1493,6 +1502,30 @@ pub fn try_lock(lock_path: &Path) -> Result<Option<StateLock>> {
     let held = crate::platform::files::try_lock_exclusive(&file)
         .with_context(|| format!("flock (try) on {}", lock_path.display()))?;
     Ok(held.then_some(StateLock { _file: file }))
+}
+
+/// [`try_lock`] on a lock file whose directory is never made: an error of
+/// kind `NotFound` once the directory is gone. For a lock that lives in a
+/// directory a removal deletes, which taking it must not make again.
+pub fn try_lock_in_place(lock_path: &Path) -> std::io::Result<Option<StateLock>> {
+    let file = open_in_place(lock_path)?;
+    let held = crate::platform::files::try_lock_exclusive(&file)?;
+    Ok(held.then_some(StateLock { _file: file }))
+}
+
+/// [`try_lock_in_place`] that waits for whoever holds it.
+pub fn lock_in_place(lock_path: &Path) -> std::io::Result<StateLock> {
+    let file = open_in_place(lock_path)?;
+    crate::platform::files::lock_exclusive(&file)?;
+    Ok(StateLock { _file: file })
+}
+
+fn open_in_place(lock_path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path)
 }
 
 fn open_lock_file(lock_path: &Path) -> Result<std::fs::File> {

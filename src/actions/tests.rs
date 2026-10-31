@@ -20930,3 +20930,57 @@ fn a_project_a_start_brings_up_after_its_worktree_is_removed_is_taken_down() {
     assert!(!fx.state().worktrees.contains_key(&name));
     assert_down_after_up(&log, &project);
 }
+
+// A share's own lock lives in the worktree's logs directory, which a
+// removal deletes. `unshare` took it without asking about a removal, and
+// `share` asked only before it: one taken after the removal's `take_down`
+// made the directory again, empty but for the lock, and nothing removed
+// it. The lock is taken where its directory is now, and one that finds it
+// gone asks about the removal under the state lock, and is refused — or,
+// with no removal, makes it there and goes on.
+#[test]
+fn a_share_lock_taken_during_a_removal_leaves_no_logs_directory() {
+    let fx = fixture();
+    let name = worktree_named(&fx, "feat/one");
+    let logs = fx.paths.logs_dir(&name);
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().share = Some(ShareRecord {
+        tunnel_pid: 4_000_041,
+        tunnel_pgid: Group::from_raw(4_000_041),
+        public_url: "https://raced.trycloudflare.com".to_string(),
+        local_port: 17_000,
+        started_at: Utc::now(),
+        log_path: logs.join("tunnel.log"),
+        proxy_pid: None,
+        proxy_pgid: None,
+        proxy_port: None,
+    });
+    state::save(&fx.paths.state_file(), &store).unwrap();
+    with_removal_mark(&fx, &name);
+    let removing = state::try_lock(&fx.paths.removal_lock_file(&name))
+        .unwrap()
+        .unwrap();
+    // What the removal's `take_down` deletes.
+    let _ = std::fs::remove_dir_all(&logs);
+
+    let err = super::share::unshare_with(&fx.paths, &name, |_| Ok(())).unwrap_err();
+    assert!(format!("{err:#}").contains(BEING_REMOVED), "{err:#}");
+    assert!(
+        !logs.exists(),
+        "an unshare made the removed logs directory again"
+    );
+    share(&fx.paths, &fx.config, &name, &noop).unwrap_err();
+    assert!(
+        !logs.exists(),
+        "a share made the removed logs directory again"
+    );
+
+    // The removal abandoned, the worktree stays: its logs directory gone by
+    // hand is made again, and the unshare goes on.
+    drop(removing);
+    let mut store = fx.state();
+    store.worktrees.get_mut(&name).unwrap().removing = None;
+    state::save(&fx.paths.state_file(), &store).unwrap();
+    super::share::unshare_with(&fx.paths, &name, |_| Ok(())).unwrap();
+    assert!(fx.state().worktrees[&name].share.is_none());
+}
