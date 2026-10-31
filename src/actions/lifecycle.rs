@@ -1439,15 +1439,12 @@ pub(super) fn mark_stop(
     if let Some(record) = store.worktrees.get_mut(name)
         && !planned.is_empty()
     {
-        let by = std::process::id();
         let since = Utc::now();
-        record
-            .stopping
-            .extend(planned.iter().map(|pgid| state::StopMark {
-                pgid: *pgid,
-                by,
-                since,
-            }));
+        record.stopping.extend(
+            planned
+                .iter()
+                .map(|pgid| state::StopMark::ours(*pgid, since)),
+        );
     }
     Ok(planned)
 }
