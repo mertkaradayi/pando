@@ -127,6 +127,7 @@ body.locked { overflow: hidden; }
 /* ---------- sections ---------- */
 .sec { padding: var(--sec-pad) 0; }
 .band { background: var(--bg-band); }
+.band + .band { border-top: 1px solid var(--hairline); }
 /* the name and how it works share one band */
 #story { padding-bottom: 0; }
 #how { padding-top: var(--s-10); }
@@ -529,10 +530,10 @@ html:not(.js) .toc { width: min(100% - 2 * var(--gutter), var(--w-docs)); margin
   .toc, .js .toc, html:not(.js) .toc { display: block; position: sticky; top: 52px; align-self: start; max-height: calc(100vh - 52px); overflow: auto; width: auto; margin: 0; padding: 56px 8px 40px 0; background: none; border-radius: 0; }
 }
 .docs h1 { font-size: var(--t-display); line-height: 1.07; }
-.docs h2 { font-size: var(--t-title); line-height: 1.125; margin: 72px 0 16px; padding-top: 32px; border-top: 1px solid var(--hairline); scroll-margin-top: 112px; }
-.docs h3 { font-size: var(--t-headline); line-height: 1.19; margin: 40px 0 12px; scroll-margin-top: 112px; }
+.docs h2 { font-size: var(--t-title); line-height: 1.125; margin: 72px 0 16px; padding-top: 32px; border-top: 1px solid var(--hairline); scroll-margin-top: 36px; }
+.docs h3 { font-size: var(--t-headline); line-height: 1.19; margin: 40px 0 12px; scroll-margin-top: 36px; }
 .docs h4 { font-size: var(--t-body); margin: 24px 0 8px; }
-@media (min-width: 1069px) { .docs h2, .docs h3 { scroll-margin-top: 72px; } }
+@media (min-width: 1069px) { .docs h2, .docs h3 { scroll-margin-top: 0; } }
 @media (min-width: 735px) and (max-width: 1068px) { .docs .code pre { font-size: 13px; } }
 .docs p, .docs li { line-height: 1.6; letter-spacing: -0.01em; }
 .docs p + ul, .docs ul + p, .docs p + ol, .docs ol + p { margin-top: 1em; }
