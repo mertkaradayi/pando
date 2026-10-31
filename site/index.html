@@ -71,7 +71,7 @@ document.documentElement.classList.add('js');
   <div class="wrap">
     <div class="sec-head">
       <h2 class="display" id="why-h"><span>In one checkout,</span> <span>branches take turns.</span></h2>
-      <p class="lede">To look at another branch, you stash, switch, reinstall and restart, and the port is still taken. Its migrations land in your database. Then you do it all again to come back.</p>
+      <p class="lede">Every switch is a stash, a reinstall and a restart, and the other branch’s migrations land in your database.</p>
     </div>
     <div class="vs">
       <div class="card">
@@ -92,7 +92,7 @@ document.documentElement.classList.add('js');
 main       <span class="ok">running</span>  http://localhost:20177
 feat/cart  <span class="ok">running</span>  http://localhost:23001
 fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
-        <p>Every branch runs at once, each in a checkout of its own, on ports of its own. You see all of them on one screen.</p>
+        <p>Every branch runs at once, on ports of its own.</p>
       </div>
     </div>
     <p class="sig"><q>So I built pando. For myself.</q><small>Mert Karadayi · <a href="#try">See it</a></small></p>
@@ -106,7 +106,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="sec-head">
       <p class="eyebrow">Try it</p>
       <h2 class="display" id="try-h">This is pando. Press a key.</h2>
-      <p class="lede">A working copy of pando’s terminal screen, running in your browser. Your keyboard drives it; on a phone, tap the keys below.</p>
+      <p class="lede">A working copy of pando’s screen, running in your browser.</p>
     </div>
     <div class="demo-ctl">
       <p class="hint">Click the screen, then press <kbd>n</kbd>.</p>
@@ -188,7 +188,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="mapping">
       <div>
         <h3 class="title">Your repository grows the same way.</h3>
-        <p>Git can check out many branches side by side, each in its own folder, all sharing one history: worktrees. The repository is the root. Every branch can be a trunk.</p>
+        <p>Git can check out many branches side by side, each in its own folder, all sharing one history: worktrees.</p>
       </div>
       <ul class="map-rows">
         <li class="map-row"><b>Root</b><i aria-hidden="true">→</i><span>your repository: one <code>.git</code>, one history</span></li>
@@ -204,7 +204,6 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="sec-head">
       <p class="eyebrow">How it works</p>
       <h2 class="display" id="how-h"><span>Three commands.</span> <span>A branch, running.</span></h2>
-      <p class="lede">pando drives git worktree and adds everything a branch needs to run.</p>
       <a class="more" href="docs.html#worktrees">How a worktree is made, step by step</a>
     </div>
     <ol class="steps">
@@ -217,7 +216,6 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <p class="eyebrow">Light on disk</p>
         <h3 class="title">A whole checkout, for the price of what changed.</h3>
         <p>Where the disk can clone (APFS on macOS; btrfs, XFS or bcachefs on Linux), a new worktree’s files are copy-on-write clones of your main checkout’s. <code>clone</code> does the same for <code>node_modules</code> or a Rust <code>target</code>.</p>
-        <p class="fine"><code>du</code> still counts each worktree in full. The saving shows up as free space.</p>
         <a class="more" href="docs.html#disk">Copy-on-write, clone and the disk report</a>
       </div>
       <figure class="bars">
@@ -236,7 +234,6 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="sec-head">
       <p class="eyebrow">Data</p>
       <h2 class="display" id="data-h">Its own database, if you want one.</h2>
-      <p class="lede">Code, ports and logs always belong to the worktree. You choose where its data lives, branch by branch.</p>
       <a class="more" href="docs.html#data">The three modes in full</a>
     </div>
     <div class="grid g3 list-s">
@@ -305,7 +302,6 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="sec-head">
       <p class="eyebrow">Two promises</p>
       <h2 class="display" id="promise-h">Your repository stays yours.</h2>
-      <p class="lede">These two rules come before every feature.</p>
       <a class="more" href="docs.html#promise">How the promises are kept</a>
     </div>
     <div class="grid g2">
@@ -313,16 +309,13 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <p class="k">Promise 1</p>
         <h3 class="title">pando never writes into your repository.</h3>
         <p>No config file, no gitignore line, no lockfile change. Everything pando learns and runs lives in <code>~/.pando</code>, and its tests check that <code>git status</code> stays clean.</p>
-        <p>Three things fall outside it by design, each with rules of its own: <a href="docs.html#not-covered">namespaced mode, the git menu and the <span class="nw">copy-on-write</span> checkout</a>.</p>
+        <p class="fine">Three things fall outside it by design, each with rules of its own: <a href="docs.html#not-covered">namespaced mode, the git menu and the <span class="nw">copy-on-write</span> checkout</a>.</p>
         <div class="vis">
-<pre aria-label="Where pando keeps everything"><span class="w">~/.pando/</span>
-├── config.toml
-└── projects/acme-shop-2bdf70d7/
-    ├── pando.toml
-    ├── state.json
-    ├── worktrees/feat+login/
-    ├── logs/feat+login/
-    └── data/feat+login/
+<pre aria-label="Where pando keeps everything"><span class="w">~/.pando/projects/acme-shop-2bdf70d7/</span>
+├── pando.toml
+├── worktrees/feat+login/
+├── logs/feat+login/
+└── data/feat+login/
 
 <span class="w">~/code/acme-shop/</span>   <span class="ok">untouched</span></pre>
         </div>
@@ -362,7 +355,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="sec-head">
       <p class="eyebrow">Install</p>
       <h2 class="display" id="install-h"><span>Install it.</span> <span>Run it in your project.</span></h2>
-      <p class="lede">A ready-made binary for macOS and Linux, on x86_64 or ARM, and for WSL 2 on Windows. Homebrew and the script need no Rust.</p>
+      <p class="lede">A ready-made binary for macOS and Linux, x86_64 or ARM, and for WSL 2 on Windows.</p>
     </div>
     <div class="tabs">
       <div class="seg" role="tablist" aria-label="Ways to install">
