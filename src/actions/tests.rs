@@ -2667,6 +2667,48 @@ fn stop_all_waits_out_every_worktrees_grace_together() {
     }
 }
 
+// It waited for them all holding the lock, so a start, a stop or the
+// TUI's refresh of any worktree waited out the slowest grace behind it.
+// Marked first, as `stop` does, the wait runs with the lock let go, and a
+// read in it calls nothing failed.
+#[test]
+fn stop_all_waits_without_the_lock() {
+    let fx = fixture();
+    let names: Vec<String> = (1..=2)
+        .map(|i| worktree_named(&fx, &format!("feat/all{i}")))
+        .collect();
+    for (i, name) in names.iter().enumerate() {
+        live_dev(&fx, name, 4_000_431 + i as i32);
+    }
+    let seen = std::sync::Mutex::new(Vec::new());
+    let stopped = stop_all_with(&fx.paths, |pgid| {
+        let free = wait_until(Duration::from_secs(5), || {
+            state::try_lock(&fx.paths.lock_file()).unwrap().is_some()
+        });
+        let read = refresh(&fx.paths).state;
+        let running = read
+            .worktrees
+            .values()
+            .flat_map(|record| record.processes.values())
+            .all(|p| matches!(p.phase, Phase::Running { .. }));
+        seen.lock().unwrap().push((pgid, free, running));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(stopped, names);
+    let seen = seen.into_inner().unwrap();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    for (pgid, free, running) in seen {
+        assert!(free, "the lock was held through the wait of {pgid}");
+        assert!(running, "a death stop --all waits on read as failed");
+    }
+    let saved = fx.state();
+    for name in &names {
+        assert!(saved.worktrees[name].processes.is_empty(), "{name}");
+        assert!(saved.worktrees[name].stopping.is_empty(), "{name}");
+    }
+}
+
 // And their containers: each `docker compose stop` waits for its own to
 // shut down, and they were asked one project after another.
 #[test]
