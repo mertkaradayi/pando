@@ -109,7 +109,9 @@ may change behaviour.
   or two panes' — end together, and a start or a refresh never waits
   behind one: two worktrees whose servers ignore SIGTERM stop in 5.3s
   at once, from 10.3s. A process a stop is taking down is never shown
-  as failed while it waits. `restart` stops the same way.
+  as failed while it waits, nor a native database it is stopping said
+  to have exited. `restart`, `stop --all` and the TUI's `X` stop the
+  same way.
 - A folder of repositories is read one repository at a time no more:
   its listing on every refresh and the TUI's first frame, its branches,
   its pull requests, each set's git status, and each repository's base
@@ -144,7 +146,10 @@ may change behaviour.
 - A worktree being made in the TUI holds up git moves only while git
   checks it out, not through the minutes its install takes, and `X`
   goes ahead while one is being made: a create starts nothing a stop
-  of everything would stop.
+  of everything would stop. A create beside another's install no
+  longer fails when that install holds the repository's config a
+  moment (`husky install` setting `core.hooksPath`): `new` tries git's
+  lock errors again for up to three seconds.
 
 ## 0.11.1 — 2026-10-26
 
