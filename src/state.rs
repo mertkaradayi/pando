@@ -22,6 +22,7 @@
 //! |---|---|---|---|
 //! | `start` | refusals, mode, ports and service records, saved | hooks, install, services | refusals again, races checked, spawned, saved; the `dev` hook after |
 //! | `stop`, `restart`'s stop | `mark_stop`: a [`StopMark`] per group | `wait_for`: every group signalled and waited for at once | `settle_stop`, `finish_stop` |
+//! | `stop --all` | `mark_stop` of every worktree it stops | `wait_for`: all of their groups at once | `settle_stop` of each, the sweep and `reconcile` |
 //! | `rm` | `claim_removal`: refusals, the removal lock, stop marks, a [`Removal`] | `stop_claimed`'s wait, settled under the lock; `take_down` | `finish_removal`, or `abandon_removal` |
 //! | `share` | refusals, the proxy's port | proxy and tunnel, each group noted as a [`PendingShare`] | recorded, or closed again |
 //! | `unshare` | the share read, again under the share's own lock | both halves signalled | the record dropped if it names that share still |
@@ -33,11 +34,10 @@
 //! the mark is the one it wrote (`Claim::still_ours`), a start refusing
 //! where another changed the mode or took its slot.
 //!
-//! Some still wait under it. `stop_all_with` signals every worktree at once
-//! and waits for them all holding it. A start stops what it replaces with
-//! it held: in its first hold dead-leader groups, a stale record's, and
-//! what a mode change cannot keep serving; in its second a `restart
-//! --only`'s process, and what kept serving through the change. The orphan
+//! Some still wait under it. A start stops what it replaces with it held:
+//! in its first hold dead-leader groups, a stale record's, and what a mode
+//! change cannot keep serving; in its second a `restart --only`'s
+//! process, and what kept serving through the change. The orphan
 //! sweep (`sweep_orphaned_groups`) and the share sweep signal and wait
 //! wherever they run; a failed `new` unwinds its checkout under it; and
 //! `finish_removal` takes down whatever a racing start recorded after the
