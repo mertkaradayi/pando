@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Docs · pando</title>
+<meta name="description" content="Every pando command, key and setting: worktrees, ports, data modes, disk, sharing, pull requests, the TUI, pando.toml, and what pando needs.">
+<meta name="theme-color" content="#050505">
+<meta property="og:title" content="pando docs">
+<meta property="og:description" content="Every pando command, key and setting: worktrees, ports, data modes, disk, sharing, pull requests, the TUI, pando.toml, and what pando needs.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://mertkaradayi.github.io/pando/docs.html">
+<meta property="og:image" content="https://mertkaradayi.github.io/pando/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="631">
+<meta property="og:image:alt" content="pando: One repo. Every branch alive. A grove of green aspens over one glowing root.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://mertkaradayi.github.io/pando/docs.html">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preload" href="assets/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/site.css">
+<script>document.documentElement.classList.add('js')</script>
+</head>
+<body class="docs-page">
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav" id="nav">
+  <div class="nav-in">
+    <a class="logo" href="index.html"><svg viewBox="0 0 64 64" aria-hidden="true"><g stroke="currentColor" stroke-linecap="round" fill="none"><path d="M18 44V24M18 30l-5-6M18 27l5-7" stroke-width="3.4"/><path d="M32 44V16M32 24l-6-7M32 21l6-7M32 30l5-4" stroke-width="3.8"/><path d="M46 44V26M46 31l-5-5M46 29l5-6" stroke-width="3.4"/></g><path d="M8 51c8-3 14 2 24 0s16-4 24 0" stroke="#F2B84B" stroke-width="4" fill="none" stroke-linecap="round"/></svg>pando</a>
+    <nav class="nav-links" id="nav-links" aria-label="Site">
+      <a href="index.html#how">How it works</a>
+      <a href="index.html#data">Data</a>
+      <a href="index.html#setup">Setup</a>
+      <a href="docs.html" aria-current="page">Docs</a>
+      <a href="https://github.com/mertkaradayi/pando" aria-label="GitHub (opens github.com)">GitHub <span class="ext" aria-hidden="true">↗</span></a>
+    </nav>
+    <a class="btn btn-sm btn-primary" href="index.html#install">Install</a>
+    <button class="menu-btn" type="button" aria-expanded="false" aria-controls="nav-links" aria-label="Menu"><i></i><i></i></button>
+  </div>
+</header>
+
+<div class="docs-bar" id="docs-bar"><button type="button" aria-expanded="false" aria-controls="toc">Contents <span class="cur"></span></button></div>
+
+<div class="docs-shell" id="docs-shell">
+<nav class="toc" id="toc" aria-label="Docs contents">
+  <h2>Getting started</h2>
+  <ul>
+    <li><a href="#install">Install</a></li>
+    <li><a href="#first-run">Your first run</a></li>
+    <li><a href="#needs">What it needs</a></li>
+    <li><a href="#platforms">Platforms</a></li>
+  </ul>
+  <h2>Concepts</h2>
+  <ul>
+    <li><a href="#worktrees">Worktrees</a></li>
+    <li><a href="#repos">Several repositories</a></li>
+    <li><a href="#running">Running</a></li>
+    <li><a href="#ports">Ports</a></li>
+    <li><a href="#environment">Environment</a></li>
+    <li><a href="#disk">Light on disk</a></li>
+    <li><a href="#share">Sharing</a></li>
+    <li><a href="#prs">Pull requests</a></li>
+    <li><a href="#git-menu">The git menu</a></li>
+  </ul>
+  <h2>Data</h2>
+  <ul>
+    <li><a href="#data">Three modes</a></li>
+    <li><a href="#isolated">Isolated</a></li>
+    <li><a href="#namespaced">Namespaced</a></li>
+    <li><a href="#data-lifecycle">What happens to data</a></li>
+  </ul>
+  <h2>Setup and agents</h2>
+  <ul>
+    <li><a href="#setup">Setup and detection</a></li>
+    <li><a href="#config">pando.toml</a></li>
+    <li><a href="#check">pando check</a></li>
+    <li><a href="#agents">For agents</a></li>
+  </ul>
+  <h2>Reference</h2>
+  <ul>
+    <li><a href="#commands">Commands</a></li>
+    <li><a href="#tui">The TUI</a></li>
+    <li><a href="#logs">The log viewer</a></li>
+    <li><a href="#machine">Machine config and themes</a></li>
+  </ul>
+  <h2>About</h2>
+  <ul>
+    <li><a href="#promise">The two promises</a></li>
+    <li><a href="#faq">Questions</a></li>
+    <li><a href="#status">Where it stands</a></li>
+    <li><a href="#contributing">Contributing and licence</a></li>
+  </ul>
+</nav>
+
+<main class="docs" id="main">
+<h1>Docs</h1>
+<p class="lede">Every command, key and setting, in one page. New here? Start with <a href="#install">Install</a> and <a href="#first-run">Your first run</a>.</p>
+
+<section>
+<h2 id="install">Install</h2>
+<p>pando ships a ready-made binary for macOS (Apple silicon and Intel) and Linux (x86_64 and arm64), so none of the ways below needs Rust. On Windows it runs inside WSL 2 as the Linux binary: see <a href="#platforms">Platforms</a>.</p>
+
+<h3 id="install-homebrew">With Homebrew</h3>
+<p>On macOS or Linux, WSL 2 included:</p>
+<div class="cmd"><span class="p" aria-hidden="true">$</span><code>brew install mertkaradayi/tap/pando</code><button class="copy" type="button" data-copy></button></div>
+
+<h3 id="install-script">With the install script</h3>
+<p>With nothing else installed, this one line does the same:</p>
+<div class="cmd"><span class="p" aria-hidden="true">$</span><code>curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mertkaradayi/pando/releases/latest/download/pando-cli-installer.sh | sh</code><button class="copy" type="button" data-copy></button></div>
+<p>The script puts <code>pando</code> in <code>~/.local/bin</code> and adds that directory to your PATH in your shell's startup files. To leave those files alone, run it with <code>PANDO_CLI_NO_MODIFY_PATH=1</code> set. Running the line again later installs the newest release.</p>
+
+<h3 id="install-source">From source</h3>
+<p>Building pando yourself needs Rust 1.88 or newer. With no Rust on the machine, <a href="https://rustup.rs">rustup</a> installs the current stable toolchain first, and a new terminal then has <code>cargo</code>:</p>
+<pre class="code wrapl"><span class="p">$</span> curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+<span class="p">$</span> cargo install --locked --git https://github.com/mertkaradayi/pando pando-cli</pre>
+<p><code>--locked</code> builds with the exact dependency versions CI tested. Without it, cargo may pick newer ones that need a newer Rust. On a new Mac, <code>git</code> comes with the Xcode Command Line Tools (<code>xcode-select --install</code>).</p>
+<p class="muted">There is no crate on crates.io yet.</p>
+
+<h3 id="install-verify">Checksums and attestations</h3>
+<p>Every download has a checksum and a GitHub attestation. To prove a file was built from this repository, run <code>gh attestation verify &lt;file&gt; -R mertkaradayi/pando</code>.</p>
+
+<h3 id="update">Staying current</h3>
+<div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando update</code><button class="copy" type="button" data-copy></button></div>
+<p>It updates pando to the latest release the same way it was installed, and leaves your shell's files alone:</p>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Installed with</th><th>What <code>pando update</code> runs</th></tr></thead><tbody>
+<tr><td>Homebrew</td><td><code>brew upgrade</code> of the formula</td></tr>
+<tr><td>cargo</td><td><code>cargo install --locked</code> again, at the latest release's tag</td></tr>
+<tr><td>the install script, or a copy anywhere else</td><td>the install script, into the directory the binary is in</td></tr>
+<tr><td>a build made in a checkout of pando</td><td>nothing: it says how to update that checkout</td></tr>
+</tbody></table></div>
+<p><code>pando --version</code> says which version you have. <code>pando update --check</code> says whether a newer release is out and which command would install it, and runs nothing. What changed in each release is in the <a href="https://github.com/mertkaradayi/pando/blob/main/CHANGELOG.md">changelog</a>.</p>
+
+<h3 id="completions">Shell completions</h3>
+<p><code>pando completions zsh</code> prints a completion script, and so does the same command for bash, fish, elvish or PowerShell. In bash, zsh and fish it completes worktree names too.</p>
+
+<h3 id="fixtures">Trying it on a fixture first</h3>
+<p>Want to see pando before you point it at your own project? In a clone of pando's repository, the test suite can build repositories of every shape it knows. One of them is a good place to start:</p>
+<pre class="code"><span class="p">$</span> scripts/fixture-repo.sh --list                  <span class="c"># the shapes the tests use</span>
+<span class="p">$</span> scripts/fixture-repo.sh mono-web-api --listener <span class="c"># build one in a temporary directory,</span>
+                                                  <span class="c"># and print how to run pando in it</span></pre>
+</section>
+
+<section>
+<h2 id="first-run">Your first run</h2>
+<p>Open a terminal in a git repository you work on, the one with the dev server you wish you could run on two branches at once, and run pando:</p>
+<pre class="code"><span class="p">$</span> cd your-project
+<span class="p">$</span> pando</pre>
+<p>There is nothing to configure first, and nothing is written into your checkout. The first time, in a project with nothing to run yet, pando opens its setup screen instead of the list.</p>
+
+<h3 id="setup-screen">The setup screen</h3>
+<p>The screen is drawn over a grove grown from your project's name, whose roots light up when the setup passes. Every project is a little different, so the surest start is to let your own coding agent look at it:</p>
+<ol>
+<li><strong>Copy one line.</strong> Press <kbd>a</kbd> to copy this prompt:
+<div class="cmd"><code>Set up pando here: run `pando init --agent` and follow what it says.</code><button class="copy" type="button" data-copy></button></div></li>
+<li><strong>Paste it into your agent.</strong> Claude Code or Codex, opened in the same project.</li>
+<li><strong>Come back.</strong> The screen turns green by itself when the setup is done. From then on, <code>pando</code> opens the list.</li>
+</ol>
+
+<h3 id="what-the-agent-does">What your agent does</h3>
+<p><code>pando init --agent</code> prints the job for this project and this version of pando: what pando already sees, the questions still open, and the steps. Your agent then:</p>
+<ul>
+<li><strong>Decides</strong> what pando's rules leave open, from the project's own evidence, and asks you nothing.</li>
+<li><strong>Answers through pando</strong>, with <code>pando init --answers -</code> on stdin, never a file in your repository. <code>--dry-run</code> previews, and <code>--replace</code> corrects an answer.</li>
+<li><strong>Proves it</strong> with <a href="#check"><code>pando check</code></a>: a throwaway worktree, installed, started, asked for its first page, and removed.</li>
+<li><strong>Reports</strong> what it set, why, how to change it, and what one worktree costs on disk. It never ends on a question.</li>
+</ul>
+<p>It can also <a href="#agent-memory">remember how to run the project</a> with pando, in its own memory, if you say so.</p>
+
+<h3 id="no-agent">No agent, or no setup</h3>
+<p>No agent? Press <kbd>⏎</kbd> on the setup screen and pando tries its own guess, tested by the same <code>pando check</code>. Press <kbd>esc</kbd> to skip the setup and go straight to the list. Nothing is ever gated on it, and the screen is not shown again. A project configured before the setup screen existed is never sent there.</p>
+<p><code>pando new</code> and <code>pando start</code> work on a project that was never set up, too: they take pando's <a href="#first-choice">first choice</a> and say so.</p>
+
+<h3 id="first-worktree">Your first worktree</h3>
+<p>Work on a second branch next to the first:</p>
+<pre class="code"><span class="p">$</span> pando new feat/checkout     <span class="c"># its own checkout, dependencies installed</span>
+<span class="p">$</span> pando start feat/checkout   <span class="c"># its own dev server, on ports of its own</span>
+<span class="p">$</span> pando open feat/checkout    <span class="c"># in your browser</span></pre>
+<p>Your main checkout is untouched and still runs as before. In the TUI, the same steps are <kbd>n</kbd>, then <kbd>⏎</kbd>. <code>pando rm feat/checkout</code> stops the worktree and removes the checkout and its data. The branch stays.</p>
+<p>Then run <code>pando doctor</code> to see which <a href="#needs">tools</a> the project will need.</p>
+</section>
+
+<section>
+<h2 id="needs">What it needs</h2>
+<p>pando itself is one binary. Only <code>git</code> is required. Every other tool is needed only for the feature beside it, and only when your project uses that feature. <code>pando doctor</code> checks each one, says which command needs which, and prints the install command for any that is missing. pando never installs anything on your machine by itself.</p>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Tool</th><th>Needed for</th><th>macOS</th><th>Linux</th></tr></thead><tbody>
+<tr><td><code>git</code></td><td>everything</td><td><code>xcode-select --install</code></td><td>your distribution's <code>git</code></td></tr>
+<tr><td><code>curl</code></td><td><code>pando update</code>, to find the latest release</td><td>comes with macOS</td><td>your distribution's <code>curl</code></td></tr>
+<tr><td><code>cloudflared</code></td><td><code>pando share</code>, a public URL for a worktree. No account.</td><td><code>brew install cloudflared</code></td><td><a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/">Cloudflare's package</a></td></tr>
+<tr><td><code>gh</code>, signed in</td><td>the TUI's pull request picker</td><td><code>brew install gh</code></td><td><a href="https://github.com/cli/cli#installation">the GitHub CLI's package</a></td></tr>
+<tr><td>Docker with Compose</td><td>isolated starts, when the project's services are in a compose file</td><td>Docker Desktop or OrbStack</td><td>Docker Engine and its compose plugin</td></tr>
+<tr><td><code>redis-server</code>, <code>redis-cli</code></td><td>a private Redis without Docker; <code>redis-cli</code> alone for namespaced starts</td><td><code>brew install redis</code></td><td><code>redis-server</code>, <code>redis-tools</code></td></tr>
+<tr><td><code>mariadbd</code>, <code>mariadb</code></td><td>a private MariaDB without Docker; the <code>mariadb</code> client alone for namespaced starts</td><td><code>brew install mariadb</code></td><td><code>mariadb-server</code>, <code>mariadb-client</code></td></tr>
+<tr><td><code>postgres</code>, <code>psql</code></td><td>a private Postgres without Docker; <code>psql</code> alone for namespaced starts</td><td><code>brew install postgresql@16</code>, or <code>brew install libpq</code> for <code>psql</code> alone (keg-only: put its <code>bin</code> on PATH)</td><td><code>postgresql</code>, <code>postgresql-client</code></td></tr>
+<tr><td><code>mongod</code>, <code>mongosh</code></td><td>a private MongoDB without Docker</td><td><code>brew install mongodb/brew/mongodb-community</code></td><td><a href="https://www.mongodb.com/docs/manual/administration/install-on-linux/">MongoDB's package</a></td></tr>
+</tbody></table></div>
+<p>A namespaced start needs no server of its own. It uses the servers your main checkout already runs, with their client on the host or inside the container that runs the server. A search, queue or cache engine whose app reads a name prefix needs nothing at all.</p>
+<p>The usual pair on a Mac, for sharing and pull requests:</p>
+<div class="cmd"><span class="p" aria-hidden="true">$</span><code>brew install cloudflared gh</code><button class="copy" type="button" data-copy></button></div>
+<p>Your project's own toolchain, such as Node and its package manager, Python or Go, is whatever you already run it with. pando finds it through your login shell and never replaces it. <code>pando doctor</code> names any it cannot find, with how to get it.</p>
+</section>
+
+<section>
+<h2 id="platforms">Platforms</h2>
+
+<h3 id="macos">macOS</h3>
+<p>pando is developed on macOS, on Apple silicon and Intel. On APFS, a new worktree is a copy-on-write clone of your main checkout (see <a href="#disk">Light on disk</a>).</p>
+
+<h3 id="linux">Linux</h3>
+<p>Binaries ship for x86_64 and arm64. CI runs the whole test suite on Linux for every change, and it must pass, but nobody has used pando on Linux for real work yet. Copy-on-write works on btrfs, XFS and bcachefs. On ext4, which cannot clone, pando uses git's own checkout.</p>
+
+<h3 id="wsl">Windows, with WSL 2</h3>
+<p>On Windows, pando runs inside WSL 2 as the Linux binary. Install it in your distro any of the ways under <a href="#install">Install</a>.</p>
+<ul>
+<li><strong>Keep the repository under <code>~</code> in WSL</strong>, not on <code>/mnt/c</code>. git is several times slower on a Windows drive, and an edit there sends no file event, so dev servers never reload.</li>
+<li><strong>Install your tools inside WSL too</strong>, Node and Docker among them. For Docker, turn on Docker Desktop's WSL integration. <code>pando doctor</code> says when the shell finds Windows' copy of a tool instead, or when the repository sits on a Windows drive.</li>
+<li><strong>URLs work from Windows.</strong> A worktree's <code>localhost</code> URL opens in Windows' browser, and <code>pando open</code> opens it there (through <code>wslview</code>, then <code>rundll32.exe</code>, then <code>xdg-open</code>). The TUI copies through <code>clip.exe</code>.</li>
+</ul>
+<p>A native Windows build compiles, but it runs nothing yet except <code>completions</code>: starting and stopping processes is written for Unix only so far. It says to use WSL 2.</p>
+
+<h3 id="mobile">Expo and mobile apps</h3>
+<p>pando recognises Expo apps. Metro, Expo's bundler, is a process no browser opens (<code>page = false</code>), so it is never a worktree's URL.</p>
+<p>Instead, <code>pando open</code> and the TUI's <kbd>o</kbd> open the app: on the booted iOS simulator, else on a connected Android device or emulator, else on a simulator pando starts, on a Mac with Xcode. With none of those, it prints the commands.</p>
+<p><code>pando status</code> gives each app's links. When a branch changed native code, it names the changes and gives the build command Expo accepts, such as <code>npx expo run:ios --port &lt;port&gt;</code>. It also says when the build on the simulator is for another SDK.</p>
+</section>
+
+<section>
+<h2 id="worktrees">Worktrees</h2>
+<p>pando does not invent a new kind of checkout. It drives <code>git worktree</code>, the side-by-side checkouts git has had since version 2.5, and keeps everything around them in its own home, <code>~/.pando</code>: the ports, the processes, the logs, the private services, and the record of what runs where.</p>
+<p>A worktree is an ordinary directory on a branch of its own: <code>cd</code> into it, open it in your editor, commit from it. Every worktree shares the repository's one <code>.git</code>, so a commit made in one is visible from all of them at once.</p>
+<figure class="code"><figcaption class="code-h">The worktrees live in pando's home; the root is your repository's own .git</figcaption><pre><span class="w">~/code/acme-shop/</span>                       <span class="d">← the main checkout</span>
+<span class="d">│</span>  <span class="g">.git/</span>   <span class="d">one object store, one history</span>
+<span class="d">│</span>
+<span class="w">~/.pando/projects/acme-shop-2bdf70d7/</span>
+<span class="d">└─</span> worktrees/
+<span class="d">   ├─</span> feat+checkout/    <span class="ok">● :23001</span>    <span class="d">branch feat/checkout</span>
+<span class="d">   ├─</span> fix+login-loop/   <span class="ok">● :22553</span>    <span class="d">branch fix/login-loop</span>
+<span class="d">   └─</span> feat+search/      <span class="d">○ stopped</span>   <span class="d">branch feat/search</span></pre></figure>
+
+<h3 id="naming">Names</h3>
+<p>A worktree is named by its branch, <code>feat/login</code>, or by its directory, <code>feat+login</code>. A slash cannot be in a directory name, so it becomes a plus. Every command takes either spelling.</p>
+<p>Inside a worktree, <code>start</code>, <code>stop</code>, <code>restart</code>, <code>logs</code>, <code>open</code>, <code>share</code> and <code>unshare</code> need no name at all: they act on the worktree you are in.</p>
+
+<h3 id="pando-new">What <code>pando new</code> does</h3>
+<ol>
+<li><strong>Finds the branch.</strong> A local branch is checked out as it is. Otherwise pando looks for it on <code>origin</code>, and fetches it if it is missing, never prompting for a password. Otherwise it makes a new branch, forked from the base (see below).</li>
+<li><strong>Checks it out.</strong> It runs <code>git worktree add</code> into <code>~/.pando/projects/&lt;id&gt;/worktrees/feat+login</code>. The project id is the checkout's directory name and eight hex characters of a hash of its path. Where the disk can clone, the files are copy-on-write clones of your main checkout's, and git writes only what the branch changed: see <a href="#disk">Light on disk</a>.</li>
+<li><strong>Provisions.</strong> The gitignored files you listed in <code>provision</code>, such as <code>.env</code>, are linked in from the main checkout. They are symlinks by default, so editing one edits main's. <code>provision_mode = "copy"</code> gives each worktree its own copy. A path the project does not gitignore is refused.</li>
+<li><strong>Installs.</strong> The project's install step, such as <code>pnpm install --frozen-lockfile</code>, runs in the new worktree, so its dependencies are its own. The paths in <code>clone</code>, such as <code>node_modules</code>, are cloned in first, so the install only fixes what differs.</li>
+</ol>
+<p>A new branch forks from the first of these that applies:</p>
+<ol>
+<li><code>--base</code></li>
+<li>a matching glob in <code>[branches] rules</code></li>
+<li><code>[project] base</code></li>
+<li><code>origin/HEAD</code>, then <code>main</code>, then <code>master</code></li>
+</ol>
+<p>It forks from the last-fetched commit, so run <code>git fetch</code> first when you need the newest.</p>
+<p>A worktree made before <code>provision</code> was answered, or one that lost a file since, gets the file at its next <code>start</code>, never over one that is there.</p>
+<figure class="code"><figcaption class="code-h">A real run, trimmed, on one of pando's test fixtures</figcaption><pre class="wrapl"><span class="p">$</span> pando new feat/checkout
+<span class="d">pando: checking out feat/checkout
+pando: provisioning
+pando: installing</span>
+created feat+checkout at ~/.pando/projects/mono-web-api-3cb31588/worktrees/feat+checkout
+
+<span class="p">$</span> pando start feat/checkout
+<span class="d">pando: using postgres as this project's services (detected: docker-compose.yml, postgres:16 → DATABASE_URL)
+pando: starting api
+pando: starting web</span>
+started feat+checkout — <span class="g">http://localhost:22809</span>
+
+<span class="p">$</span> pando ls
+<span class="d">NAME            STATUS   URL                     PORTS                GIT</span>
+main            <span class="d">stopped</span>  -                       -                    clean main checkout
+fix/login-loop  <span class="d">stopped</span>  -                       -                    clean
+feat/checkout   <span class="ok">running</span>  http://localhost:22809  api:22808 web:22809  clean</pre></figure>
+<p class="muted">The fixture is <code>scripts/fixture-repo.sh mono-web-api --listener</code>, with two stand-in dev processes. The services line is detection at work: pando read the compose file and the env example, and chose. <code>pando doctor</code> says what it found and where.</p>
+
+<h3 id="undo">When something fails</h3>
+<div class="note"><span class="lbl">Note</span><p>If anything fails after the checkout, <code>new</code> undoes it. The worktree is removed, and so is the branch if this <code>new</code> created it. A <code>new</code> stopped by Ctrl-C during the checkout cleans up the same way.</p><p>A failed install is the exception: it keeps the worktree, and the next <code>start</code> tries the install again. Removing a worktree with <code>rm</code> always keeps its branch.</p></div>
+
+<h3 id="main-checkout">The main checkout</h3>
+<p>The main checkout runs too. It is always the first row, marked ⌂. <code>pando start main</code> starts it, and so does <code>pando start</code> with no name from inside it.</p>
+<p>The checkout is yours and you set it up, so pando runs its processes on ports it allocates and nothing else: no install, no hooks, and always on the project's own services. <code>rm</code> never removes it.</p>
+<div class="note"><span class="lbl">Careful</span><p><code>pando stop</code> with no name, run from the main checkout or from outside any worktree, stops every worktree and the main checkout, not only the one you are in. Name it to stop one: <code>pando stop main</code>.</p></div>
+
+<h3 id="adopted">Worktrees you made yourself</h3>
+<p>pando manages every worktree <code>git worktree list</code> reports, so the ones you made by hand are listed, started and stopped too. They are marked <em>adopted</em>.</p>
+<p>pando never writes into an adopted worktree, so the files <code>provision</code> names are not given to it. <code>start</code> and <code>doctor</code> say which it lacks, each with the command that supplies it.</p>
+</section>
+
+<section>
+<h2 id="repos">Several repositories</h2>
+<p>A product split across repositories cloned side by side is one project. Run <code>pando</code> in the plain folder that holds them:</p>
+<pre class="code"><span class="w">product/</span>       <span class="d">a plain folder, not a repository</span>
+<span class="d">├──</span> backend/   <span class="d">a git repository</span>
+<span class="d">└──</span> frontend/  <span class="d">a git repository</span></pre>
+<p>Its worktree is a <em>set</em>, laid out like the folder. <code>pando new feat/x</code> makes <code>&lt;set&gt;/backend</code> and <code>&lt;set&gt;/frontend</code>, each a worktree of its own repository on <code>feat/x</code>. A repository that already has the branch, locally or on <code>origin</code>, uses it. One that does not forks a new branch from its own base.</p>
+
+<h3 id="repos-running">One branch, one row, one port window</h3>
+<p><code>start</code> runs every process of the set in one port window, so a process with <code>cwd = "frontend"</code> reaches the backend's port through <code>{port:api}</code>. Stopping, removing, status, opening, sharing and checking act on the whole set too.</p>
+<p>The TUI shows a set as one row, with each repository's branch and changes in its detail. <code>pando status</code> lists each repository of a set, and <code>pando logs --source backend</code> reads the processes that run in it.</p>
+
+<h3 id="repos-config">Choosing the repositories and their bases</h3>
+<p>Every repository directly under the folder is in the project. In the project's <code>pando.toml</code>, <code>[repos] members</code> narrows that, and <code>[repos.base]</code> gives one repository a base other than its own default. A <code>[branches]</code> rule that matches the branch still comes first.</p>
+<pre class="code"><span class="k">[repos]</span>
+members = ["backend", "frontend"]
+base = { backend = "develop" }</pre>
+<p>A path in config names its repository first: <code>provision = ["backend/.env"]</code>.</p>
+
+<h3 id="repos-setup">Setup, and finding the project</h3>
+<p><code>pando init --agent</code>, run from the folder, hands the setup to your coding agent as it does for one repository. Detection reads each repository as an app: its process, its install, its <code>.env</code>, a compose file at its root, and the port one app reaches another on.</p>
+<p>A set that lacks a repository's checkout, lost or added since, gets it back from <code>pando new</code> on its branch. From inside a set, or one of its checkouts, pando finds the folder's project. From a repository's own main checkout, the project is that one repository, as before.</p>
+<p>The <a href="#git-menu">git menu</a> moves one checkout at a time. On a set it opens on the first repository's checkout, measured against that repository's base, and <kbd>tab</kbd> goes to the next.</p>
+</section>
+
+<section>
+<h2 id="running">Running</h2>
+
+<h3 id="detached">Detached, with no daemon</h3>
+<p>Every process runs as <code>bash -lc '&lt;cmd&gt;'</code> in a session of its own, which gives it its own process group and no terminal. Its input is <code>/dev/null</code>, and its output is appended to <code>logs/&lt;worktree&gt;/&lt;process&gt;.log</code> in pando's home. Close the terminal or quit the TUI, and it keeps running.</p>
+<p>There is no pando daemon. What runs where is kept in <code>state.json</code>. Whenever something reads it, such as <code>ls</code>, <code>status</code>, the TUI or a start that waits, pando brings it up to date from <code>ps</code> and <code>lsof</code> scans of each process group.</p>
+
+<h3 id="processes">Several processes</h3>
+<p>A worktree can run several processes, such as <code>[processes.api]</code> and <code>[processes.web]</code>. Each has its own command, directory, environment, ports, readiness and log.</p>
+<p><code>--only web</code> starts, stops or restarts one of them, and the others keep running on the ports they have.</p>
+
+<h3 id="readiness">Ready means listening</h3>
+<p>On a terminal, <code>start</code> waits until each process's own process group is listening on its port. The default limit is 30 seconds, and <code>ready.timeout_s</code> changes it. A process with no port has nothing to check, so it must stay up for five seconds instead.</p>
+<p>This is a socket check, not an HTTP health check, and pando never binds the port itself to test it. When a process does not come up, you get the last lines of its log and the reason:</p>
+<figure class="code"><figcaption class="code-h">When one does not come up</figcaption><pre class="wrapl"><span class="p">$</span> pando start feat/login
+<span class="d">pando: starting api
+pando: starting web
+pando: waiting for api, web to be ready
+pando: api is ready (1.9s)
+pando: the last lines of the web log:</span>
+  <span class="er">Error: Cannot find module 'next'</span>
+<span class="d">pando:</span> <span class="er">web failed: process exited with status 1</span><span class="d"> — `pando logs feat/login --source web` has the rest</span>
+<span class="p">$</span> echo $?
+1</pre></figure>
+<p>From a script or an agent, <code>start</code> and <code>restart</code> return as soon as everything is spawned. <code>--wait</code> makes them wait there too, and <code>--no-wait</code> makes them return at once on a terminal.</p>
+
+<h3 id="stopping">Stopping</h3>
+<p><code>stop</code> sends SIGTERM to the whole process group, meaning the server and everything it forked. It waits up to five seconds, then sends SIGKILL. A backgrounded server whose parent already died is found and stopped too.</p>
+<p>A stop also takes down the worktree's private services and public URL. Its ports, logs and data are kept.</p>
+
+<h3 id="survives">What survives a closed terminal, or a reboot</h3>
+<p>Closing the terminal, killing the tmux pane or quitting the TUI leaves everything running: each process has its own session and no terminal.</p>
+<p>A reboot stops them, as it stops anything. pando notices the new boot and forgets the old process ids, but it keeps each worktree's ports and mode, so the next start comes back on the same URLs. Nothing restarts by itself: there is no daemon and no supervisor.</p>
+</section>
+
+<section>
+<h2 id="ports">Ports</h2>
+<p>Ports are chosen at <code>start</code>, and never at random. pando hashes the project id and the worktree's name into one of 1,971 windows of eight ports between 17000 and 32767. That range sits below the ephemeral ports that macOS (49152 and up) and Linux (32768 and up) hand out.</p>
+<p>Each <em>role</em> takes the next port in its window. A role is a name like <code>web</code>, <code>api</code> or a private <code>postgres</code>. Processes come first, then services, so switching a worktree to isolated keeps its web port whenever the ports after it are free.</p>
+<p>The ports are recorded, so a bookmarked URL keeps working across stops, restarts and reboots. They move only when something else took one, or when you add or remove a process, and pando says so: <em>the ports feat/login had were taken; it moved to new ones</em>.</p>
+
+<h3 id="ports-calculator">Work one out</h3>
+<p>This runs the same hash pando uses, in your browser. Change the repository path, the branch or the roles:</p>
+<div class="ports-calc" id="ports-widget">
+  <label>Repository <input id="pw-root" value="/Users/you/code/acme-shop" spellcheck="false" autocomplete="off"></label>
+  <label>Branch <input id="pw-branch" value="feat/login" spellcheck="false" autocomplete="off"></label>
+  <label>Roles <input id="pw-roles" value="api web" spellcheck="false" autocomplete="off"></label>
+  <pre class="code" id="pw-out" aria-label="The ports pando would give"></pre><p class="sr-only" id="pw-live" aria-live="polite"></p>
+  <p class="fine">id = the directory name and the first 8 hex of md5(the checkout's path) · base = md5(id ␟ worktree)[0..4] mod 1971 × 8 + 17000</p>
+</div>
+</section>
+
+<section>
+<h2 id="environment">Environment</h2>
+<p>pando never edits a <code>.env</code>, a framework config or a <code>package.json</code> to set a port. Ports and service addresses reach your app as environment variables, or as placeholders in its command. One process can learn another's port the same way.</p>
+
+<h3 id="placeholders">Placeholders</h3>
+<p>These work in a process's command and in its environment values. An unknown placeholder is a config error, never an empty string.</p>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Placeholder</th><th>Becomes</th></tr></thead><tbody>
+<tr><td><code>{port}</code></td><td>this process's own port</td></tr>
+<tr><td><code>{port:api}</code></td><td>the port of the role <code>api</code>, whichever process or service owns it</td></tr>
+<tr><td><code>{name}</code></td><td>the worktree's name, such as <code>feat+login</code></td></tr>
+<tr><td><code>{branch}</code></td><td>its branch, such as <code>feat/login</code></td></tr>
+<tr><td><code>{worktree}</code></td><td>its absolute path</td></tr>
+<tr><td><code>{root}</code></td><td>the main checkout's path</td></tr>
+<tr><td><code>{project}</code></td><td>the project id</td></tr>
+<tr><td><code>{log}</code></td><td>the log file, inside a process or hook command</td></tr>
+</tbody></table></div>
+
+<h3 id="pando-variables">Variables every process gets</h3>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Variable</th><th>What it holds</th></tr></thead><tbody>
+<tr><td><code>PANDO_NAME</code></td><td>the worktree's name</td></tr>
+<tr><td><code>PANDO_BRANCH</code></td><td>its branch</td></tr>
+<tr><td><code>PANDO_WORKTREE</code></td><td>its path</td></tr>
+<tr><td><code>PANDO_ROOT</code></td><td>the main checkout's path</td></tr>
+<tr><td><code>PANDO_PROJECT</code></td><td>the project id</td></tr>
+<tr><td><code>PANDO_CHECK=1</code></td><td>only in what <code>pando check</code> runs, so a process that reaches outside its worktree can leave that out of a test</td></tr>
+<tr><td><code>PANDO_NAMESPACE</code></td><td>only in a namespaced worktree: a name of its own, such as <code>feat_x</code>, for an app that puts one in front of what it names by itself</td></tr>
+</tbody></table></div>
+
+<h3 id="status-env">The same environment in your shell</h3>
+<p>To run the project's own commands by hand with a worktree's ports and addresses, load its environment into your shell:</p>
+<div class="cmd"><span class="p" aria-hidden="true">$</span><code>eval "$(pando status --env feat/login)"</code><button class="copy" type="button" data-copy></button></div>
+
+<h3 id="env-example">An example</h3>
+<p>Here the web app gets the API's address, whatever port the API was given, and a migration runs only when the worktree has data of its own:</p>
+<figure class="code"><figcaption class="code-h">~/.pando/projects/acme-shop-2bdf70d7/pando.toml</figcaption><pre><span class="k">[project]</span>
+provision = [<span class="s">".env"</span>]            <span class="c"># gitignored; linked in</span>
+install = <span class="s">"pnpm install --frozen-lockfile"</span>
+
+<span class="k">[processes.api]</span>
+cmd = <span class="s">"pnpm --filter api dev"</span>
+cwd = <span class="s">"apps/api"</span>
+ports = { PORT = <span class="s">"api"</span> }
+
+<span class="k">[processes.web]</span>
+cmd = <span class="s">"pnpm --filter web dev --port {port:web}"</span>
+cwd = <span class="s">"apps/web"</span>
+ports = [<span class="s">"web"</span>]
+env = { VITE_API_URL = <span class="s">"http://localhost:{port:api}"</span> }
+ready = { timeout_s = 90 }
+
+<span class="k">[[hooks]]</span>
+name = <span class="s">"migrate"</span>
+after = <span class="s">"services"</span>
+on = <span class="s">"isolated"</span>   <span class="c"># only on data of its own</span>
+cmd = <span class="s">"pnpm prisma migrate deploy"</span>
+fingerprint = [<span class="s">"prisma/migrations/**"</span>]</pre></figure>
+<p><code>ports = { PORT = "api" }</code> hands the process its port in the variable <code>PORT</code>. <code>ports = ["web"]</code> only claims the role, for a command that takes it as a flag.</p>
+</section>
+
+<section>
+<h2 id="disk">Light on disk</h2>
+<p>You keep many worktrees, so what one costs is paid many times over. pando keeps that cost down, and measures what is left.</p>
+
+<h3 id="copy-on-write">A copy-on-write checkout</h3>
+<p>Where the filesystem can clone (APFS on macOS; btrfs, XFS or bcachefs on Linux), <code>pando new</code> clones your main checkout's files into the new worktree. The clones share disk blocks until one of them changes, and git writes only the files that differ on the branch.</p>
+<div class="note"><span class="lbl">Example</span><p>Say your checkout is 300 MB across 4,000 files, and your branch changes 40 of them. A plain <code>git worktree add</code> writes all 300 MB again. pando writes those 40 files, about 3 MB, and clones the rest.</p></div>
+<p>The result is the tree git's own checkout makes: the same files, modes and git state, made by git's own <code>reset --hard</code>. A file whose checkout converts it (CRLF endings, a filter, <code>ident</code>) is always written by git, and a <code>post-checkout</code> hook runs as usual.</p>
+<p>A filesystem that cannot clone, such as ext4, <code>core.autocrlf</code>, and a sparse main checkout keep git's own checkout. <code>copy_on_write = false</code> turns it off.</p>
+<p class="muted"><code>du</code> still counts each worktree in full. The saving shows up as free space.</p>
+
+<h3 id="clone">Dependencies, cloned</h3>
+<p><code>[project] clone</code> lists gitignored paths, such as <code>node_modules</code>, that <code>new</code> clones from the main checkout before the install, so the install only fixes what differs. It is never a full copy: on a disk that cannot clone, they are left to the install.</p>
+<p>pando proposes it for the <code>node_modules</code> your main checkout has, the root's and each app's, unless the install deletes them first, as <code>npm ci</code> does. <code>clone = []</code> records that you want every worktree installed from nothing.</p>
+<p>Never cloned, each with a line saying so: a path the install deletes first, a Python virtualenv (its scripts name main's interpreter by path), and a tree with a link out of the worktree. <code>pando check</code> never clones, so a check still proves the install works from nothing.</p>
+
+<h3 id="rust-target">Rust builds, cloned</h3>
+<p><code>clone</code> also takes a Rust crate's <code>target</code>, and pando proposes it beside a <code>Cargo.toml</code>. A new worktree then starts with the main checkout's build. Cargo's fingerprints for dependencies name no path of the checkout, so cargo finds every dependency fresh and builds only the workspace's own crates. A Maven or sbt <code>target</code> is left alone.</p>
+
+<h3 id="disk-report">What a worktree costs: the check's report</h3>
+<p>Before it removes its worktree, a passing <code>pando check</code> measures what that worktree cost on disk:</p>
+<ul>
+<li><strong>Each gitignored tree</strong> the install and the processes left, a megabyte or more, twelve at most, marked when your main checkout has one <code>clone</code> could share.</li>
+<li><strong>What was written outside it</strong>, such as a build cache keyed by the checkout's path, which fills again for every worktree.</li>
+</ul>
+<figure class="code"><figcaption class="code-h">Example: the disk line of a passing check</figcaption><pre class="wrapl"><span class="d">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: "What a worktree costs on disk" in `pando init --agent --reference brief`</span></pre></figure>
+<p><code>pando check --json</code> carries the same numbers as <code>disk</code>:</p>
+<pre class="code"><span class="k">"disk"</span>: {
+  <span class="k">"trees"</span>: [
+    { <span class="k">"path"</span>: "node_modules", <span class="k">"bytes"</span>: 480000000, <span class="k">"main_has"</span>: true, <span class="k">"cloned"</span>: false }
+  ],
+  <span class="k">"outside_bytes"</span>: 12000000   <span class="c">// null where it was not read</span>
+}</pre>
+<p>The outside figure is approximate: anything else that wrote meanwhile counts too, so check twice before acting on a surprise.</p>
+
+<h3 id="disk-decides">pando measures; your project decides</h3>
+<p>pando knows no ecosystem here. Which trees are safe to share, and which setting makes a cache independent of the checkout's path, is your project's call.</p>
+<p>A tree is worth cloning when the tool that wrote it checks what it reuses, as a package manager or cargo does, and not when its files record the main checkout's path. A path-keyed cache usually has a setting of its own, given to the process through its <code>env</code>. Such a setting can change how a program behaves, so weigh it first.</p>
+<p>The brief's "What a worktree costs on disk" walks your agent through both, and the setup report says what was shared. Check again after a change, and compare.</p>
+</section>
+
+<section>
+<h2 id="share">Sharing</h2>
+
+<h3 id="local-url">Its local URL</h3>
+<p>Each worktree has one local URL, <code>http://localhost:&lt;port&gt;</code>, for its <code>web</code> role, or else for the first role that owns a port and serves a page. <code>pando open</code> opens it in your browser and prints it too, so it works over SSH. <kbd>o</kbd> opens it from the TUI, and <kbd>c</kbd> copies it.</p>
+
+<h3 id="public-url">A public URL</h3>
+<p><code>pando share feat/login</code> publishes a running worktree through a <a href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/">cloudflared quick tunnel</a>. It needs no account, and it prints one line: <code>https://&lt;random&gt;.trycloudflare.com</code>. In the TUI, <kbd>t</kbd> shares and asks first.</p>
+<p>Every share gets a new random host. The link closes on <code>unshare</code>, <code>stop</code>, <code>rm</code>, and a restart of the whole worktree. <code>restart --only</code> keeps it.</p>
+<div class="note warn"><span class="lbl">Warning</span><p><strong>Public means public.</strong> Anyone with the link reaches the app until you unshare, stop or remove the worktree. The link does not expire.</p></div>
+
+<h3 id="auth-cmd">Apps that need a login</h3>
+<p>If your app needs a login, <code>[share] auth_cmd</code> runs a command in the worktree, and its output becomes a Cookie header. A small proxy, bound to 127.0.0.1, puts that header on every visitor's request in place of any cookies their browser sent.</p>
+<p>The link then opens already logged in, as the same user for everyone. That logs visitors in. It does not keep anyone out.</p>
+</section>
+
+<section>
+<h2 id="prs">Pull requests</h2>
+<p>In the TUI, <kbd>p</kbd> lists the repository's open pull requests through the GitHub CLI. Typing narrows them by number, title, branch or author. <kbd>⏎</kbd> makes a worktree for one, or goes to the worktree it already has.</p>
+<pre class="code">╭ open pull requests ────────────────────────────╮
+│ filter ▏                                       │
+│                                                │
+│ <span class="g">▸</span> <span class="w">#131</span> fix VAT rounding                  <span class="d">@sam</span>  │
+│   <span class="w">#128</span> cart drawer                      <span class="d">@alex</span>  │
+│   <span class="w">#124</span> search filters          <span class="d">has a worktree</span>  │
+│                                                │
+│ <span class="d">⏎ worktree   ↑↓ choose   esc cancel</span>            │
+╰────────────────────────────────────────────────╯</pre>
+
+<h3 id="fork-prs">From a fork</h3>
+<p>A pull request from a fork has no branch on <code>origin</code>, so pando fetches <code>refs/pull/&lt;n&gt;/head</code> into a branch of its own, <code>pr-&lt;n&gt;/&lt;branch&gt;</code>. One whose branch cannot be found is refused, rather than started as an empty branch with the same name.</p>
+
+<h3 id="pr-on-the-list">On the list</h3>
+<p>A worktree with an open pull request shows it as <code>◍ #n</code>: ◌ for a draft, ✓ once merged, ✗ once closed. <kbd>space</kbd> <kbd>p</kbd> opens that pull request on GitHub.</p>
+<p>pando asks GitHub again about once a minute, and when you come back to the pane, so a merge shows without a restart. The header names the account <code>gh</code> uses here.</p>
+<p class="muted">Pull requests are in the TUI only for now, and need <code>gh</code> signed in.</p>
+</section>
+
+<section>
+<h2 id="git-menu">The git menu</h2>
+<p><kbd>space</kbd> <kbd>g</kbd> on a row reads where its branch stands and offers what can be done to it, with why not where it cannot. Each move shows the exact git commands first. <kbd>⏎</kbd> runs them, and <kbd>esc</kbd> always goes back one step.</p>
+<div class="kv keys-kv">
+<div><div class="k"><kbd>f</kbd></div><div class="v">Fetch.</div></div>
+<div><div class="k"><kbd>p</kbd></div><div class="v">Pull: fast-forward the branch to its upstream, and nothing else.</div></div>
+<div><div class="k"><kbd>r</kbd></div><div class="v">Rebase it onto its base.</div></div>
+<div><div class="k"><kbd>m</kbd></div><div class="v">Merge its base into it.</div></div>
+<div><div class="k"><kbd>a</kbd></div><div class="v">Abort a rebase or merge left half-done.</div></div>
+<div><div class="k"><kbd>!</kbd></div><div class="v">A shell in the checkout, to do it by hand.</div></div>
+</div>
+<p>A rebase or merge that stops on a conflict is aborted again before it is reported, so the checkout is exactly as it was. When the branch of a checkout that runs has moved, the menu offers to restart it.</p>
+<p>The menu never pushes, resets, stashes or switches branches, and it does nothing on a checkout with uncommitted changes. It moves a branch only when you pick the move and have seen its commands.</p>
+</section>
+
+<section>
+<h2 id="data">Three modes</h2>
+<p>In every mode, a worktree's code, processes, dependencies, ports and logs are its own. The mode decides one thing: which database and cache it talks to. You choose per worktree, and pando remembers: a plain start keeps the mode a worktree last ran in.</p>
+<div class="modes-svg">
+  <div class="card"><div class="svg"><svg viewBox="0 0 160 92" aria-hidden="true"><path class="gd" d="M8 44h144"/><path d="M52 44V10M52 22l-7-8M52 18l6-7M108 44V14M108 26l-6-7M108 22l6-6"/><ellipse cx="52" cy="66" rx="13" ry="4"/><path d="M39 66v13a13 4 0 0 0 26 0V66M52 44v18"/><path stroke-dasharray="3 4" d="M108 44c0 14-30 16-42 22"/></svg></div><h4 id="mode-shared">Shared <span class="tag">default</span></h4><p><kbd>S</kbd> · <code>--shared</code></p><p>The main checkout's servers, and its data. Nothing starts and nothing waits, which is right for most changes.</p><p class="fine"><strong>Own:</strong> code, processes, ports, logs.<br><strong>Main's:</strong> the database, the cache and their data.</p></div>
+  <div class="card"><div class="svg"><svg viewBox="0 0 160 92" aria-hidden="true"><path class="gd" d="M8 44h144"/><path d="M52 44V10M52 22l-7-8M52 18l6-7M108 44V14M108 26l-6-7M108 22l6-6"/><rect x="30" y="54" width="76" height="34" rx="7"/><ellipse cx="52" cy="64" rx="9" ry="3"/><path d="M43 64v11a9 3 0 0 0 18 0V64M52 44v16"/><ellipse class="gr" cx="84" cy="64" rx="9" ry="3"/><path class="gr" d="M75 64v11a9 3 0 0 0 18 0V64M108 44c0 10-16 12-24 16"/></svg></div><h4 id="mode-namespaced">Namespaced <span class="tag gold">experimental</span></h4><p><kbd>⏎</kbd> chooser · <code>--namespaced</code></p><p>A database, a Redis slot or a name prefix of its own, inside the servers your main checkout already runs. The branch's own schema step builds it, and main's data is never touched.</p><p class="fine"><strong>Own:</strong> all of the above, plus a database, a slot or a prefix.<br><strong>Main's:</strong> the servers themselves.</p></div>
+  <div class="card"><div class="svg"><svg viewBox="0 0 160 92" aria-hidden="true"><path class="gd" d="M8 44h144"/><path d="M52 44V10M52 22l-7-8M52 18l6-7M108 44V14M108 26l-6-7M108 22l6-6"/><ellipse cx="52" cy="66" rx="13" ry="4"/><path d="M39 66v13a13 4 0 0 0 26 0V66M52 44v18"/><ellipse class="gr" cx="108" cy="66" rx="13" ry="4"/><path class="gr" d="M95 66v13a13 4 0 0 0 26 0V66M108 44v18"/></svg></div><h4 id="mode-isolated">Isolated</h4><p><kbd>i</kbd> · <code>--isolated</code></p><p>Servers of its own, on ports of its own. They are the containers in your compose file, or native servers from a recipe if you would rather not run Docker.</p><p class="fine"><strong>Own:</strong> all of the above, plus every server and every byte of data.<br><strong>Main's:</strong> nothing.</p></div>
+</div>
+
+<h3 id="choosing-a-mode">Choosing and switching</h3>
+<p><kbd>⏎</kbd> in the TUI opens the mode chooser on any worktree. On a stopped one, the mode it last ran in sits under the cursor, marked <em>last used</em>, so <kbd>⏎</kbd> <kbd>⏎</kbd> is still one quick start. A worktree never started has shared there.</p>
+<p>On a running worktree, its mode is marked <em>running</em>, and choosing another switches it: every process restarts on the other services. <kbd>i</kbd> and <kbd>S</kbd> go straight to isolated and shared. The main checkout always runs shared. From the command line, <code>start</code> and <code>restart</code> take <code>--isolated</code> or <code>--namespaced</code>, and <code>start --shared</code> is the way back.</p>
+
+<h3 id="wiring">How the app finds its database</h3>
+<p>Through its environment, never by writing a file. For each variable the config maps to a service, such as <code>DATABASE_URL = "postgres"</code>, pando reads the value your env files already have and changes only what the mode needs.</p>
+<figure class="code"><figcaption class="code-h">Isolated: the same URL, on its own port</figcaption><pre><span class="d">.env</span>          DATABASE_URL=postgres://acme:secret@localhost:<span class="d">5432</span>/acme
+<span class="d">feat/login</span>    DATABASE_URL=postgres://acme:secret@localhost:<span class="g">30010</span>/acme
+
+<span class="d">.env</span>          REDIS_URL=redis://localhost:<span class="d">6379</span>
+<span class="d">feat/login</span>    REDIS_URL=redis://localhost:<span class="g">30011</span></pre></figure>
+<figure class="code"><figcaption class="code-h">Namespaced: host, port and login stay main's; only the name changes</figcaption><pre><span class="d">main</span>          DATABASE_URL=mysql://app:pw@localhost:3306/<span class="d">shop</span>
+<span class="d">feat/login</span>    DATABASE_URL=mysql://app:pw@localhost:3306/<span class="g">shop__feat_login</span>
+
+<span class="d">main</span>          REDIS_URL=redis://localhost:6379
+<span class="d">feat/login</span>    REDIS_URL=redis://localhost:6379/<span class="g">3</span></pre></figure>
+<p>In shared mode, the worktree's processes get the main checkout's own values for the database and cache variables, read from its <code>.env</code> or env example.</p>
+</section>
+
+<section>
+<h2 id="isolated">Isolated</h2>
+
+<h3 id="compose">With your compose file</h3>
+<p>An isolated start runs your compose file under a compose project named for the worktree, so the containers, the network and the named volumes are separate for every worktree. A generated override, kept under <code>~/.pando</code>, publishes each service on a port pando chose, bound to 127.0.0.1. Your compose file is never edited.</p>
+<pre class="code wrapl"><span class="p">$</span> docker compose -p pando-shop-0b790793-feat-login-0499 \
+    -f docker-compose.yml \
+    -f ~/.pando/projects/shop-0b790793/compose/feat+login.override.yml \
+    up -d postgres redis</pre>
+<figure class="code"><figcaption class="code-h">The override, generated on every isolated start</figcaption><pre><span class="k">services:</span>
+  <span class="k">postgres:</span>
+    ports: !override ["127.0.0.1:30010:5432"]
+    container_name: !reset
+  <span class="k">redis:</span>
+    ports: !override ["127.0.0.1:30011:6379"]
+    container_name: !reset</pre></figure>
+<p>pando refuses to isolate a service, and names it, when its data could land in the repository or be shared between worktrees:</p>
+<ul>
+<li>a bind mount;</li>
+<li>an <code>external:</code> or name-pinned volume, or one with <code>driver_opts</code>;</li>
+<li>a <code>depends_on</code> outside <code>include</code>;</li>
+<li>a service with no port pando can find.</li>
+</ul>
+
+<h3 id="native">Without Docker</h3>
+<p>A native service is a recipe: a TOML file that says which binaries it needs, how to start one server on a given port and data directory, and how to tell when it is ready. Four are built in: <code>postgres</code>, <code>mariadb</code>, <code>redis</code>, and <code>mongodb</code>, which is marked untested.</p>
+<p>Each server gets <code>~/.pando/projects/&lt;id&gt;/data/&lt;worktree&gt;/&lt;service&gt;</code>, is initialised once, and binds 127.0.0.1 only. The built-in servers have no passwords, since nothing off your machine can reach them. pando never installs an engine. If one is missing, it prints the install command.</p>
+<figure class="code"><figcaption class="code-h">src/recipes/builtin/redis.toml, abridged</figcaption><pre>kind = "service"
+name = "redis"
+binaries = ["redis-server", "redis-cli"]
+install = "brew install redis   (or your distribution's redis-server package)"
+notes = "no password, bound to 127.0.0.1 — nothing off this machine can reach it"
+
+<span class="k">[service]</span>
+port_env = "REDIS_URL"
+cmd = "exec redis-server --port {port} --bind 127.0.0.1 --dir {datadir} --daemonize no"
+ready = "redis-cli -h 127.0.0.1 -p {port} ping"
+
+<span class="k">[namespace]</span>                        <span class="c"># what namespaced mode means on redis</span>
+kind = "slot"
+slots = 16</pre></figure>
+
+<h3 id="recipes">Your own recipes</h3>
+<p>A file with the same name in <code>~/.pando/recipes/</code> replaces a built-in outright, for every project on the machine. A new file adds an engine. Which mechanism a machine prefers, compose or native, is <code>[isolation] prefer</code> in <a href="#machine"><code>~/.pando/config.toml</code></a>.</p>
+<p>Native Postgres and MariaDB put their socket in <code>$TMPDIR/pando-…</code>, because a socket path longer than 104 bytes does not work on macOS.</p>
+</section>
+
+<section>
+<h2 id="namespaced">Namespaced</h2>
+<p>Namespaced mode is experimental. A namespaced start writes into a server that belongs to you, which pando's rule about your repository does not cover. So the mode is opt-in, and it has rules of its own.</p>
+
+<h3 id="ns-login">The login</h3>
+<p>It logs in the way your app does, with the user and password beside the address in the main checkout's <code>.env</code>: the root's, or the one where a process runs, such as <code>backend/.env</code>.</p>
+<p>Where there are none, a server in a container is reached as its own administrator. Anywhere else, pando asks once, keeps the answer in its own config for the project (mode 0600), and hands it to the database client in its environment, never on a command line.</p>
+
+<h3 id="ns-grant">The grant</h3>
+<p>That login must be allowed to make databases named after the main one. The first start that is not allowed stops with nothing made, and prints the statement to run once as an administrator. On MariaDB and MySQL it covers those names and nothing else:</p>
+<pre class="code wrapl"><span class="d">mariadb on localhost:3306 does not let the login from the URL in
+DATABASE_URL make or drop shop__feat_login — run this once as an
+administrator of that server:</span>
+
+    <span class="g">GRANT ALL ON `shop\_\_%`.* TO 'app'@'localhost';</span>
+
+<span class="d">It lets that login make and drop databases named shop__… and
+nothing else. Nothing was made.</span></pre>
+<p>Postgres cannot grant by name, so there it is <code>ALTER ROLE "app" CREATEDB;</code>, and the role can drop only the databases it owns, which are the ones it made. The official image's <code>POSTGRES_USER</code> needs neither.</p>
+<p>The database is made in main's encoding and locale. It starts empty and is built by the branch's own schema step, never copied from main's.</p>
+
+<h3 id="ns-containers">Servers in containers</h3>
+<p>A server in a container needs neither the grant nor a question. Its environment keeps its administrator, such as <code>POSTGRES_USER</code> or <code>MARIADB_ROOT_PASSWORD</code>, so pando runs the statement itself as that administrator, and the database is made as the app's login, which owns it. Where the app has no login at all, the administrator is the login.</p>
+<p>A database in Docker usually leaves the host with no client. Then the commands run through <code>docker exec</code> in the one container that publishes the server's port on this machine's loopback, with the client its image ships and the password passed by name. A server elsewhere, or a native one on the same port, is never taken for it.</p>
+
+<h3 id="ns-slots">Redis slots</h3>
+<p>A Redis slot is given out only where the app reads a slot setting, such as <code>REDIS_DB</code> or the path of its URL, and only while the slot is empty: keys pando did not put there are someone else's. Slot 0 and main's own slots are never given out.</p>
+<p>When all fifteen are held, the start asks which stopped worktree gives its slot up, and only a person may answer.</p>
+
+<h3 id="ns-prefixes">Prefixes for search, queue and cache engines</h3>
+<p>Some servers have no namespace pando could make: an Elasticsearch index, a Kafka topic or a Memcached key belongs to the app. There, a worktree is told a prefix of its own in the key its app already reads one from, such as <code>ELASTICSEARCH_INDEX_PREFIX=feat_x__</code>. pando makes nothing there, so it records and drops nothing, and <code>rm</code> says what it leaves.</p>
+
+<h3 id="ns-drops">What it drops, and what it never does</h3>
+<p>Every drop goes through one check. A record must say pando made that database for that worktree, on that server. The name must never be main's, must carry the <code>__</code> marker, and must not be named by any other record. <code>pando doctor</code> lists a leftover with the command that drops it, and never drops it itself.</p>
+
+<h3 id="ns-config">When pando cannot tell</h3>
+<p>What pando cannot tell by itself is written in its own config for the project, under <code>[namespaced.&lt;service&gt;]</code>, usually by the setup agent through <code>pando init --answers</code>. None of it is a secret, so a committed <code>pando.toml</code> may carry it too.</p>
+<pre class="code"><span class="k">[namespaced.redis]</span>
+db_env = ["REDIS_DB"]          <span class="c"># one REDIS_DB that three Redis roles share</span>
+
+<span class="k">[namespaced.search]</span>
+recipe = "elasticsearch"       <span class="c"># an image whose name says nothing</span>
+prefix_env = ["SEARCH_INDEX_PREFIX"]</pre>
+<p><code>pando signals</code> lists what a namespaced start would do with each service, and why one stays shared. <code>pando init</code> names the services it would leave on main's data.</p>
+
+<h3 id="ns-supported">What is supported</h3>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Gets</th><th>Engines</th></tr></thead><tbody>
+<tr><td>a database of its own</td><td>Postgres, MariaDB and MySQL, in a native server or a container, Postgres images with an extension built in (pgvector, PostGIS, TimescaleDB) included</td></tr>
+<tr><td>a slot of its own</td><td>Redis, Redis Stack and Valkey</td></tr>
+<tr><td>a prefix, where the app reads one</td><td>Elasticsearch, OpenSearch, Kafka, Redpanda, Meilisearch, Typesense, Memcached and Redis</td></tr>
+<tr><td>nothing: it stays shared</td><td>every other service, and the start says so for each, with the setting that would change it</td></tr>
+</tbody></table></div>
+
+<h3 id="ns-custom-engine">An engine pando does not ship</h3>
+<p>What a namespace is on an engine is data: a recipe's <code>[namespace]</code> or <code>[prefix]</code> table, so another engine is a file in <code>~/.pando/recipes/</code> rather than a release. A compose image finds it by its own name, or by <code>[namespaced.&lt;service&gt;] recipe</code>. It needs no <code>[service]</code> table when pando never starts the engine.</p>
+<figure class="code"><figcaption class="code-h">~/.pando/recipes/clickhouse.toml, a sketch, not a shipped recipe: check the client's own flags first</figcaption><pre>kind = "service"
+name = "clickhouse"
+
+<span class="k">[namespace]</span>
+kind = "database"                    <span class="c"># made and dropped by name; "slot" is a number</span>
+binaries = ["clickhouse-client"]
+password_env = "CLICKHOUSE_PASSWORD"
+ping   = "clickhouse-client --host {host} --port {port} --user {user} -q 'SELECT 1'"
+exists = "clickhouse-client --host {host} --port {port} --user {user} -q \"SELECT name FROM system.databases WHERE name = '{namespace}'\""
+create = "clickhouse-client --host {host} --port {port} --user {user} -q 'CREATE DATABASE {namespace}'"
+drop   = "clickhouse-client --host {host} --port {port} --user {user} -q 'DROP DATABASE IF EXISTS {namespace}'"
+
+<span class="k">[namespace.address]</span>                  <span class="c"># where the app names its database</span>
+url_path = true
+keys = ["_DATABASE", "_DB"]</pre></figure>
+<p>Each command keeps a contract: <code>create</code> fails when the name exists, a slot's commands never fall back to slot 0, <code>size</code> prints a bare number, and the password reaches the client only through <code>password_env</code>.</p>
+<p>pando derives every name, <code>&lt;main&gt;__&lt;worktree&gt;</code>, and drops only what its records say it made. An engine whose namespaces are the app's own convention needs only a <code>[prefix]</code> table.</p>
+</section>
+
+<section>
+<h2 id="data-lifecycle">What happens to data</h2>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mode</th><th><code>stop</code></th><th>Switching mode</th><th><code>rm</code></th></tr></thead><tbody>
+<tr><td>shared</td><td>nothing: the data is main's</td><td>nothing</td><td>nothing</td></tr>
+<tr><td>namespaced</td><td>kept</td><td>kept, for when it comes back</td><td>dropped, only if pando's records say pando made it</td></tr>
+<tr><td>isolated</td><td>kept: containers and servers stopped</td><td>kept</td><td>removed: <code>docker compose down -v</code>, data directory deleted</td></tr>
+</tbody></table></div>
+<p>A prefix is never made, so nothing is dropped for it. With Docker not running, <code>rm --force</code> goes ahead and leaves the data volumes behind, printing the command that removes them. A removal stopped half way, by Ctrl-C or a crash, is finished by the next <code>pando rm</code> of that worktree.</p>
+</section>
+
+<section>
+<h2 id="setup">Setup and detection</h2>
+<p>You do not write a config file to start. Before it asks anything, pando reads the main checkout. Nothing starts while it reads.</p>
+
+<h3 id="detection">What pando reads</h3>
+<ul>
+<li><code>package.json</code> scripts, and Makefile and justfile targets</li>
+<li>lockfiles and workspace markers</li>
+<li>version files, such as <code>.nvmrc</code></li>
+<li>the first env example</li>
+<li>framework markers</li>
+<li>compose files</li>
+<li>the gitignored files at the root</li>
+</ul>
+<p>A root with no manifest of its own, such as <code>backend/</code> beside <code>frontend/</code>, is read one directory down and in <code>apps/*</code> and <code>packages/*</code>. Each app's scripts, lockfile, version file and env files are read, and each app is installed and run in its own directory.</p>
+<p>What the rules know is data, one row per fact:</p>
+<div class="tbl-wrap"><table class="tbl"><tbody>
+<tr><td>Package managers</td><td>pnpm, npm, yarn, bun, uv, poetry, pipenv, bundler, composer, mix, go and cargo: one row each with its lockfile, and a frozen install for the nine that need one</td></tr>
+<tr><td>Frameworks</td><td>Next.js, Nuxt, Astro, Angular, Expo, Vite, Django, Rails, Phoenix and Laravel, plus plain Go, Rust and Node projects: 13 rules</td></tr>
+<tr><td>Service images</td><td>24 container images a compose file may use: databases, caches, search engines, queues, object stores and mail catchers</td></tr>
+<tr><td>Languages</td><td>Node, Python, Ruby, Rust, Go and Java, and 11 version managers: volta, mise, asdf, nvm, fnm, pyenv, rbenv, rvm, rustup, jenv and sdkman</td></tr>
+</tbody></table></div>
+
+<h3 id="questions">The twelve questions</h3>
+<p>From what it read, pando proposes answers to twelve questions, always in this order, each with the evidence behind it:</p>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Question</th><th>What it decides</th></tr></thead><tbody>
+<tr><td><code>install</code></td><td>the install command, frozen against the lockfile</td></tr>
+<tr><td><code>version_files</code></td><td>the files that name the runtime's version</td></tr>
+<tr><td><code>prelude</code></td><td>the shell line that makes this machine find that runtime; kept in the machine's config, since it is about the laptop</td></tr>
+<tr><td><code>processes</code></td><td>one process, or one per app of a workspace</td></tr>
+<tr><td><code>dev_cmd</code></td><td>the command that starts the dev server</td></tr>
+<tr><td><code>port_env</code></td><td>which variables carry the ports</td></tr>
+<tr><td><code>services</code></td><td>which compose services a worktree runs private copies of; the one question whose answer is a set</td></tr>
+<tr><td><code>schema_hook</code></td><td>the command that brings a fresh database to the current schema, and the files whose change means it runs again</td></tr>
+<tr><td><code>provision</code></td><td>the gitignored files each worktree gets, such as <code>.env</code></td></tr>
+<tr><td><code>clone</code></td><td>the dependency trees cloned in before the install</td></tr>
+<tr><td><code>base</code></td><td>the branch <code>new</code> forks from and <code>check</code> tests; open only when <code>origin/HEAD</code> is far behind the main checkout's branch</td></tr>
+<tr><td><code>namespaced</code></td><td>how each service gets data of its own in a namespaced start, where pando could not tell; answered by a program, never asked of a person</td></tr>
+</tbody></table></div>
+<p>A namespaced start can ask two more of its own: a login, and which worktree gives up its Redis slot.</p>
+
+<h3 id="first-choice">Taking the first choice</h3>
+<p>On a terminal, <code>new</code>, <code>start</code> and the TUI take the rules' first choice for anything they have one for, and print what they took, with the file they wrote it to:</p>
+<pre class="code wrapl"><span class="d">pando:</span> process list: using <span class="g">"npm run dev"</span> <span class="d">(package.json scripts.dev, which starts the workspace's apps itself; API_PORT and WEB_PORT in the env example), pando's first choice, over 1 other option — change it in ~/.pando/projects/&lt;id&gt;/pando.toml</span></pre>
+<p>A question pando has no option for at all is still asked. So is the one real choice isolation brings: which services get private copies. From a script or an agent with no <code>--yes</code>, such a question exits with code 3 (see <a href="#agents">For agents</a>).</p>
+
+<h3 id="init">Answering in one pass</h3>
+<p><code>pando init</code> puts every open question to you in one pass, instead of taking defaults as you go. A second run asks nothing. <code>pando init --yes</code> takes pando's own recommendation for each.</p>
+<p>A program answers through <code>pando init --answers -</code>: one JSON object on stdin, keyed by the question's name. <code>--dry-run</code> prints the file it would write and writes nothing, and <code>--replace</code> changes an answer that is already there:</p>
+<div class="cmd"><span class="p" aria-hidden="true">$</span><code>echo '{"clone": ["node_modules"]}' | pando init --answers - --replace</code><button class="copy" type="button" data-copy></button></div>
+<p><code>pando doctor</code> says what was detected, from where, and what is missing. <code>pando signals</code> prints the evidence as JSON.</p>
+</section>
+
+<section>
+<h2 id="config">pando.toml</h2>
+<p>The answers go to <code>~/.pando/projects/&lt;id&gt;/pando.toml</code>, with file mode 0600, never into your repository. You never have to write one. pando writes it, and each line it writes carries its reason.</p>
+<figure class="code"><figcaption class="code-h">~/.pando/projects/acme-shop-2bdf70d7/pando.toml</figcaption><pre><span class="c"># pando.toml — pando's own config for this project.
+# Lines marked "# detected:" or "# answered:" were written by pando.
+# Everything here is yours to edit; pando only ever adds keys it is missing.</span>
+
+<span class="k">[project]</span>
+install = "pnpm install --frozen-lockfile"  <span class="c"># detected: pnpm-lock.yaml</span>
+provision = [".env", ".env.local"]  <span class="c"># detected: gitignored and present in the main checkout</span>
+
+<span class="k">[runtime]</span>
+version_files = [".nvmrc"]  <span class="c"># detected: .nvmrc</span>
+
+<span class="k">[dev]</span>
+cmd = "pnpm dev"  <span class="c"># detected: package.json scripts.dev</span>
+ports = { PORT = "web" }  <span class="c"># detected: the Next.js convention</span>
+
+<span class="k">[[services]]</span>  <span class="c"># detected: docker-compose.yml, postgres:16 → DATABASE_URL</span>
+kind = "compose"
+file = "docker-compose.yml"
+include = ["postgres", "redis"]
+env = { DATABASE_URL = "postgres", REDIS_URL = "redis" }</pre></figure>
+<p>The file is yours to edit. pando adds keys that are missing, and changes an answer only when asked to, with <code>init --answers - --replace</code>. Delete a line and run <code>pando init</code>, and that question is put to you again.</p>
+
+<h3 id="config-layers">Layers</h3>
+<p>Config comes in layers, highest first: pando's own project file, then the machine-wide <a href="#machine"><code>~/.pando/config.toml</code></a>. For now, a <code>pando.toml</code> committed in the repository is read beneath them and never written. Whether to honour one is still an open decision.</p>
+
+<h3 id="config-sections">Section by section</h3>
+<div class="kv">
+<div><div class="k">[project]</div><div class="v">The base, the files each worktree gets, the install, and what is cloned.</div></div>
+<div><div class="k">[runtime]</div><div class="v">A prelude run before every command, and the version files.</div></div>
+<div><div class="k">[dev]</div><div class="v">One process called <code>dev</code>: its command, directory, ports, environment and readiness.</div></div>
+<div><div class="k">[processes.&lt;name&gt;]</div><div class="v">Several processes, each with the keys of <code>[dev]</code>.</div></div>
+<div><div class="k">[[services]]</div><div class="v">Services a worktree can run private copies of, from compose or a native recipe, and the variables that address them.</div></div>
+<div><div class="k">[[hooks]]</div><div class="v">Commands run at a point in the start, such as a migration after the services. <code>on = "isolated"</code> runs one only on data of its own, and <code>fingerprint</code> runs it again only when those files change.</div></div>
+<div><div class="k">[[probes]]</div><div class="v">Checks run right before processes spawn, each with a hint.</div></div>
+<div><div class="k">[branches]</div><div class="v">Rules that fork matching branches from another base.</div></div>
+<div><div class="k">[repos]</div><div class="v">For a folder of repositories: which are members, and each one's base.</div></div>
+<div><div class="k">[share]</div><div class="v">The tunnel provider, and <code>auth_cmd</code> for apps that need a login.</div></div>
+<div><div class="k">[namespaced.&lt;service&gt;]</div><div class="v">What a namespaced start cannot tell by itself.</div></div>
+</div>
+<details><summary>The full shape</summary><pre class="code"><span class="k">[project]</span>
+base = "main"                            <span class="c"># what new branches fork from</span>
+provision = [".env", ".env.local"]       <span class="c"># gitignored files each worktree gets</span>
+provision_mode = "copy"                   <span class="c"># default: a symlink to the main checkout's</span>
+provision_from = { ".env" = ".env.example" }  <span class="c"># seed a copy where main has no file</span>
+install = "pnpm install --frozen-lockfile"
+copy_on_write = false                     <span class="c"># default: clone the main checkout's files where the disk can</span>
+clone = ["node_modules"]                 <span class="c"># gitignored paths cloned in before the install; proposed for you</span>
+
+<span class="k">[runtime]</span>
+prelude = ""                              <span class="c"># e.g. a version manager's init, before every command</span>
+version_files = [".nvmrc"]
+
+<span class="k">[dev]</span>                                     <span class="c"># one process called dev; or [processes.&lt;name&gt;] for several</span>
+cmd = "pnpm dev"
+cwd = "."
+ports = { PORT = "web" }
+env = { NODE_ENV = "development" }
+ready = { role = "web", timeout_s = 30 }
+page = true                               <span class="c"># false: no browser opens it, so it is never the URL (Expo's Metro by default)</span>
+
+<span class="k">[[services]]</span>
+kind = "compose"
+file = "docker-compose.yml"
+include = ["redis"]
+env = { REDIS_URL = "redis" }
+
+<span class="k">[[services]]</span>
+kind = "native"
+name = "postgres"
+preset = "postgres"                       <span class="c"># a recipe; the lines below override it</span>
+port_env = "DATABASE_URL"
+init = "initdb --pgdata {datadir}"
+cmd = "exec postgres -D {datadir} -p {port} -k {socket_dir}"
+ready = "pg_isready -h 127.0.0.1 -p {port}"
+
+<span class="k">[[hooks]]</span>
+name = "migrate"
+after = "services"                       <span class="c"># create · install · services · dev</span>
+on = "isolated"                          <span class="c"># isolated (the default with [[services]]) · always · never</span>
+fingerprint = ["prisma/migrations/**"]   <span class="c"># runs again only when these change</span>
+cmd = "pnpm prisma migrate deploy"
+
+<span class="k">[[probes]]</span>                                <span class="c"># checked right before processes spawn</span>
+name = "native-abi"
+cmd = "node -e 'require(\"better-sqlite3\")'"
+match = "NODE_MODULE_VERSION"
+hint = "Rebuild native modules under the dev runtime."
+
+<span class="k">[branches]</span>
+rules = [{ match = "*-beta", base = "beta" }]
+
+<span class="k">[repos]</span>                                   <span class="c"># a folder of repositories only</span>
+members = ["backend", "frontend"]
+base = { backend = "develop" }
+
+<span class="k">[share]</span>
+provider = "cloudflared"
+auth_cmd = "./scripts/dev-cookie.sh"       <span class="c"># its stdout becomes the visitor's Cookie header</span>
+
+<span class="k">[namespaced.search]</span>                       <span class="c"># how a namespaced start gives it data of its own</span>
+recipe = "elasticsearch"                  <span class="c"># when the image does not say what it is</span>
+prefix_env = ["SEARCH_INDEX_PREFIX"]      <span class="c"># keys the app reads a prefix from</span>
+
+<span class="k">[namespaced.cache]</span>
+db_env = ["REDIS_DB"]                     <span class="c"># keys naming a database or slot pando missed</span></pre></details>
+</section>
+
+<section>
+<h2 id="check">pando check</h2>
+<p><code>pando check</code> proves a setup in a throwaway worktree. It makes a detached worktree of the commit a new branch would fork from, so there is no branch. It installs it, starts every process, waits until they are ready, and asks the process that owns the URL for <code>/</code>.</p>
+<p>Then it stops and removes the worktree, keeps its logs, and records the result in <code>check.json</code>. In the TUI, <kbd>v</kbd> runs it.</p>
+<figure class="code"><figcaption class="code-h">Example project</figcaption><pre class="wrapl"><span class="p">$</span> pando check
+<span class="d">pando: testing acme-shop's setup at a1b2c3d (origin/main), in a throwaway worktree (no branch)
+pando: installing
+pando: starting api, web
+pando: waiting for api, web to be ready
+pando: asking web for its first page on :29849
+pando: installed 14.2s · api ready :29848 · web ready :29849 (HTTP 200)
+pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: …
+pando: removed the test worktree; nothing left behind</span>
+<span class="ok">✓</span> acme-shop is ready: `pando` opens it</pre></figure>
+
+<h3 id="check-pass">What passes</h3>
+<p>A status of 500 or higher, a refused connection or silence is a failure. Any other answer passes: a login redirect is a working app.</p>
+<p>The exit code is 0 when it passed, 1 when it failed, and 3 when a question is still open. <code>--json</code> prints the result as one object, and its <code>kind</code> says whose a failure is: the settings', this machine's, or the base commit's.</p>
+
+<h3 id="check-data">What it never touches</h3>
+<p>The check runs on the shared services and skips the hooks that run after them, so it never migrates your own data. Everything it runs gets <code>PANDO_CHECK=1</code>.</p>
+<p>When the project has a schema step to prove, and a namespaced login already exists or a container's administrator gives one, the check proves that step in a namespace of its own, and drops it with the worktree.</p>
+<p>A passing check also measures what the worktree cost on disk before it removes it: see <a href="#disk-report">the check's report</a>. <code>--base &lt;branch&gt;</code> tests the commit that branch is at, for this run only.</p>
+</section>
+
+<section>
+<h2 id="agents">For agents</h2>
+<p>An agent reads pando the way a script does. stdout carries only the answer. stderr carries the narration, each message starting with <code>pando: </code>.</p>
+<p><code>ls</code>, <code>status</code>, <code>logs</code>, <code>check</code> and <code>doctor</code> print JSON with <code>--json</code>, and <code>signals</code> always prints JSON. The shapes are versioned and documented in <a href="https://github.com/mertkaradayi/pando/blob/main/agent/json.md"><code>agent/json.md</code></a>.</p>
+
+<h3 id="exit-codes">Exit codes</h3>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Exit</th><th>Means</th></tr></thead><tbody>
+<tr><td>0</td><td>ok</td></tr>
+<tr><td>1</td><td>an error</td></tr>
+<tr><td>2</td><td>a usage mistake</td></tr>
+<tr><td>3</td><td>pando has a question, printed on stderr. It is not a failure. An agent answers it from the project's own evidence, or puts it to the developer, and never adds <code>--yes</code> to make it go away.</td></tr>
+</tbody></table></div>
+<pre class="code"><span class="p">$</span> pando status feat/login --json   <span class="c"># trimmed</span>
+{
+  <span class="k">"version"</span>: 2,
+  <span class="k">"project"</span>: { <span class="k">"id"</span>: "acme-shop-2bdf70d7", … },
+  <span class="k">"worktrees"</span>: [{
+    <span class="k">"name"</span>: "feat+login",
+    <span class="k">"main"</span>: false,
+    <span class="k">"branch"</span>: "feat/login",
+    <span class="k">"ports"</span>: { <span class="k">"api"</span>: 26624, <span class="k">"web"</span>: 26625 },
+    <span class="k">"url"</span>: "http://localhost:26625",
+    <span class="k">"mode"</span>: "shared",
+    <span class="k">"share"</span>: null,
+    <span class="k">"processes"</span>: {
+      <span class="k">"api"</span>: { <span class="k">"pid"</span>: 51377, <span class="k">"phase"</span>: "running", … },
+      <span class="k">"web"</span>: { <span class="k">"pid"</span>: 51378, <span class="k">"phase"</span>: "running", … }
+    }
+  }]
+}
+
+<span class="p">$</span> pando start feat/search   <span class="c"># no terminal, no --yes</span>
+<span class="d">pando: Which command starts the local development server?
+  1) pnpm dev  (package.json scripts.dev)
+  2) pnpm dev:web  (package.json scripts.dev:web)</span>
+<span class="p">$</span> echo $?
+<span class="g">3</span></pre>
+
+<h3 id="brief">The brief, the plugin and the skills</h3>
+<p>How an agent turns pando's evidence into answers is written once, in <a href="https://github.com/mertkaradayi/pando/blob/main/agent/brief.md"><code>agent/brief.md</code></a>: decide what the rules leave open without asking, write only through <code>pando init --answers</code>, and end by reporting what was set. The binary carries it too: <code>pando init --agent --reference brief</code>, or <code>json</code> for the shapes.</p>
+<p>The repository includes a Claude Code plugin and Codex skills, thin wrappers around that brief. An agent that reads the brief needs neither.</p>
+<pre class="code"><span class="c"># Claude Code</span>
+<span class="p">$</span> claude plugin marketplace add mertkaradayi/pando
+<span class="p">$</span> claude plugin install pando@pando
+
+<span class="c"># Codex, from a clone of pando's repository; again after each upgrade</span>
+<span class="p">$</span> agent/codex/install.sh</pre>
+
+<h3 id="agent-memory">Remembering the project</h3>
+<p><code>pando init --agent --reference memory</code> prints a short block on how to run this project's worktrees with pando. The setup agent offers to save it in its own memory, and does so only when you say yes, so later sessions start and stop worktrees through pando rather than by hand.</p>
+<p>pando also keeps the block as <code>CLAUDE.md</code> and <code>AGENTS.md</code> in the project's directory under <code>~/.pando</code>, above every worktree, never in your repository.</p>
+</section>
+
+<section>
+<h2 id="commands">Commands</h2>
+<p>A worktree is named by its branch (<code>feat/login</code>) or its directory (<code>feat+login</code>), and inside a worktree most commands need no name (see <a href="#naming">Names</a>). stdout carries only the answer, and the narration goes to stderr.</p>
+
+<h3 id="several-at-once">Several at once</h3>
+<p><code>start</code>, <code>stop</code>, <code>restart</code> and <code>rm</code> take several names, as in <code>pando rm feat/a feat/b fix/c</code>. They act on them side by side and say each one as it finishes. One that fails leaves the others to finish, and the exit code is then 1.</p>
+<p>A start of several settles every question first, one name after another, and then starts them all. If a question is still open, the whole command exits 3 and nothing is started. Every flag applies to each name.</p>
+
+<h3 id="verbs">Every verb</h3>
+<div class="kv">
+<div><div class="k">pando</div><div class="v">Open the TUI for the repository you are in, or the <a href="#setup-screen">setup screen</a> the first time.</div></div>
+<div><div class="k">pando new &lt;branch&gt;</div><div class="v">Create a worktree and branch: check out, link the provisioned files, install. <span class="fl"><code>--base &lt;ref&gt;</code> fork from here · <code>--yes</code> take pando's first choice for any question</span></div></div>
+<div><div class="k">pando start [name…]</div><div class="v">Start its processes on its ports; on a terminal, wait until each is listening. <span class="fl"><code>--shared</code> · <code>--isolated</code> · <code>--namespaced</code> (experimental) · <code>--only &lt;process&gt;</code> · <code>--wait</code> / <code>--no-wait</code> · <code>--yes</code></span></div></div>
+<div><div class="k">pando stop [name…]</div><div class="v">Stop its processes, private services and public URL, keeping ports, logs and data. With no name, outside a worktree or in the main checkout, it stops every one. <span class="fl"><code>--only &lt;process&gt;</code> · <code>--all</code> every worktree and the main checkout, from anywhere</span></div></div>
+<div><div class="k">pando restart [name…]</div><div class="v">Stop and start again, keeping the ports. <span class="fl"><code>--isolated</code> · <code>--namespaced</code> (experimental) · <code>--only &lt;process&gt;</code> · <code>--wait</code> / <code>--no-wait</code> · <code>--yes</code></span></div></div>
+<div><div class="k">pando ls</div><div class="v">Every worktree, the main checkout first: status, URL, ports and git, fitted to the terminal. <span class="fl"><code>-l</code> adds each commit and path · <code>--json</code></span></div></div>
+<div><div class="k">pando status [name]</div><div class="v">What runs where, per process and service, and why one failed. <span class="fl"><code>--json</code> · <code>--env</code> prints <code>export</code> lines for <code>eval</code></span></div></div>
+<div><div class="k">pando logs [name]</div><div class="v">Its log: <code>dev</code>'s, the only process's, or all of them merged. <span class="fl"><code>-s, --source &lt;name&gt;</code> a process, service or hook · <code>-n, --tail N</code> (50) · <code>-f, --follow</code> · <code>--json</code> one object per line</span></div></div>
+<div><div class="k">pando open [name]</div><div class="v">Print its URL and open it in the browser (<code>$BROWSER</code>, or the desktop's opener), or open its <a href="#mobile">app</a>. <span class="fl"><code>--public</code> the shared URL · <code>--app</code> its app, even beside a page</span></div></div>
+<div><div class="k">pando share [name]</div><div class="v">Publish a running worktree at a public URL, and print only that URL.</div></div>
+<div><div class="k">pando unshare [name]</div><div class="v">Take the public URL down.</div></div>
+<div><div class="k">pando path &lt;name&gt;</div><div class="v">Print the worktree's absolute path, as in <code>cd "$(pando path feat/login)"</code>.</div></div>
+<div><div class="k">pando rm &lt;name…&gt;</div><div class="v">Stop everything, remove the worktree, wipe its logs and data. The branch stays. <span class="fl"><code>--force</code> even with uncommitted changes, or with Docker not running · <code>--yes</code> a worktree pando did not create</span></div></div>
+<div><div class="k">pando init</div><div class="v">Answer every setup question now, in one pass. <span class="fl"><code>--yes</code> · <code>--answers &lt;file|-&gt;</code> · <code>--dry-run</code> · <code>--replace</code> · <code>--agent</code> the job for a coding agent · <code>--reference brief|json|memory</code></span></div></div>
+<div><div class="k">pando check</div><div class="v">Test the setup in a throwaway worktree. <span class="fl"><code>--base &lt;branch&gt;</code> test the commit this branch is at, for this run only · <code>--json</code></span></div></div>
+<div><div class="k">pando doctor</div><div class="v">What pando found and where, and what is missing: project, config, runtime, tools, worktrees, services, hooks. Read-only; exits 1 when something will break a command. <span class="fl"><code>--json</code> · <code>--adopt &lt;old-id&gt;</code> after you moved the repository; asks first, <code>--yes</code> does not</span></div></div>
+<div><div class="k">pando signals</div><div class="v">The detection evidence as JSON, and what a namespaced start would do with each service. Two runs print the same thing.</div></div>
+<div><div class="k">pando completions &lt;shell&gt;</div><div class="v">A completion script for bash, zsh, fish, elvish or PowerShell.</div></div>
+<div><div class="k">pando update</div><div class="v">Update pando to the latest release, the way it was installed (see <a href="#update">Staying current</a>). <span class="fl"><code>--check</code> whether a newer release is out, and the command that would install it</span></div></div>
+</div>
+</section>
+
+<section>
+<h2 id="tui">The TUI</h2>
+<p><code>pando</code> with no arguments is the TUI. Every action has a key, and almost everything it does is a command too; the pull request picker and the git menu are in the TUI only, for now. <kbd>?</kbd> lists every key, mouse gesture and mark on screen.</p>
+
+<h3 id="tui-list">Reading the list</h3>
+<p>The list is a table with a header row: branch, changes, port, public, mode, git, PR and status. A column shows only when some row has something in it. The glyph before the branch says whether the worktree runs, and the detail pane beside the list has the full URL and the rest.</p>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Mark</th><th>Means</th></tr></thead><tbody>
+<tr><td>●</td><td>running: the dev server is up</td></tr>
+<tr><td>◌</td><td>starting, or something is being done to it</td></tr>
+<tr><td>✗</td><td>failed: <kbd>l</kbd> shows the log that says why</td></tr>
+<tr><td>○</td><td>stopped: <kbd>s</kbd> starts it</td></tr>
+<tr><td>+</td><td>marked: <kbd>s</kbd> <kbd>x</kbd> <kbd>r</kbd> <kbd>d</kbd> act on every marked row</td></tr>
+<tr><td>⌂</td><td>the main checkout, always the first row</td></tr>
+<tr><td>▣</td><td>isolated: private copies of the services</td></tr>
+<tr><td>◧</td><td>namespaced: a database, a slot or a prefix of its own (experimental)</td></tr>
+<tr><td>◈</td><td>public: shared on the internet</td></tr>
+<tr><td>◍ #n</td><td>its open pull request: ◌ draft, ✓ merged, ✗ closed</td></tr>
+<tr><td>↓n ↑n</td><td>commits behind and ahead of the base branch</td></tr>
+<tr><td>✎</td><td>uncommitted changes</td></tr>
+<tr><td>:22809</td><td>where it serves: <kbd>c</kbd> copies the URL</td></tr>
+<tr><td>removing</td><td>another pando is removing it, so <kbd>s</kbd> <kbd>x</kbd> <kbd>r</kbd> <kbd>d</kbd> leave it alone</td></tr>
+<tr><td>rm interrupted</td><td>a removal stopped half way: <kbd>d</kbd> finishes it, and nothing starts it meanwhile</td></tr>
+<tr><td>rebasing</td><td>a rebase or merge was left half-done in it: the git menu aborts it, or <kbd>!</kbd> opens a shell to finish it</td></tr>
+<tr><td>prunable</td><td>its directory is missing: <code>git worktree prune</code> removes the entry</td></tr>
+<tr><td>1 missing</td><td>a set lacks a repository's checkout: <code>pando new &lt;branch&gt;</code> adds it back</td></tr>
+</tbody></table></div>
+<p>The header shows the GitHub account <code>gh</code> uses here, the project's shared services and whether each answers, and, until a check passes, a line on the project's setup.</p>
+
+<h3 id="tui-keys">Keys</h3>
+<div class="kv keys-kv">
+<div><div class="k"><kbd>j</kbd> <kbd>k</kbd> <kbd>↓</kbd> <kbd>↑</kbd></div><div class="v">Move down or up. <kbd>g</kbd> and <kbd>G</kbd> go to the first and last row.</div></div>
+<div><div class="k"><kbd>⏎</kbd></div><div class="v">Choose its mode (shared, namespaced, isolated) and start it, or switch it while it runs. The main checkout starts at once, shared.</div></div>
+<div><div class="k"><kbd>s</kbd></div><div class="v">Start it, in the mode it last ran in.</div></div>
+<div><div class="k"><kbd>i</kbd> <kbd>S</kbd></div><div class="v">Start it isolated, or shared. Asks first when it runs in another mode.</div></div>
+<div><div class="k"><kbd>x</kbd> <kbd>X</kbd></div><div class="v">Stop it, or cancel a start in flight on it. Stop everything that runs (asks first).</div></div>
+<div><div class="k"><kbd>r</kbd> <kbd>P</kbd></div><div class="v">Restart it. Restart only the selected ▸ process; <kbd>tab</kbd> picks it.</div></div>
+<div><div class="k"><kbd>o</kbd> <kbd>O</kbd></div><div class="v">Open its URL, or its app on a simulator or device. Open its public URL.</div></div>
+<div><div class="k"><kbd>c</kbd> <kbd>C</kbd> <kbd>y</kbd></div><div class="v">Copy its local URL, its public URL, its path.</div></div>
+<div><div class="k"><kbd>t</kbd></div><div class="v">Share it publicly, or stop sharing (asks first).</div></div>
+<div><div class="k"><kbd>!</kbd> <kbd>e</kbd></div><div class="v">A shell in it (a tmux window inside tmux). Open it in <code>$VISUAL</code> or <code>$EDITOR</code>.</div></div>
+<div><div class="k"><kbd>l</kbd></div><div class="v">Open the <a href="#logs">log viewer</a>. <kbd>tab</kbd> previews the next process's log, and <kbd>PgUp</kbd> <kbd>PgDn</kbd> scroll the preview.</div></div>
+<div><div class="k"><kbd>n</kbd> <kbd>d</kbd></div><div class="v">New worktree. Remove it (never the main checkout).</div></div>
+<div><div class="k"><kbd>+</kbd></div><div class="v">Mark the row, or unmark it, and move down.</div></div>
+<div><div class="k"><kbd>p</kbd></div><div class="v">Open pull requests: <kbd>⏎</kbd> makes a worktree for one.</div></div>
+<div><div class="k"><kbd>space</kbd> <kbd>p</kbd></div><div class="v">Open its own pull request on GitHub (the row's #n).</div></div>
+<div><div class="k"><kbd>space</kbd> <kbd>g</kbd></div><div class="v">The <a href="#git-menu">git menu</a>: fetch, pull, rebase or merge it, with the commands shown first.</div></div>
+<div><div class="k"><kbd>/</kbd></div><div class="v">Filter by branch or name.</div></div>
+<div><div class="k"><kbd>,</kbd></div><div class="v">Change the list's order (saved).</div></div>
+<div><div class="k"><kbd>m</kbd></div><div class="v">Messages: what pando said, in full.</div></div>
+<div><div class="k"><kbd>a</kbd> <kbd>v</kbd></div><div class="v">Copy the setup prompt. Test the setup with <code>pando check</code>.</div></div>
+<div><div class="k"><kbd>T</kbd></div><div class="v">Pick a colour theme, previewed live.</div></div>
+<div><div class="k"><kbd>R</kbd> <kbd>?</kbd></div><div class="v">Refresh now. Help.</div></div>
+<div><div class="k"><kbd>q</kbd> <kbd>esc</kbd></div><div class="v">Quit. <kbd>esc</kbd> first clears the filter, then unmarks every row. <kbd>ctrl-c</kbd> quits from anywhere.</div></div>
+</div>
+
+<h3 id="tui-confirm">Confirmations</h3>
+<p>A key that would interrupt a running worktree asks for a second press within three seconds. <kbd>x</kbd> <kbd>x</kbd> stops it, <kbd>r</kbd> <kbd>r</kbd> restarts it, and <kbd>P</kbd> <kbd>P</kbd> restarts one process. <kbd>i</kbd> or <kbd>S</kbd> twice restarts it in the mode it already runs in. <kbd>esc</kbd> takes the first press back.</p>
+<p>Sharing, removing, stopping everything and moving a running worktree between modes ask in a dialog instead. On a stopped worktree, nothing asks.</p>
+<p><kbd>x</kbd> on a worktree being started cancels the start: it stops at its next safe point, undoes what it brought up, and the worktree ends stopped. <kbd>q</kbd> <kbd>q</kbd> with a start in flight does the same, then quits.</p>
+
+<h3 id="tui-marks">Marks: several rows at once</h3>
+<p><kbd>+</kbd> marks the row under the cursor, or unmarks it, and moves down. <kbd>esc</kbd> unmarks every row. A mark stays on its worktree through a refresh, a re-sort or a filter.</p>
+<p>While rows are marked, <kbd>s</kbd>, <kbd>x</kbd>, <kbd>r</kbd> and <kbd>d</kbd> act on all of them at once, and <kbd>x</kbd> <kbd>x</kbd> or <kbd>r</kbd> <kbd>r</kbd> asks once for the set. <kbd>d</kbd> opens one dialog that says what each removal takes with it, which only <kbd>F</kbd> removes (uncommitted changes), and which stay. Every other key acts on the row under the cursor.</p>
+
+<h3 id="tui-mouse">The mouse</h3>
+<ul>
+<li><strong>Click</strong> a worktree, a dialog's option or a line of the log viewer to select it. Click it again for <kbd>⏎</kbd>.</li>
+<li><strong>Click a key hint</strong>, such as <code>esc cancel</code>, to press its key.</li>
+<li><strong>Click a tab</strong> of the log viewer, or a process the log preview names, to show that log.</li>
+<li><strong>The wheel</strong> scrolls whatever is under the pointer.</li>
+</ul>
+<p>While pando has the mouse, hold shift to select text (option in iTerm2). <code>[ui] mouse = false</code> in <a href="#machine"><code>~/.pando/config.toml</code></a> leaves the mouse to the terminal. The setup screen always does, so its prompt can be selected and pasted.</p>
+
+<h3 id="tui-sort">Sorting the list</h3>
+<p>The main checkout is always the first row, and the worktrees with something up come right after it: a start moves a row up, and a stop puts it back. <kbd>,</kbd> changes the order within each group: by pull request, highest first (the default), newest first, last run first, or by name. The choice is saved as <code>[ui] sort</code>.</p>
+
+<h3 id="tui-refresh">How it keeps up</h3>
+<p>The screen keeps up by polling: the screen every quarter second, processes every second, the worktree list and the selected row's git state every five seconds, the other rows' git state every thirty, and GitHub about once a minute. It fits a tmux split: below 72 columns, the table and the detail pane stack.</p>
+</section>
+
+<section>
+<h2 id="logs">The log viewer</h2>
+<p><kbd>l</kbd> opens a tab per log, led by an <code>all</code> tab that merges every process's log when there are several.</p>
+<div class="kv keys-kv">
+<div><div class="k"><kbd>1</kbd>…<kbd>9</kbd></div><div class="v">A source: <code>all</code> first, then one per process, hook and service. <kbd>tab</kbd> and <kbd>shift-tab</kbd> go to the next and previous.</div></div>
+<div><div class="k"><kbd>j</kbd> <kbd>k</kbd></div><div class="v">Move the cursor. <kbd>ctrl-d</kbd> and <kbd>ctrl-u</kbd> move half a page.</div></div>
+<div><div class="k"><kbd>g</kbd> <kbd>G</kbd></div><div class="v">The top, or follow the live tail.</div></div>
+<div><div class="k"><kbd>/</kbd> <kbd>n</kbd> <kbd>N</kbd></div><div class="v">Search, then the next or previous match. <kbd>⏎</kbd> keeps the search and <kbd>esc</kbd> clears it.</div></div>
+<div><div class="k"><kbd>&amp;</kbd></div><div class="v">Show only the matches, as grep would.</div></div>
+<div><div class="k"><kbd>f</kbd></div><div class="v">Level filter: all, warnings and up, or errors.</div></div>
+<div><div class="k"><kbd>e</kbd> <kbd>E</kbd></div><div class="v">Next or previous error.</div></div>
+<div><div class="k"><kbd>⏎</kbd> <kbd>J</kbd></div><div class="v">Inspect the line: JSON, pretty-printed.</div></div>
+<div><div class="k"><kbd>w</kbd></div><div class="v">Wrap long lines, or cut them.</div></div>
+<div><div class="k"><kbd>y</kbd> <kbd>Y</kbd></div><div class="v">Copy the line, or the URL on it.</div></div>
+<div><div class="k"><kbd>q</kbd> <kbd>esc</kbd></div><div class="v">Back to the list.</div></div>
+</div>
+<p>With the mouse, a click puts the cursor on a line or shows a tab's source, a second click inspects the line, and the wheel moves the cursor three lines.</p>
+<p>Levels are read from keywords in the line, so treat the filter as a guide: a crash line without the word <em>error</em> in it can be filtered out. When the viewer opens, the <code>all</code> tab shows each process's earlier lines one process after another, not interleaved by time. Lines that arrive after that follow in order.</p>
+<p>From the command line, <a href="#verbs"><code>pando logs</code></a> prints the same logs, and <code>--json</code> gives one object per line.</p>
+</section>
+
+<section>
+<h2 id="machine">Machine config and themes</h2>
+<p><code>~/.pando/config.toml</code> holds what belongs to the machine rather than to a project: which isolation to prefer, and how the TUI looks and behaves.</p>
+<figure class="code"><figcaption class="code-h">~/.pando/config.toml</figcaption><pre><span class="k">[isolation]</span>
+prefer = "native"        <span class="c"># or "compose"</span>
+
+<span class="k">[ui]</span>
+theme = "catppuccin"
+<span class="c"># appearance = "dark"   # "light", or "auto" to follow the system
+# sort = "run"          # the list's order: "pr", "newest", "run" or "name"
+# mouse = false         # leave the mouse to the terminal
+# theme_from = "~/.config/theme-switcher/current"</span></pre></figure>
+
+<h3 id="themes">Themes</h3>
+<p><kbd>T</kbd> in the TUI lists the colour themes, each with a swatch of its colours. Moving through them repaints the screen, <kbd>⏎</kbd> keeps one, and <kbd>esc</kbd> puts the old one back.</p>
+<p>Fifteen are built in: pando's own, Catppuccin, Flexoki, four GitHub themes (default, dimmed, high contrast and colorblind), Gruvbox, Kanagawa, Monokai Pro, One Dark, Rosé Pine, Tokyo Night, VS Code and Zenwritten. Each has a dark and a light half that follows the system.</p>
+<p><code>theme_from</code> names a file whose first line is a theme's name, such as the state file a terminal theme switcher keeps. pando follows it while it runs, so switching the terminal's theme switches pando's with it. <code>PANDO_THEME</code> and <code>PANDO_APPEARANCE</code> override both for one run.</p>
+<p>A theme is a small TOML file: a background, a foreground and seven accents for each half, and every other colour is derived from them. A file in <code>~/.pando/themes/&lt;name&gt;.toml</code> is listed beside the built-ins, and replaces the built-in of the same name.</p>
+
+<h3 id="pando-home">pando's home</h3>
+<p>Everything pando keeps lives under <code>~/.pando</code>. Set <code>PANDO_HOME</code> to move it elsewhere.</p>
+</section>
+
+<section>
+<h2 id="promise">The two promises</h2>
+<p>These two rules come before every feature.</p>
+
+<h3 id="invariant-1">pando never writes into your repository</h3>
+<p>Not a config file, not a gitignore line, not a lockfile change. Apart from a socket directory in <code>$TMPDIR</code> for native Postgres and MariaDB, pando's own files go to two places:</p>
+<ol>
+<li>its own home, <code>~/.pando/</code>;</li>
+<li>the worktrees it creates, which live under that home by default.</li>
+</ol>
+<p>Inside <code>.git</code>, only git itself writes: its records of the worktrees, branches and fetches pando asks for. Your checkout is read-only to pando.</p>
+<p>Inside a worktree, pando may create or link a file only if the project's own gitignore already ignores that path. <code>.env</code> and <code>.env.local</code> pass. Anything that would show up as untracked in <code>git status</code> is refused.</p>
+<figure class="code"><figcaption class="code-h">Everything pando learns and runs lives under its own home</figcaption><pre><span class="w">~/.pando/</span>
+<span class="d">├──</span> config.toml                <span class="d">your choices: theme, appearance</span>
+<span class="d">├──</span> recipes/  themes/          <span class="d">your native services and engines, colour themes</span>
+<span class="d">└──</span> projects/acme-shop-2bdf70d7/
+<span class="d">    ├──</span> pando.toml             <span class="d">the whole config for one project</span>
+<span class="d">    ├──</span> state.json             <span class="d">what runs where, on which ports</span>
+<span class="d">    ├──</span> worktrees/feat+login/  <span class="d">the branch's own checkout</span>
+<span class="d">    ├──</span> logs/feat+login/       <span class="d">every process's log</span>
+<span class="d">    ├──</span> data/feat+login/       <span class="d">its private services' data</span>
+<span class="d">    └──</span> compose/               <span class="d">generated compose overrides</span>
+
+<span class="w">~/code/acme-shop/</span>              <span class="ok">untouched</span></pre></figure>
+
+<h3 id="how-it-holds">How it is kept</h3>
+<ol>
+<li><strong>Every path is computed.</strong> Every location pando writes is a function of its home and a project id, and a test checks that none of them is inside the repository. A home or a <code>worktrees_dir</code> inside the checkout is refused before anything is made.</li>
+<li><strong><code>git check-ignore</code> runs before every write into a worktree.</strong> It runs in the main checkout first, then again inside the new worktree right before each file is written, because a branch can carry an older gitignore. A refusal found after the worktree was made undoes it.</li>
+<li><strong>Hooks and installs are watched.</strong> <code>git status</code> is taken before and after them, and pando warns about anything new that appeared.</li>
+<li><strong>Every command is checked by a test.</strong> After each one, the test suite checks that <code>git status</code> has nothing to report, and that every path in the repository outside <code>.git</code> has the same type, size and symlink target as before.</li>
+</ol>
+
+<h3 id="not-covered">What it does and does not cover</h3>
+<p>Git itself records worktree admin files in <code>.git/worktrees</code>, and new branches and fetched refs in <code>.git</code>. A worktree gets the gitignored files you listed linked into it, and its own dependencies installed, such as <code>node_modules</code>. The worktree itself lives under <code>~/.pando</code>. Nothing pando writes shows up in your checkout's <code>git status</code>.</p>
+<p>Three things fall outside the rule as written, by design, and each has rules of its own:</p>
+<ul>
+<li><strong>Namespaced mode</strong>, when you choose it, makes databases in your own server. Each is named after your main database, so it can never be it, and only <code>rm</code> drops it, only when pando's records say pando made it. See <a href="#namespaced">Namespaced</a>.</li>
+<li><strong>The git menu</strong> moves a branch in a checkout, but only the move you picked, after you saw its commands. See <a href="#git-menu">The git menu</a>.</li>
+<li><strong>The copy-on-write checkout</strong> clones the branch's own tracked files into a new worktree, as <code>git worktree add</code> would write them, and git's own reset decides what each one holds. See <a href="#copy-on-write">Light on disk</a>.</li>
+</ul>
+
+<h3 id="invariant-2">No AI at runtime</h3>
+<p>Discovery may be fuzzy. Starting processes may not. Detection is the only thing that writes <code>pando.toml</code>, whether <code>init</code> runs it, or <code>new</code>, <code>start</code> and the TUI ask it as they go. Spawning, stopping, sharing and removing only ever read it.</p>
+<p>So a wrong guess costs one edit to a file you can see. It never costs a mysterious failure at start time.</p>
+<p>There is no model SDK and no HTTP library in the binary. pando itself talks only to this machine. What reaches the network are the programs it runs: <code>git</code>, <code>gh</code>, <code>cloudflared</code>, <code>docker</code>, your install and hook commands, and in namespaced mode the database clients. There is no telemetry, and you need no account.</p>
+</section>
+
+<section>
+<h2 id="faq">Questions</h2>
+<div class="faq">
+<details><summary>How is this different from plain git worktree?</summary>
+<p><code>git worktree add ../x feat/x</code> gives you a second checkout and nothing else. <code>pando new feat/x</code> runs that same git command, but puts the checkout under <code>~/.pando</code> instead of beside your repository. It links in the gitignored files the project needs, runs the project's own install inside the checkout, and records it.</p>
+<p><code>pando start</code> then adds what makes it run: ports that do not collide, detached processes, logs and readiness. Optionally it adds private or namespaced services and a public URL, all on one screen. Worktrees you made by hand are managed too.</p></details>
+<details><summary>Does every worktree get its own node_modules? Its own .env?</summary>
+<p>It gets its own dependencies. pando runs the project's frozen install inside each worktree and never links dependency directories. With <code>clone = ["node_modules"]</code>, which pando proposes when your main checkout has them, the main checkout's are cloned in first, copy-on-write: each worktree's own copy, sharing disk blocks until it changes.</p>
+<p>A later start runs the install again only when a lockfile, a version file or the prelude changed.</p>
+<p>Local config works differently. Gitignored files like <code>.env</code> are symlinked to the main checkout's copy by default, so editing one edits main's. <code>provision_mode = "copy"</code> gives each worktree its own copy.</p></details>
+<details><summary>What survives closing the terminal? A reboot?</summary>
+<p>Closing the terminal or quitting the TUI leaves everything running. A reboot stops it all, and the next start comes back on the same URLs. Nothing restarts by itself: see <a href="#survives">Running</a>.</p></details>
+<details><summary>My Node from nvm (or fnm, rvm…) is not found.</summary>
+<p>pando starts commands with <code>bash -lc</code>, a login bash, which reads <code>~/.bash_profile</code> and never <code>~/.zshrc</code>. A version manager set up only in <code>.zshrc</code> does not exist there.</p>
+<p><code>pando doctor</code> shows which binary each language resolved to. The fix is a one-line <code>[runtime] prelude</code> for your machine, kept in <code>~/.pando/config.toml</code> rather than in the repository.</p></details>
+<details><summary>I moved my repository and pando forgot it.</summary>
+<p>A project's pando data is keyed by the folder's name and a hash of its path, so after a move pando sees a new project. <code>pando doctor</code> finds the old one, and <code>pando doctor --adopt &lt;old-id&gt;</code> moves its config, state and worktrees over.</p></details>
+<details><summary>Does pando new fetch the newest base first?</summary>
+<p>No. A new branch forks from the last-fetched <code>origin/&lt;base&gt;</code>, so run <code>git fetch</code> first when you need the newest commit. An existing branch is looked for locally, then on <code>origin</code>.</p></details>
+<details><summary>How many worktrees can run at once?</summary>
+<p>As many as your machine can run. Every running worktree runs its own dev servers, and in isolated mode its own databases too. The ceilings in the code are 1,971 port windows, and 15 Redis slots per Redis server for namespaced worktrees. The TUI is built for dozens of rows.</p></details>
+<details><summary>Is a share link private?</summary>
+<p>No. Anyone with the link reaches the app until you unshare, stop or remove the worktree, and with <code>auth_cmd</code> every visitor gets the same session. See <a href="#share">Sharing</a>.</p></details>
+<details><summary>Logged in on one worktree, logged in on all of them?</summary>
+<p>Browsers keep cookies per host, not per port, so every <code>http://localhost:&lt;port&gt;</code> shares them. That is how the web works, and pando does not change it. When two branches' sessions get in each other's way, use a private window for one of them.</p></details>
+<details><summary>Linux? Windows?</summary>
+<p>macOS is where pando is developed. Linux passes the whole test suite on every change, but nobody has used it there for real work yet. On Windows, run it inside WSL 2, with the repository under <code>~</code>. See <a href="#platforms">Platforms</a>.</p></details>
+<details><summary>Does pando use AI, or phone home?</summary>
+<p>No and no. Detection is rules and data tables, and the runtime never calls a model. The agent in the first run is your own coding agent, which pando never launches: the setup screen only copies a prompt for you to paste.</p>
+<p>There is no telemetry in the code. pando itself connects only to this machine: <code>pando check</code> asks your app for <code>/</code> on localhost, and the share proxy forwards to it. The network is reached only by the programs it runs (see <a href="#invariant-2">No AI at runtime</a>).</p></details>
+</div>
+</section>
+
+<section>
+<h2 id="status">Where it stands</h2>
+<p>pando is pre-release. What changed in each version is in the <a href="https://github.com/mertkaradayi/pando/blob/main/CHANGELOG.md">changelog</a>.</p>
+
+<h3 id="status-ready">What there is</h3>
+<ul>
+<li>Every command on this page is implemented and covered by tests.</li>
+<li>The tests read no developer's shell profile and need none of their tools. The databases in the tests are throwaway servers the tests start themselves.</li>
+<li>pando is developed on macOS. For every change, CI checks formatting, runs clippy and the whole test suite on macOS and on Linux, and builds pando natively on Windows. All of it must pass.</li>
+<li>Binaries for macOS and Linux, the install script and the Homebrew tap ship with every release.</li>
+</ul>
+
+<h3 id="status-not-yet">What there is not, yet</h3>
+<ul>
+<li>There is no crate on crates.io yet.</li>
+<li>Nobody has used pando on Linux for real work yet: the suite that passes there runs on fixtures. Under WSL 2 the suite passes too, and fixture worktrees have run there, but no real project yet. On Windows, pando runs inside WSL 2, not natively.</li>
+<li>pando has met only a handful of real projects: the monorepo it was built for, where it is used daily, and the apps of the people who opened its first issues. Each found something no fixture had, and all of it is fixed.</li>
+<li>Namespaced mode is experimental. Its container path is tested with a stand-in Docker in front of real servers, not yet in a real container, and the prefix engines on fixtures alone.</li>
+</ul>
+<div class="note"><span class="lbl">Note</span><p>A tool this heavily tested against situations it invented still breaks on first contact with one it did not. <strong>If pando breaks on your project, that is the most useful issue you can open.</strong> <a href="https://github.com/mertkaradayi/pando/issues">Open an issue</a>.</p></div>
+
+<h3 id="status-next">What is next</h3>
+<p>Roughly in order: a published crate, a JSON schema for <code>pando.toml</code>, and a recipe directory with its own contribution guide.</p>
+</section>
+
+<section>
+<h2 id="contributing">Contributing and licence</h2>
+<p>pando is small enough to read and strict about how it grows. Most of what it knows about the ecosystem is data, so many useful changes are a single row or a single TOML file:</p>
+<div class="tbl-wrap"><table class="tbl"><thead><tr><th>You know…</th><th>Your contribution</th><th>Where</th></tr></thead><tbody>
+<tr><td>a database or cache pando should run natively</td><td>a service recipe</td><td><code>src/recipes/builtin/*.toml</code></td></tr>
+<tr><td>an engine namespaced mode should know</td><td>a recipe with a <code>[namespace]</code> or <code>[prefix]</code> table and no <code>[service]</code></td><td><code>src/recipes/builtin/*.toml</code></td></tr>
+<tr><td>a framework pando misreads</td><td>a detection rule</td><td><code>src/catalog/frameworks.rs</code></td></tr>
+<tr><td>a package manager or lockfile</td><td>a row</td><td><code>src/catalog/package_managers.rs</code></td></tr>
+<tr><td>a language or version manager</td><td>a row</td><td><code>src/runtime/languages.rs</code></td></tr>
+<tr><td>a colour scheme you love</td><td>a theme</td><td><code>src/theme/builtin/*.toml</code></td></tr>
+<tr><td>a project shape pando breaks on</td><td>a fixture and a failing test</td><td><code>tests/common/mod.rs</code></td></tr>
+<tr><td>a clearer way to explain it</td><td>a change to this website: plain HTML, no build step</td><td><code>site/</code></td></tr>
+</tbody></table></div>
+<p>Every change passes three gates:</p>
+<pre class="code"><span class="p">$</span> cargo test
+<span class="p">$</span> cargo clippy --all-targets -- -D warnings
+<span class="p">$</span> cargo fmt --check</pre>
+<ul>
+<li><a href="https://github.com/mertkaradayi/pando">The source</a> and its <a href="https://github.com/mertkaradayi/pando/issues">issues</a>, for bugs and ideas.</li>
+<li><a href="https://github.com/mertkaradayi/pando/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>: the map of the code, the testing rules, and how a pull request goes.</li>
+<li><a href="https://github.com/mertkaradayi/pando/blob/main/CHANGELOG.md">The changelog</a>.</li>
+<li>Security problems go through <a href="https://github.com/mertkaradayi/pando/blob/main/SECURITY.md">SECURITY.md</a>, never a public issue.</li>
+<li>Everyone taking part follows the <a href="https://github.com/mertkaradayi/pando/blob/main/CODE_OF_CONDUCT.md">code of conduct</a>.</li>
+</ul>
+
+<h3 id="licence">Licence</h3>
+<p>pando is free software under the <a href="https://github.com/mertkaradayi/pando/blob/main/LICENSE">GNU Affero General Public License v3.0 only</a> (AGPL-3.0-only). You may use, study, change and share it.</p>
+<p>If you distribute pando, or a program built from it, or let people use a modified version over a network, you must offer them its complete source under the same licence. Contributions are accepted under the same terms.</p>
+</section>
+
+</main>
+</div>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="legal">
+      <span>Created by <a href="https://github.com/mertkaradayi">Mert Karadayi</a> · <a href="https://github.com/mertkaradayi/pando/blob/main/LICENSE">AGPL-3.0-only</a></span>
+      <span>Pando: one quaking aspen in Fishlake National Forest, Utah. About 47,000 trunks, one root.</span>
+    </div>
+  </div>
+</footer>
+<script src="assets/site.js" defer></script>
+<script src="assets/ports.js" defer></script>
+</body>
+</html>
