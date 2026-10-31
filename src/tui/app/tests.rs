@@ -11322,10 +11322,14 @@ fn the_refresh_reads_where_each_marked_removal_stands() {
         Some(actions::RemovalState::UnderWay(_))
     ));
     drop(held);
-    assert!(matches!(
-        super::removing::removals_in(&paths, &store).get("feat+one"),
-        Some(actions::RemovalState::Interrupted(_))
-    ));
+    // Asked again for a moment: a child another test forks in this
+    // process can hold a copy of the lock's descriptor until it execs.
+    assert!(crate::testutil::wait_until(Duration::from_secs(2), || {
+        matches!(
+            super::removing::removals_in(&paths, &store).get("feat+one"),
+            Some(actions::RemovalState::Interrupted(_))
+        )
+    }));
 
     // And it reaches the app from the refresh worker itself.
     let mut app = App::new_for_test(paths, Config::default(), Vec::new());
