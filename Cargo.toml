@@ -122,10 +122,18 @@ install-updater = false
 # Which actions to run on pull requests
 pr-run-mode = "plan"
 
+# Both macOS binaries build on macos-15, named rather than left to dist's
+# default, which was macos-14: GitHub failed every macos-14 job during
+# its brownouts and retires the image on 2026-11-02, and the 0.11.2
+# release's first run died there.
+[workspace.metadata.dist.github-custom-runners.aarch64-apple-darwin]
+runner = "macos-15"
+host = "aarch64-apple-darwin"
+
 # The Intel macOS binary is cross-compiled on an Apple silicon runner:
 # Apple's toolchain builds x86_64-apple-darwin natively there, in about
 # the time the arm64 build takes, where the Intel runner took nine
 # minutes and held back the formula. The smoke still runs it on Intel.
 [workspace.metadata.dist.github-custom-runners.x86_64-apple-darwin]
-runner = "macos-14"
+runner = "macos-15"
 host = "aarch64-apple-darwin"
