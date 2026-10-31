@@ -413,7 +413,16 @@ fn a_checks_disk_cost_is_every_ignored_tree_it_built_whatever_built_it() {
         ],
     );
     let before = Before::read(&main);
-    let big = vec![7u8; (MIN_TREE_BYTES * 2) as usize];
+    // Bytes no filesystem compresses, so its blocks are its length.
+    let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+    let big: Vec<u8> = (0..MIN_TREE_BYTES * 2)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed as u8
+        })
+        .collect();
     for (tree, bytes) in [
         ("target/debug", &big[..]),
         ("node_modules/x", &big[..]),

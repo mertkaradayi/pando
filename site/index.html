@@ -708,6 +708,7 @@ Pando: one aspen, 47,000 stems, one root. Your repo, every branch alive.
     <div class="split stack">
       <div class="rv">
         <p><code>pando check</code> makes a detached worktree of the commit a new branch would fork from, so there is no branch. It installs it, starts every process, waits until they are ready, and asks the process that owns the URL for <code>/</code>. Then it stops and removes the worktree, keeps its logs, and records the result in <code>check.json</code>.</p>
+        <p>Before it removes the worktree, a check that passed measures what it cost on disk: every gitignored tree the install and the processes left in it, each marked when your main checkout has one <code>clone</code> could share, and what the tools wrote outside it, such as a build cache that fills again for every worktree. pando knows no ecosystem here. Which trees are safe to share, and which setting makes a cache independent of the checkout's path, is your project's to decide, so the line points your agent at a guide for judging both, and the setup report says what one worktree costs and what was shared.</p>
         <p>A status of 500 or higher, a refused connection or silence is a failure. Any other answer passes: a login redirect is a working app. It runs on the shared services and skips the hooks that run after them, so it never migrates your own data. When a namespaced login already exists, or a container's administrator gives one, it proves the schema step in a namespace of its own.</p>
       </div>
       <div class="term rv">

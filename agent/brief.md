@@ -37,14 +37,13 @@ own, inside `.git`, removed when it is done.
    repository:
 
    ```bash
-   pando init --answers - --dry-run    # one JSON object on stdin; writes nothing
-   pando init --answers -              # the same object, written
+   pando init --answers - --dry-run    # JSON on stdin; writes nothing
+   pando init --answers -              # the same, written
    pando init --yes                    # then pando's choice for the rest
    ```
 
    - `processes`, open when `signals` lists `app_dirs` that no process
-     covers: an object of process tables, one per process, from the
-     README or docs: `{"processes": {"api": {"cmd": "…", "cwd":
+     covers: an object of process tables, from the README or docs: `{"processes": {"api": {"cmd": "…", "cwd":
      "backend", "ports": {"API_PORT": "api"}}}}`. A process gets its
      port through the variable it reads, mapped in `ports`, and
      another's address in `env` as `{port:<role>}`; name the role a
@@ -76,8 +75,8 @@ own, inside `.git`, removed when it is done.
      often a lockfile, that the main checkout's branch has. Never drop a
      frozen install's flag. Answer `base` with the main checkout's
      branch, the ref in `reason` that has the file, and check again.
-   - Exit 3: a question is still open and nothing started. Answer it,
-     then check again.
+   - Exit 3: a question is open and nothing started. Answer it, then
+     check again.
    - Stop after three changed attempts, and report what is wrong in
      pando's own words.
 6. **Remember how to run it, when the developer tells you to.** The block
@@ -106,11 +105,12 @@ own, inside `.git`, removed when it is done.
    what `pando init` reported, marking what you decided. Add a line for each that applies: a machine
    failure's command; the schema step untested until the first
    `pando start --namespaced`; the job's phone or tablet line; doctor's
-   queue-worker note; pando's `[isolation] prefer` line. Never end on a
-   question.
+   queue-worker note; pando's `[isolation] prefer` line; what the
+   check's `disk` line says a worktree costs, and what you shared.
+   Never end on a question.
 
-The rest of this brief is for a failure that needs it; a first run that
-passes never does.
+The rest of this brief is for a failure, or a `disk` line, that sends
+you to it.
 
 ---
 
