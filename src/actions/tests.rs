@@ -20631,3 +20631,151 @@ fn a_forked_childs_copy_of_a_removal_lock_is_not_a_removal_under_way() {
     assert_eq!(removal(), Some(RemovalState::UnderWay(mark)));
     drop(held);
 }
+
+/// Whether `name`'s process `process` is recorded and alive.
+fn is_running(fx: &Fx, name: &str, process: &str) -> bool {
+    fx.state().worktrees[name]
+        .processes
+        .get(process)
+        .is_some_and(|p| p.alive(proc::is_alive, proc::group_alive))
+}
+
+// A start that landed while a stop of the same worktree waited without
+// the lock found the dev server alive in the stop's grace, called it
+// already running and started nothing; the stop then ended it, and the
+// start had returned Ok with nothing running. Before the stop let go of
+// the lock the start waited for it and started fresh, and it does again:
+// it waits the stop out, and says so.
+#[test]
+fn a_start_during_a_stops_wait_waits_it_out_and_starts_fresh() {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    let mut fx = fixture();
+    with_dev(&mut fx, dev("sleep 30"));
+    let name = worktree_named(&fx, "feat/one");
+    let first = start(&fx.paths, &fx.config, &name, None, &noop).unwrap();
+    let _first = guard(&first);
+    let marked = AtomicBool::new(false);
+    let waiting = AtomicBool::new(false);
+    let said = std::sync::Mutex::new(Vec::<String>::new());
+    let report = std::thread::scope(|scope| {
+        let stopping = scope.spawn(|| {
+            super::lifecycle::stop_with(
+                &fx.paths,
+                &name,
+                None,
+                |pgid| {
+                    // Marked, and the lock let go: the dev server is in
+                    // its grace while another pando starts the worktree.
+                    marked.store(true, SeqCst);
+                    wait_until(Duration::from_secs(10), || waiting.load(SeqCst));
+                    crate::process::stop(pgid, Duration::from_secs(5))
+                },
+                &noop,
+            )
+        });
+        assert!(wait_until(Duration::from_secs(10), || marked.load(SeqCst)));
+        let report = start(&fx.paths, &fx.config, &name, None, &|line| {
+            said.lock().unwrap().push(line.to_string());
+            if line.contains("the stop of") {
+                waiting.store(true, SeqCst);
+            }
+        });
+        waiting.store(true, SeqCst);
+        stopping.join().unwrap().unwrap();
+        report
+    });
+    let report = report.expect("the start succeeded");
+    let _second = guard(&report);
+    let said = said.into_inner().unwrap();
+    assert!(
+        is_running(&fx, &name, "dev"),
+        "the start returned Ok (started {}, already running {}), and once the stop it raced \
+         was done nothing ran: {said:?}",
+        report.started.len(),
+        report.already_running.len()
+    );
+    assert_eq!(report.started.len(), 1, "{said:?}");
+    assert!(report.already_running.is_empty(), "{said:?}");
+    assert!(
+        said.iter()
+            .any(|l| l == &format!("waiting for the stop of {name} to finish")),
+        "{said:?}"
+    );
+}
+
+// The same at a start's second lock: a stop that marked a process the
+// start had read as running, while the start ran its hooks without the
+// lock, ended it after the start had spawned the rest — and the start
+// had said the one it left was already running.
+#[test]
+fn a_stop_between_a_starts_two_locks_is_waited_out_and_what_it_ended_is_started() {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    let mut fx = fixture();
+    with_dev(&mut fx, dev("sleep 30"));
+    fx.config.processes.insert(
+        "api".to_string(),
+        ProcessConfig {
+            cmd: "sleep 30".to_string(),
+            ..Default::default()
+        },
+    );
+    let gate = tempdir().unwrap();
+    let g = gate.path().display().to_string();
+    fx.config.hooks = vec![crate::config::HookConfig {
+        name: "gate".to_string(),
+        after: crate::config::HookPoint::Create,
+        fingerprint: Vec::new(),
+        cmd: format!(
+            "if [ -e '{g}/block' ]; then touch '{g}/in-hook'; i=0; while [ ! -e '{g}/release' ] \
+             && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done; fi"
+        ),
+        cwd: None,
+        fallback: None,
+        on: None,
+    }];
+    let name = worktree_named(&fx, "feat/one");
+    let first = start(&fx.paths, &fx.config, &name, Some("dev"), &noop).unwrap();
+    let _first = guard(&first);
+    std::fs::write(gate.path().join("block"), "").unwrap();
+    let waiting = AtomicBool::new(false);
+    let said = std::sync::Mutex::new(Vec::<String>::new());
+    let report = std::thread::scope(|scope| {
+        let starting = scope.spawn(|| {
+            let report = start(&fx.paths, &fx.config, &name, None, &|line| {
+                said.lock().unwrap().push(line.to_string());
+                if line.contains("the stop of") {
+                    waiting.store(true, SeqCst);
+                }
+            });
+            waiting.store(true, SeqCst);
+            report
+        });
+        // In its hook: it has read dev as running, and let go of the lock.
+        assert!(wait_until(Duration::from_secs(10), || gate
+            .path()
+            .join("in-hook")
+            .exists()));
+        super::lifecycle::stop_with(
+            &fx.paths,
+            &name,
+            None,
+            |pgid| {
+                std::fs::write(gate.path().join("release"), "").unwrap();
+                wait_until(Duration::from_secs(10), || waiting.load(SeqCst));
+                crate::process::stop(pgid, Duration::from_secs(5))
+            },
+            &noop,
+        )
+        .unwrap();
+        starting.join().unwrap()
+    });
+    let report = report.expect("the start succeeded");
+    let _second = guard(&report);
+    let said = said.into_inner().unwrap();
+    assert!(
+        is_running(&fx, &name, "dev"),
+        "the stop ended dev after the start called it running: {said:?}"
+    );
+    assert!(is_running(&fx, &name, "api"), "{said:?}");
+    assert!(report.already_running.is_empty(), "{said:?}");
+}
