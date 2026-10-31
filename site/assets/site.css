@@ -59,7 +59,7 @@ strong, b { font-weight: 600; color: var(--text); }
 code, kbd, pre, samp, .tui, .screen, .chip, .kbd, .bar .bv, .chat .url { font-family: var(--font-mono); font-weight: 400; font-variant-ligatures: none; letter-spacing: 0; }
 code { font-size: 0.88em; color: var(--text); background: var(--surface-2); border-radius: var(--r-xs); padding: 0.1em 0.35em; white-space: nowrap; }
 code.lg { white-space: normal; overflow-wrap: anywhere; }
-code .nw { white-space: nowrap; }
+code .nw, .nw { white-space: nowrap; }
 @media (min-width: 735px) { .tbl code.lg { overflow-wrap: normal; } }
 pre code { white-space: inherit; }
 kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 1.8em; height: 1.8em; padding: 0 0.4em; font-size: 0.82em; color: var(--text);
@@ -419,7 +419,7 @@ pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
 .tile::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--gold-line), transparent); }
 .tile .k { color: var(--gold); font-size: var(--t-caption); font-weight: 600; }
 .tile p { color: var(--text-2); }
-.tile .vis { margin-top: auto; padding-top: 8px; }
+.tile .vis { padding-top: 8px; }
 .tile pre { margin: 0; padding: 16px 18px; background: var(--surface-2); border-radius: var(--r-md); font-size: 13px; line-height: 1.55; overflow-x: auto; color: var(--text-2); }
 .flow { display: grid; gap: 8px; }
 .flow div { padding: 12px 14px; background: var(--surface-2); border-radius: var(--r-sm); color: var(--text-2); font-size: var(--t-caption); }
