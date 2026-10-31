@@ -52,7 +52,7 @@ document.documentElement.classList.add('js');
 <section class="hero" id="top" aria-labelledby="hero-h">
   <div class="hero-in">
     <h1 id="hero-h"><span>One repo.</span> <span>Every branch alive.</span></h1>
-    <p class="hero-lede">pando runs every branch you are working on at the same time, each with its own checkout, ports, logs and, if you want, database. It all fits on one terminal screen, and nothing is written into your repository.</p>
+    <p class="hero-lede">Every branch you’re working on, running at once — each with its own checkout, ports, logs and, if you want, database. All on one terminal screen.</p>
     <div class="hero-actions">
       <div class="cmd cmd-lg"><span class="p" aria-hidden="true">$</span><code>brew install mertkaradayi/tap/pando</code><button class="copy" type="button" data-copy></button></div>
       <a class="btn btn-outline" href="#try">Try it in your browser <span aria-hidden="true">↓</span></a>
@@ -310,7 +310,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       <ol class="olist">
         <li><span class="n">1</span><div><h3>Run <code>pando</code>.</h3><p>A setup screen opens over a grove grown from your project’s name.</p></div></li>
         <li><span class="n">2</span><div><h3>Copy one line.</h3><p>Press <kbd>a</kbd> and paste the line into Claude Code or Codex, opened in the same project.</p><div class="cmd wrapping"><code>Set up pando here: run `pando init --agent` and follow what it says.</code><button class="copy" type="button" data-copy></button></div></div></li>
-        <li><span class="n">3</span><div><h3>Your agent does the rest.</h3><p>It reads what pando found, settles what is left open and answers through pando, never into your repository. It asks you nothing and tells you what it set.</p></div></li>
+        <li><span class="n">3</span><div><h3>Your agent does the rest.</h3><p>It reads what pando found, settles what is left open and answers through pando. It asks you nothing and tells you what it set.</p></div></li>
         <li><span class="n">4</span><div><h3><code>pando check</code> proves it.</h3><p>pando builds a throwaway worktree, starts it, asks for its first page and removes it. When it passes, the screen turns green.</p></div></li>
       </ol>
     </div>
@@ -349,6 +349,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <p class="k">Promise 1</p>
         <h3 class="title">pando never writes into your repository.</h3>
         <p>No config file, no gitignore line, no lockfile change. Everything pando learns and runs lives in <code>~/.pando</code>, and its tests check that <code>git status</code> stays clean.</p>
+        <p>Three things fall outside it by design, each with rules of its own: <a href="docs.html#not-covered">namespaced mode, the git menu and the copy-on-write checkout</a>.</p>
         <div class="vis">
 <pre aria-label="Where pando keeps everything"><span class="w">~/.pando/</span>
 ├── config.toml
@@ -369,7 +370,6 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <div class="vis flow"><div><b>Detection</b>rules and data, once</div><i aria-hidden="true">↓</i><div><b>pando.toml</b>a file you can read and edit</div><i aria-hidden="true">↓</i><div><b>start · stop · share · rm</b>read that file, and nothing else</div></div>
       </article>
     </div>
-    <p class="fine center install-fine">Two things you choose reach past this rule, each with rules of its own: namespaced mode makes databases in your own server, and the git menu moves a branch after showing you its commands.</p>
   </div>
 </section>
 
