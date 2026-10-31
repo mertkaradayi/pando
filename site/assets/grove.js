@@ -474,9 +474,11 @@
       if (t0 == null) { t0 = now; cv.classList.add('on'); }
       const w = view.w, h = view.h, narrow = w < 700;
       // the whole trees, their labels and the root under them fill the box
-      let z = Math.min(w / 1560, h / 540);
+      // 600 units tall, the ground 160 below the centre: the tallest crown
+      // (~440) has headroom, and the bottom edge stays at G+140.
+      let z = Math.min(w / 1560, h / 600);
       if (narrow) z = Math.max(z, w / 1000);
-      view.cam = { x: narrow ? 830 : 960, y: G - 130, z };
+      view.cam = { x: narrow ? 830 : 960, y: G - 160, z };
       const e = still || reduced ? 99 : now - t0;
       if (still) { paint(now, e); labels(e); return; }
       if (e < 1.7 || !layer) {
