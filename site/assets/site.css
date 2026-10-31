@@ -434,6 +434,7 @@ pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
 .olist h3 { font-size: var(--t-headline); margin: 2px 0 6px; }
 .olist p { color: var(--text-2); }
 .olist .cmd { margin-top: 12px; }
+.olist .fine { margin-top: 10px; color: var(--text-3); }
 
 /* ---------- 6 · promises ---------- */
 .tile { position: relative; padding: 28px; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-xl); display: flex; flex-direction: column; gap: 14px; overflow: hidden; }

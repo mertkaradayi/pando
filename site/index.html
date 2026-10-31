@@ -269,8 +269,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="sec-head">
       <p class="eyebrow">Setup</p>
       <h2 class="display" id="setup-h"><span>Your coding agent sets it up.</span> <span>pando proves it works.</span></h2>
-      <p class="lede">The first time you run pando in a project, it hands the setup to the agent you already use, then tests it in a throwaway worktree.</p>
-      <div class="links"><a class="more" href="docs.html#setup">Setup and pando.toml</a><a class="more" href="docs.html#agents">For agents: JSON and exit codes</a></div>
+      <a class="more" href="docs.html#first-run">How the first run works</a>
     </div>
     <div class="setup">
       <div class="screen reveal" role="img" aria-label="pando's setup screen for acme-shop: a grove grown from the project's name, the line to copy, and three keys: a copies the prompt, enter lets pando try on its own, esc skips to managing worktrees.">
@@ -293,14 +292,10 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
       </div>
       <ol class="olist">
         <li><span class="n">1</span><div><h3>Run <code>pando</code>.</h3><p>A setup screen opens over a grove grown from your project’s name.</p></div></li>
-        <li><span class="n">2</span><div><h3>Copy one line.</h3><p>Press <kbd>a</kbd> and paste the line into Claude Code or Codex, opened in the same project.</p><div class="cmd wrapping"><code>Set up pando here: run `pando init --agent` and follow what it says.</code><button class="copy" type="button" data-copy></button></div></div></li>
-        <li><span class="n">3</span><div><h3>Your agent does the rest.</h3><p>It reads what pando found, settles what is left open and answers through pando. It asks you nothing and tells you what it set.</p></div></li>
-        <li><span class="n">4</span><div><h3><code>pando check</code> proves it.</h3><p>pando builds a throwaway worktree, starts it, asks for its first page and removes it. When it passes, the screen turns green.</p></div></li>
+        <li><span class="n">2</span><div><h3>Copy one line.</h3><p>Press <kbd>a</kbd> and paste it into Claude Code or Codex, opened in the same project.</p><div class="cmd wrapping"><code>Set up pando here: run `pando init --agent` and follow what it says.</code><button class="copy" type="button" data-copy></button></div><p class="fine">No agent? Press <kbd>⏎</kbd> and pando makes its own guess, tested the same way.</p></div></li>
+        <li><span class="n">3</span><div><h3>Your agent does the rest.</h3><p>It reads what pando found and settles what is left open. It asks you nothing and tells you what it set.</p></div></li>
+        <li><span class="n">4</span><div><h3><code>pando check</code> proves it.</h3><p>It starts a throwaway worktree and asks for its first page. When it passes, the screen turns green.</p></div></li>
       </ol>
-    </div>
-    <div class="qa">
-      <div><h3>No agent?</h3><p>Press <kbd>⏎</kbd> and pando makes its own guess, tested the same way. Press <kbd>esc</kbd> to skip setup and just manage worktrees.</p></div>
-      <div><h3>What it reads.</h3><p>Your lockfile, scripts, env example, version files and compose file. Every decision lands in <code>~/.pando</code>, with its reason.</p></div>
     </div>
   </div>
 </section>
