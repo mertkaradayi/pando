@@ -6065,8 +6065,9 @@ fn status_shows_the_main_checkout_once_it_has_a_record() {
 }
 
 // `PANDO_CHECK` is how a process knows it runs under `pando check`: said
-// on the website beside the other variables every process gets, in the
-// brief's step that runs the check, and in `check --help`.
+// on the docs page, in the same sentence as the other variables every
+// process gets, in the brief's step that runs the check, and in
+// `check --help`.
 #[test]
 fn the_check_variable_is_documented_where_the_others_are() {
     let var = crate::actions::CHECK_ENV;
@@ -6074,11 +6075,11 @@ fn the_check_variable_is_documented_where_the_others_are() {
         std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file))
             .unwrap()
     };
-    let site = read("site/index.html");
-    let listed = site
+    let docs = read("site/docs.html");
+    let listed = docs
         .lines()
         .find(|line| line.contains("<code>PANDO_NAME</code>"))
-        .expect("the website lists the variables every process gets");
+        .expect("the docs page lists the variables every process gets");
     assert!(
         listed.contains(&format!("<code>{var}=1</code>")),
         "{listed}"

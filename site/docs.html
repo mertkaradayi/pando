@@ -385,6 +385,7 @@ base = { backend = "develop" }</pre></div>
 </tbody></table></div>
 
 <h3 id="pando-variables">Variables every process gets</h3>
+<p>Every process gets <code>PANDO_NAME</code>, <code>PANDO_BRANCH</code>, <code>PANDO_WORKTREE</code>, <code>PANDO_ROOT</code> and <code>PANDO_PROJECT</code>. What <code>pando check</code> runs also gets <code>PANDO_CHECK=1</code>, and a namespaced worktree's processes get <code>PANDO_NAMESPACE</code>:</p>
 <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Variable</th><th>What it holds</th></tr></thead><tbody>
 <tr><td><code>PANDO_NAME</code></td><td>the worktree's name</td></tr>
 <tr><td><code>PANDO_BRANCH</code></td><td>its branch</td></tr>
