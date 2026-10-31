@@ -125,9 +125,9 @@ body.locked { overflow: hidden; }
 /* ---------- sections ---------- */
 .sec { padding: var(--sec-pad) 0; }
 .band { background: var(--bg-band); }
-/* the problem and the name share one band */
-#why { padding-bottom: 0; }
-#story { padding-top: var(--s-10); }
+/* the name and how it works share one band */
+#story { padding-bottom: 0; }
+#how { padding-top: var(--s-10); }
 /* a section that ends on a line of fine print ends closer to it */
 .sec:has(> .wrap > .install-fine:last-child) { padding-bottom: var(--s-10); }
 .sec-head .links { margin-top: var(--s-4); }
@@ -583,7 +583,7 @@ h2:hover .anchor, h3:hover .anchor { opacity: 1; }
   .list-s .card { padding: 20px 0; background: none; border: 0; border-bottom: 1px solid var(--hairline); border-radius: 0; }
   .bento.list-s a.card::after { top: 22px; right: 0; }
   .screen, .tile .flow { display: none; }
-  #story { padding-top: var(--s-9); }
+  #how { padding-top: var(--s-9); }
   .sig { margin-top: var(--s-6); }
   .vs .card { padding: 20px; }
   .vs .card pre { padding: 14px 12px; font-size: 11px; }
