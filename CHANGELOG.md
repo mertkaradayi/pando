@@ -9,6 +9,14 @@ may change behaviour.
 
 ### Added
 
+- `clone` takes a Rust crate's `target`. pando proposes it beside a
+  `Cargo.toml` (a Maven or sbt `target` is left alone), and a new
+  worktree starts with the main checkout's build, copy-on-write: its
+  dependencies' fingerprints name no path of the checkout, so cargo
+  finds every one fresh and builds only the workspace's own crates,
+  where before each worktree built every dependency again on disk of
+  its own.
+
 - The TUI takes the mouse. A click selects a worktree, a dialog's
   option or a line of the log viewer, and a second click is `⏎` on it;
   a click on a key hint presses its key, `esc cancel` cancelling; a

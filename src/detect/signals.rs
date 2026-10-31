@@ -918,21 +918,30 @@ fn ignored_files(ignored: &Ignored) -> Vec<String> {
     found
 }
 
-/// The ignored directories among them that a package manager installs
-/// into, sorted: the root's, then each app's. Three components at most —
-/// `apps/api/node_modules` — and none hidden, so a worktree kept inside
-/// the checkout, under `.claude/` or the like, is never offered.
+/// The ignored directories among them that a package manager installs or
+/// builds into, sorted: the root's, then each app's. Three components at
+/// most — `apps/api/node_modules` — and none hidden, so a worktree kept
+/// inside the checkout, under `.claude/` or the like, is never offered.
+/// A name another tool shares counts only beside its manager's file: a
+/// `target` beside a `Cargo.toml`, never Maven's beside a `pom.xml`.
 fn dependency_dirs(ignored: &Ignored) -> Vec<String> {
-    let names = package_managers::dependency_dirs();
+    let known = package_managers::dependency_dirs();
+    let managed = |dir: &str| {
+        let (parent, name) = dir.rsplit_once('/').unwrap_or(("", dir));
+        known.iter().any(|known| {
+            known.name == name
+                && known
+                    .beside
+                    .is_none_or(|file| ignored.root.join(parent).join(file).is_file())
+        })
+    };
     let mut found: Vec<String> = ignored
         .entries
         .iter()
         .filter_map(|entry| entry.strip_suffix('/'))
         .filter(|dir| {
             let parts: Vec<&str> = dir.split('/').collect();
-            parts.len() <= 3
-                && parts.last().is_some_and(|last| names.contains(last))
-                && !parts.iter().any(|part| part.starts_with('.'))
+            parts.len() <= 3 && !parts.iter().any(|part| part.starts_with('.')) && managed(dir)
         })
         .filter(|dir| ignored.root.join(dir).is_dir())
         .map(str::to_string)

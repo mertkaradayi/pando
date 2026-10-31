@@ -89,15 +89,37 @@ pub struct PackageManager {
     /// How a developer gets this manager, as doctor prints it after
     /// "install it with:". pando never runs it.
     pub get: &'static str,
-    /// The gitignored directory this manager installs into, which
-    /// detection proposes for `[project] clone`: cloned from the main
-    /// checkout, the install that follows rewrites only what the branch
-    /// changed. `None` where a clone would not be the worktree's own — a
-    /// virtualenv's scripts name the main checkout's interpreter, and
-    /// Bundler, Composer, Mix, Go and Cargo either install outside the
-    /// repository or build output whose fingerprints carry absolute paths.
-    pub dependency_dir: Option<&'static str>,
+    /// The gitignored directory this manager installs or builds into,
+    /// which detection proposes for `[project] clone`: cloned from the
+    /// main checkout, what runs next rewrites only what the branch
+    /// changed. Cargo's `target` is one: its dependencies' fingerprints
+    /// name no path of the checkout, so a cloned `target` leaves cargo
+    /// only the workspace's own crates to build (measured: every
+    /// dependency fresh, build scripts' included, and the two targets 97%
+    /// shared). `None` where a clone would not be the worktree's own — a
+    /// virtualenv's scripts name the main checkout's interpreter — or
+    /// where there is nothing in the repository to clone: Bundler,
+    /// Composer, Mix and Go install outside it, and Go's build cache is
+    /// shared through `-trimpath` instead (see the Go framework rule).
+    pub dependency_dir: Option<DependencyDir>,
 }
+
+/// A directory a manager installs or builds into, as `clone` offers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DependencyDir {
+    pub name: &'static str,
+    /// A file that must sit beside the directory for it to be this
+    /// manager's, where the name alone could be another tool's: `target`
+    /// is Cargo's beside a `Cargo.toml`, and Maven's or sbt's beside
+    /// theirs. `None` where the name is the manager's own.
+    pub beside: Option<&'static str>,
+}
+
+/// The JavaScript managers' tree, one value for the four rows that share it.
+const NODE_MODULES: DependencyDir = DependencyDir {
+    name: "node_modules",
+    beside: None,
+};
 
 /// Every manager pando knows, in detection order. Order is a contract: it
 /// is the order `signals` lists lockfiles in, and the first lockfile present
@@ -123,7 +145,7 @@ pub const PACKAGE_MANAGERS: [PackageManager; 12] = [
         unlocked_install: Some("pnpm install"),
         unsaved_install: None,
         get: "corepack enable pnpm   (or npm install -g pnpm)",
-        dependency_dir: Some("node_modules"),
+        dependency_dir: Some(NODE_MODULES),
     },
     PackageManager {
         program: "npm",
@@ -144,7 +166,7 @@ pub const PACKAGE_MANAGERS: [PackageManager; 12] = [
         unlocked_install: Some("npm install"),
         unsaved_install: None,
         get: "brew install node   (npm comes with Node.js)",
-        dependency_dir: Some("node_modules"),
+        dependency_dir: Some(NODE_MODULES),
     },
     PackageManager {
         program: "yarn",
@@ -169,7 +191,7 @@ pub const PACKAGE_MANAGERS: [PackageManager; 12] = [
         unlocked_install: Some("yarn install"),
         unsaved_install: None,
         get: "corepack enable yarn   (or npm install -g yarn)",
-        dependency_dir: Some("node_modules"),
+        dependency_dir: Some(NODE_MODULES),
     },
     PackageManager {
         program: "bun",
@@ -190,7 +212,7 @@ pub const PACKAGE_MANAGERS: [PackageManager; 12] = [
         unlocked_install: Some("bun install"),
         unsaved_install: Some("bun install --no-save"),
         get: "brew install oven-sh/bun/bun   (or the install script at bun.sh)",
-        dependency_dir: Some("node_modules"),
+        dependency_dir: Some(NODE_MODULES),
     },
     PackageManager {
         program: "uv",
@@ -354,7 +376,10 @@ pub const PACKAGE_MANAGERS: [PackageManager; 12] = [
         unlocked_install: None,
         unsaved_install: None,
         get: "rustup, from https://rustup.rs",
-        dependency_dir: None,
+        dependency_dir: Some(DependencyDir {
+            name: "target",
+            beside: Some("Cargo.toml"),
+        }),
     },
 ];
 
@@ -389,10 +414,10 @@ pub fn is_unlocked_install(cmd: &str) -> bool {
     })
 }
 
-/// Every dependency directory a manager installs into, once each, in
-/// catalog order.
-pub fn dependency_dirs() -> Vec<&'static str> {
-    let mut dirs: Vec<&'static str> = Vec::new();
+/// Every dependency directory a manager installs or builds into, once
+/// each, in catalog order.
+pub fn dependency_dirs() -> Vec<DependencyDir> {
+    let mut dirs: Vec<DependencyDir> = Vec::new();
     for dir in PACKAGE_MANAGERS.iter().filter_map(|pm| pm.dependency_dir) {
         if !dirs.contains(&dir) {
             dirs.push(dir);
@@ -500,22 +525,25 @@ mod tests {
 
     use super::*;
 
-    // `clone` is offered for the JavaScript managers' tree alone: a
-    // virtualenv names the main checkout's interpreter in its scripts, and
-    // the others install outside the repository or build with absolute
-    // paths in their fingerprints.
+    // `clone` is offered for the JavaScript managers' tree and Cargo's
+    // `target`: a virtualenv names the main checkout's interpreter in its
+    // scripts, and the others install outside the repository. `target` is
+    // a common name, so it is Cargo's only beside a `Cargo.toml`.
     #[test]
-    fn only_the_javascript_managers_have_a_tree_to_clone() {
+    fn the_javascript_managers_and_cargo_have_a_tree_to_clone() {
         use super::{Ecosystem, PACKAGE_MANAGERS, dependency_dirs};
         for manager in PACKAGE_MANAGERS {
             assert_eq!(
                 manager.dependency_dir.is_some(),
-                manager.ecosystem == Ecosystem::JavaScript,
+                matches!(manager.ecosystem, Ecosystem::JavaScript | Ecosystem::Rust),
                 "{}",
                 manager.program
             );
         }
-        assert_eq!(dependency_dirs(), ["node_modules"]);
+        let names: Vec<&str> = dependency_dirs().iter().map(|dir| dir.name).collect();
+        assert_eq!(names, ["node_modules", "target"]);
+        let target = dependency_dirs()[1];
+        assert_eq!(target.beside, Some("Cargo.toml"));
     }
 
     #[test]

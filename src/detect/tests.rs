@@ -2795,6 +2795,34 @@ fn the_ignored_dependency_trees_are_the_ones_clone_can_share() {
     );
 }
 
+// Cargo's `target` is a tree to share: cloned, it leaves cargo only the
+// workspace's own crates to build. The name is common, so it counts only
+// beside a `Cargo.toml` — a Java app's Maven `target` is not offered.
+#[test]
+fn a_cargo_target_is_shared_and_another_tools_target_is_not() {
+    let dir = seed_fixture(&[
+        (".gitignore", "target/\nnode_modules/\n"),
+        ("Cargo.toml", "[package]\nname = \"shop\"\n"),
+        ("src/main.rs", "fn main() {}\n"),
+        ("services/billing/pom.xml", "<project/>\n"),
+        ("web/package.json", "{}"),
+    ]);
+    crate::testutil::git(dir.path(), &["add", "."]);
+    crate::testutil::git(dir.path(), &["commit", "--quiet", "-m", "apps"]);
+    for rel in [
+        "target/debug/deps",
+        "services/billing/target/classes",
+        "web/node_modules/pkg",
+    ] {
+        std::fs::create_dir_all(dir.path().join(rel)).unwrap();
+        std::fs::write(dir.path().join(rel).join("x"), "").unwrap();
+    }
+    assert_eq!(
+        signals(dir.path()).dependency_dirs,
+        ["target", "web/node_modules"]
+    );
+}
+
 // Proposed and decided wherever there is a tree to share — and not for
 // an install that deletes `node_modules` before it installs, where every
 // clone would be thrown away.

@@ -961,7 +961,7 @@ pub fn clone_proposal(signals: &Signals, install: Option<&str>) -> Option<Propos
     let candidate = Candidate {
         value: dirs.join(","),
         why: "gitignored dependency trees in the main checkout, cloned copy-on-write before \
-              the install so a worktree shares their blocks"
+              the install or build so a worktree shares their blocks"
             .to_string(),
         ..Candidate::default()
     };
