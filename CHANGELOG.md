@@ -83,12 +83,13 @@ may change behaviour.
   to stop together too.
 - A `pando stop` no longer holds the lock while its processes take
   their grace period to end, so two stops of two worktrees — the TUI's,
-  or two panes' — end together, and a start or a refresh never waits
-  behind one: two worktrees whose servers ignore SIGTERM stop in 5.3s
-  at once, from 10.3s. A process a stop is taking down is never shown
-  as failed while it waits, nor a native database it is stopping said
-  to have exited. `restart`, `stop --all` and the TUI's `X` stop the
-  same way.
+  or two panes' — end together, and a refresh or a start of another
+  worktree never waits behind one: two worktrees whose servers ignore
+  SIGTERM stop in 5.3s at once, from 10.3s. A process a stop is taking
+  down is never shown as failed while it waits, nor a native database
+  it is stopping said to have exited, and a start of the same worktree
+  waits for the stop, says so, and then starts it fresh. `restart`,
+  `stop --all` and the TUI's `X` stop the same way.
 - A folder of repositories is read one repository at a time no more:
   its listing on every refresh and the TUI's first frame, its branches,
   its pull requests, each set's git status, and each repository's base
