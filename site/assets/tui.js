@@ -1,4 +1,4 @@
-/* pando · 04, the screen: a replica of the TUI you can press keys in.
+/* pando · the demo: a replica of the TUI you can press keys in.
  *
  * A character grid drawn like the real one (header, worktree table, detail
  * pane, footer; dialogs over them), driven by the real keymap, over a
@@ -12,9 +12,107 @@
   const demo = document.getElementById('demo');
   if (!demo || !P.Grove) return;
   const { clamp, lerp, ss, E } = P.m;
+  /* ---------- what only the demo draws: a pocket of its own, a wave, a spark ---------- */
+  const Grove = P.Grove;
+  function pocketShape() {
+    const qr = P.m.mulberry(91), ring = [];
+    for (let k = 0; k <= 64; k++) {
+      const a = -Math.PI / 2 + (k / 64) * Math.PI * 2, j = 1 + (qr() - 0.5) * 0.16;
+      ring.push([Math.cos(a) * 96 * j, Math.sin(a) * 52 * j]);
+    }
+    const lets = [];
+    for (let k = 0; k < 18; k++) { const a = qr() * Math.PI * 2; lets.push([Math.cos(a) * 96, Math.sin(a) * 52, a, 10 + qr() * 14]); }
+    return { ring, lets };
+  }
+  // a pulse running along the root; u: 0..1 across the visible span [xa, xb]
+  Grove.prototype.drawWave = function (view, u, rgb, xa, xb) {
+    if (u <= 0 || u >= 1.02) return;
+    const ctx = view.ctx, xw = lerp(xa, xb, u);
+    ctx.save();
+    for (const [fn, off, sc] of [[this.rootY, 0, 1], [this.deepY, 170, 0.7]]) {
+      const hx = xw - off - 90, hy = fn(hx), R = 170 * sc;
+      const rg = ctx.createRadialGradient(hx, hy, 0, hx, hy, R);
+      rg.addColorStop(0, `rgba(${rgb},${0.28 * sc})`); rg.addColorStop(1, `rgba(${rgb},0)`);
+      ctx.fillStyle = rg; ctx.fillRect(hx - R, hy - R, R * 2, R * 2);
+      for (let j = 0; j < 42; j++) {
+        const x = xw - off - j * 13, y = fn(x), a = (1 - j / 42) * sc;
+        ctx.fillStyle = `rgba(${rgb},${a.toFixed(3)})`; ctx.beginPath(); ctx.arc(x, y, (5.5 - j * 0.1) * sc, 0, 6.283); ctx.fill();
+      }
+    }
+    ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.arc(xw, this.rootY(xw), 4, 0, 6.283); ctx.fill();
+    ctx.restore();
+  };
+
+  // A pocket of its own under a trunk: a line down past the shared root, a ring, a
+  // database. o.rgb colours it; o.cylinders draws more than one database.
+  Grove.prototype.drawPocket = function (view, x0, k, now, o) {
+    if (k <= 0) return;
+    o = o || {};
+    const ctx = view.ctx, depth = o.depth || 250, sc = o.scale || 1, A = o.alpha == null ? 1 : o.alpha;
+    const col = o.rgb || '242,184,75';
+    ctx.save(); ctx.translate(x0, this.G); ctx.lineCap = 'round';
+    if (!o.noStem) {
+      ctx.strokeStyle = `rgba(${col},${0.8 * A})`; ctx.lineWidth = 2;
+      const kk = clamp(k * 2.2), len = depth - 52 * sc;
+      ctx.beginPath(); ctx.moveTo(0, 0);
+      for (let j = 1; j <= 20; j++) { const u = (j / 20) * kk; ctx.lineTo(Math.sin(u * 5) * 6 * u, u * len); }
+      ctx.stroke();
+    }
+    ctx.translate(0, depth); ctx.scale(sc, sc);
+    const ps = this.pocketShape || (this.pocketShape = pocketShape()), R = ps.ring, n = Math.floor(R.length * clamp(k * 1.3 - 0.25));
+    if (n > 1) {
+      ctx.fillStyle = `rgba(${col},${0.07 * A})`;
+      ctx.beginPath(); for (let j = 0; j < n; j++) (j ? ctx.lineTo(R[j][0], R[j][1]) : ctx.moveTo(R[j][0], R[j][1]));
+      if (n >= R.length) { ctx.closePath(); ctx.fill(); }
+      ctx.strokeStyle = `rgba(${col},${0.9 * A})`; ctx.lineWidth = 2.2 / sc; ctx.stroke();
+      ctx.strokeStyle = `rgba(${col},${0.35 * A})`; ctx.lineWidth = 1.1 / sc; ctx.beginPath();
+      const m = clamp(k * 2 - 1);
+      for (const l of ps.lets) { ctx.moveTo(l[0], l[1]); ctx.lineTo(l[0] + Math.cos(l[2]) * l[3] * m, l[1] + Math.sin(l[2]) * l[3] * m); }
+      ctx.stroke();
+    }
+    const c = clamp(k * 1.6 - 0.5);
+    if (c > 0) drawCylinder(ctx, 0, 0, c * A, o.cylinders || 1, o.cylColor);
+    if (k > 0.6) {
+      ctx.fillStyle = `rgba(250,222,150,${(k - 0.6) * 2 * A})`; ctx.beginPath();
+      for (let j = 0; j < 12; j++) { const a = now * 0.9 + j * 0.5236; ctx.rect(Math.cos(a) * 80 - 1.8, Math.sin(a) * 40 - 1.8, 3.6, 3.6); }
+      ctx.fill();
+    }
+    ctx.restore();
+  };
+
+  function drawCylinder(ctx, cx, cy, a, count, color) {
+    ctx.save();
+    ctx.globalAlpha = a; ctx.strokeStyle = color || '#FBE3A6'; ctx.lineWidth = 2.2;
+    const rw = 30, rh = 9, hh = 38;
+    const one = x => {
+      ctx.beginPath(); ctx.ellipse(x, cy - hh / 2, rw, rh, 0, 0, 6.283); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - rw, cy - hh / 2); ctx.lineTo(x - rw, cy + hh / 2); ctx.ellipse(x, cy + hh / 2, rw, rh, 0, Math.PI, 0, true); ctx.lineTo(x + rw, cy - hh / 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(x, cy, rw, rh, 0, Math.PI, 0, true); ctx.stroke();
+    };
+    if (count === 1) one(cx);
+    else for (let j = 0; j < count; j++) one(cx + (j - (count - 1) / 2) * 72);
+    ctx.restore();
+  }
+
+  // a spark that flies from one point to another along an arc, leaving a trail
+  function comet(view, x0, y0, x1, y1, k, rgb, size, lift) {
+    if (k <= 0 || k > 1.25) return;
+    const ctx = view.ctx; size = size || 6; lift = lift == null ? 150 : lift;
+    ctx.save();
+    const pt = u => { const mx = (x0 + x1) / 2, my = Math.min(y0, y1) - lift; const v = 1 - u; return [v * v * x0 + 2 * v * u * mx + u * u * x1, v * v * y0 + 2 * v * u * my + u * u * y1]; };
+    const kk = Math.min(1, k);
+    for (let j = 0; j < 14; j++) {
+      const u = kk - j * 0.025; if (u < 0) break;
+      const [x, y] = pt(E.io(u)), a = 1 - j / 14;
+      ctx.fillStyle = j === 0 ? `rgba(255,255,255,${a})` : `rgba(${rgb},${a})`;
+      ctx.beginPath(); ctx.arc(x, y, size * (1 - j / 18), 0, 6.283); ctx.fill();
+    }
+    if (k >= 1) { const e = (k - 1) / 0.25; ctx.strokeStyle = `rgba(${rgb},${1 - e})`; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x1, y1, 8 + e * 50, 0, 6.283); ctx.stroke(); }
+    ctx.restore();
+  }
+
   const scr = demo.querySelector('.tui');
   const cv = demo.querySelector('.demo-grove canvas');
-  const capTxt = demo.querySelector('.demo-caption .txt'), capCmd = demo.querySelector('.demo-caption small');
   const chat = demo.querySelector('.chat');
   const live = document.getElementById('demo-live');
   const keysEl = demo.querySelector('.keys');
@@ -621,14 +719,15 @@
     probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre';
     scr.appendChild(probe);
     cw = probe.getBoundingClientRect().width / 200;
-    lh = parseFloat(getComputedStyle(scr).lineHeight) || cw * 2;
     probe.remove();
+    // columns from the width; rows from the height the stylesheet gives the
+    // screen, so the poster it replaces had the same size and nothing moves
     const cs = getComputedStyle(scr);
+    lh = parseFloat(cs.lineHeight) || cw * 2;
     const inner = scr.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const tall = scr.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     COLS = Math.max(40, Math.floor(inner / cw));
-    const pinned = !!scr.closest('.try-stage') && matchMedia('(min-width: 1024px) and (min-height: 640px)').matches;
-    const tall = scr.parentElement.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-    ROWS = pinned ? Math.max(18, Math.min(48, Math.floor(tall / lh))) : COLS >= 72 ? 26 : 30;
+    ROWS = Math.max(18, Math.round(tall / lh));
     S.dirty = true;
   }
   function renderTUI(t) {
@@ -708,7 +807,7 @@
       const r = cv.getBoundingClientRect(), cr = chat.getBoundingClientRect();
       const [sx, sy] = view.proj(x, G0 - 360);
       view.screen();
-      P.comet(view, sx, sy, cr.left - r.left + 30, cr.top - r.top + 40, clamp(e / 0.9) + (e > 0.9 ? (e - 0.9) : 0), '242,184,75', 5, 80);
+      comet(view, sx, sy, cr.left - r.left + 30, cr.top - r.top + 40, clamp(e / 0.9) + (e > 0.9 ? (e - 0.9) : 0), '242,184,75', 5, 80);
       if (e > 1.6) S.comet = null;
     }
     // labels
@@ -721,27 +820,11 @@
     });
     // under main's database: what it is
     const [px, py] = view.proj(mainX, G0 + 262 + 70);
-    const ctx = view.ctx; ctx.save(); ctx.font = `500 ${Math.round(clamp(z * 22, 10, 16))}px ${P.MONO}`; ctx.fillStyle = 'rgba(242,184,75,.8)'; ctx.textAlign = 'left';
+    const ctx = view.ctx; ctx.save(); ctx.font = `400 ${Math.round(clamp(z * 22, 11, 16))}px ${P.MONO}`; ctx.fillStyle = 'rgba(242,184,75,.8)'; ctx.textAlign = 'left';
     ctx.fillText(nsCount ? 'mariadb · the project\'s own, and a database of its own for ◧' : 'mariadb · the project\'s own', Math.max(8, px - 60), py); ctx.restore();
   }
 
-  /* ---------- caption and chat ---------- */
-  let capShown = null;
-  function renderCap(t) {
-    if (!S.cap || S.cap === capShown) return;
-    capShown = S.cap;
-    const full = S.cap.text, cmd = S.cap.cmd;
-    capCmd.textContent = !cmd ? '' : /^(pando|git|cd|docker)\b/.test(cmd) ? '$ ' + cmd : '// ' + cmd;
-    if (P.reduced) { capTxt.textContent = full; return; }
-    const t0 = performance.now(), me = S.cap;
-    const step = () => {
-      if (S.cap !== me) return;
-      const n = Math.floor((performance.now() - t0) / 1000 * 55);
-      capTxt.textContent = full.slice(0, n);
-      if (n < full.length) requestAnimationFrame(step);
-    };
-    step();
-  }
+  /* ---------- the chat a share sends its link to ---------- */
   function renderChat(t) {
     let c = S.chat;
     if (c && t - c.t > 9) { S.chat = null; c = null; }
@@ -750,41 +833,36 @@
     const e = t - c.t;
     chat.querySelector('.msg.you').style.opacity = e > 0.8 ? 1 : 0;
     const reply = chat.querySelector('.msg.reply');
-    const typing = e > 1.6 && e < 2.6, done = e >= 2.6;
-    reply.style.opacity = typing || done ? 1 : 0;
-    reply.querySelector('.body').textContent = done ? 'works on my phone! 👍' : 'typing…';
-    reply.classList.toggle('typing', typing);
+    reply.style.opacity = e > 1.6 ? 1 : 0;
+    reply.querySelector('.body').textContent = e >= 2.6 ? 'works on my phone 👍' : 'typing…';
   }
 
   /* ---------- your turn: five things to try ---------- */
   const side = demo.querySelector('.missions');
-  const coachEl = demo.querySelector('.coach');
   const MISSIONS = [
-    { id: 'created', key: 'n', text: 'make a worktree', how: 'n, type a branch, ⏎' },
-    { id: 'started', key: '⏎', text: 'start it, with a database of its own', how: '⏎, then ↓ ↓ for isolated, ⏎' },
-    { id: 'logs', key: 'l', text: 'read its logs', how: 'l, and esc to come back' },
-    { id: 'shared', key: 't', text: 'share it with a teammate', how: 't, then y' },
-    { id: 'pr', key: 'p', text: 'run a teammate\'s pull request', how: 'p, ↓, ⏎' },
+    { id: 'created', key: 'n', text: 'Make a worktree', how: 'n, type a branch, ⏎' },
+    { id: 'started', key: '⏎', text: 'Start it, with a database of its own', how: '⏎, then ↓ ↓ for isolated, ⏎' },
+    { id: 'logs', key: 'l', text: 'Read its logs', how: 'l, and esc to come back' },
+    { id: 'shared', key: 't', text: 'Share it with a teammate', how: 't, then y' },
+    { id: 'pr', key: 'p', text: 'Run a teammate’s pull request', how: 'p, ↓, ⏎' },
   ];
-  const M = { done: {}, flash: null };
+  const M = { done: {} };
   function mission(id) {
     if (!AP.user || M.done[id]) return;
-    M.done[id] = now(); M.flash = id;
+    M.done[id] = now();
     renderMissions();
-    setTimeout(() => { if (M.flash === id) { M.flash = null; renderMissions(); } }, 1300);
     if (MISSIONS.every(m => M.done[m.id])) {
       S.celebrate = now();
-      setTimeout(() => showNote(['That\'s pando.', 'Five keys here, five commands in your terminal. Every branch you work on, alive at once, and nothing written into your checkout. Press <kbd>?</kbd> for every key, or scroll on to see how it works.', 'pando new · start --isolated · logs · share', false]), 2600);
+      setTimeout(() => showNote(['That’s pando.', 'Five keys here, five commands in your terminal. Every branch you work on, alive at once, and nothing written into your checkout. Press <kbd>?</kbd> for every key.', 'pando new · start --isolated · logs · share', false]), 2600);
     }
   }
   function renderMissions() {
     const n = MISSIONS.filter(m => M.done[m.id]).length, nxt = MISSIONS.find(m => !M.done[m.id]);
     side.querySelector('.m-count').textContent = n === MISSIONS.length ? '✓ 5 / 5' : `${n} / ${MISSIONS.length}`;
     side.classList.toggle('all', n === MISSIONS.length);
-    side.classList.toggle('begun', n > 0);
     side.querySelector('.m-list').innerHTML = MISSIONS.map(m => {
-      const st = M.done[m.id] ? 'done' : m === nxt ? 'now' : 'todo';
-      return `<li class="${st}${M.flash === m.id ? ' flash' : ''}"><span class="m-st">${st === 'done' ? '●' : st === 'now' ? '▸' : '○'}</span><span class="kbd">${m.key}</span><span class="m-t">${m.text}<small>${m.how}</small></span></li>`;
+      const st = M.done[m.id] ? 'done' : AP.user && m === nxt ? 'now' : 'todo';
+      return `<li class="${st}"><span class="kbd">${m.key}</span><span class="m-t">${m.text}${st === 'now' ? `<small>${m.how}</small>` : ''}</span><span class="m-st">${st === 'done' ? '✓' : ''}</span></li>`;
     }).join('');
   }
 
@@ -793,17 +871,17 @@
   const NOTES = {
     created: wt => [`Made <b>${wt.branch}</b>.`, `In real pando that is <code>git worktree add</code> into <code>~/.pando/projects/…/worktrees/${wt.dir}</code>, the gitignored files you listed (like <code>.env</code>) linked in, and the project's own install run inside it. Your checkout did not change.`, `pando new ${wt.branch}`],
     started: wt => wt.mode === 'isolated'
-      ? [`Started <b>${wt.branch}</b>, isolated.`, `Its processes run detached, in a process group of their own, on ports derived from its name: api ${wt.ports.api}, web ${wt.ports.web}. It also got a MariaDB of its own on ${wt.ports.api + 2}, with its data under <code>~/.pando</code>.`, `pando start ${wt.branch} --isolated`]
+      ? [`Started <b>${wt.branch}</b>, isolated.`, `Its processes run in the background, on ports of their own: api ${wt.ports.api}, web ${wt.ports.web}. It also got a MariaDB of its own on ${wt.ports.api + 2}, with its data under <code>~/.pando</code>.`, `pando start ${wt.branch} --isolated`]
       : wt.mode === 'namespaced'
         ? [`Started <b>${wt.branch}</b>, namespaced.`, `It keeps the main checkout's MariaDB server, with a database of its own in it: <code>my_app__${slug(wt)}</code>. Experimental.`, `pando start ${wt.branch} --namespaced`]
-        : [`Started <b>${wt.branch}</b>.`, `Its processes run detached, in a process group of their own, on ports derived from its name: api ${wt.ports.api}, web ${wt.ports.web}. Shared mode: it uses the main checkout's database. <kbd>⏎</kbd> again to switch.`, `pando start ${wt.branch}`],
+        : [`Started <b>${wt.branch}</b>.`, `Its processes run in the background, on ports of their own: api ${wt.ports.api}, web ${wt.ports.web}. Shared mode: it uses the main checkout's database. <kbd>⏎</kbd> again to switch.`, `pando start ${wt.branch}`],
     logs: wt => ['Its own logs.', `Every process logs to <code>~/.pando/…/logs/${wt.dir}/</code>. In here, <kbd>1</kbd>–<kbd>4</kbd> switch source, <kbd>f</kbd> filters by level, <kbd>esc</kbd> goes back.`, `pando logs ${wt.branch} -f`],
-    shared: wt => ['Shared. No staging, no deploy.', 'A cloudflared quick tunnel: a public https URL for it, with no account. Anyone with the link can open it, and <kbd>t</kbd> again takes it down.', `pando share ${wt.branch}`],
+    shared: wt => ['Shared. No staging, no deploy.', 'A cloudflared quick tunnel gives it a public https URL, with no account. Anyone with the link can open it, and <kbd>t</kbd> again takes it down.', `pando share ${wt.branch}`],
     prfork: (wt, r) => [`Checked out #${r.n}.`, `pando listed the open pull requests through the GitHub CLI. This one comes from a fork, so it fetched <code>refs/pull/${r.n}/head</code> into a branch of its own, <b>${wt.branch}</b>. <kbd>s</kbd> starts it.`, 'p in the TUI', true],
     pr: (wt, r) => [`Checked out #${r.n}.`, `pando listed the open pull requests through the GitHub CLI and checked out its branch, <b>${wt.branch}</b>, from origin. <kbd>s</kbd> starts it.`, 'p in the TUI', true],
     stopped: wt => ['Stopped.', 'SIGTERM to its whole process group, SIGKILL after five seconds. Its ports stay its own, so its URL is the same next time.', `pando stop ${wt.branch}`],
     removed: wt => ['Removed.', 'Stopped first, then <code>git worktree remove</code>, then its logs and data deleted. The branch is kept.', `pando rm ${wt.branch}`],
-    main: () => ['The main checkout runs too.', 'pando runs only its processes, on ports it allocates, on the project\'s own services: no install, no hooks.', 'pando start main'],
+    main: () => ['The main checkout runs too.', 'pando runs only its processes, on ports it gives them, on the project\'s own services: no install, no hooks.', 'pando start main'],
   };
   const whatEl = side.querySelector('.m-what');
   function note(ev, wt, extra) { if (NOTES[ev]) showNote(NOTES[ev](wt, extra)); }
@@ -811,10 +889,9 @@
     whatEl.querySelector('.m-what-b').innerHTML = `${title} ${body}`;
     const c = whatEl.querySelector('.m-what-c');
     c.textContent = cmd || ''; c.classList.toggle('plain', !!plain);
-    whatEl.classList.remove('pop'); void whatEl.offsetWidth; whatEl.classList.add('pop');
   }
 
-  /* ---------- the next step, in a pill under the screen ---------- */
+  /* ---------- the key to press next, lit in the key bar ---------- */
   function suggest() {
     const ov = S.ov && S.ov.type;
     if (ov === 'mode') return S.ov.sel < 2 ? '↓' : '⏎';
@@ -830,43 +907,20 @@
     if (!M.done.pr) return 'p';
     return '?';
   }
-  function nextLabel(k) {
-    const ov = S.ov && S.ov.type;
-    if (ov === 'mode') return k === '↓' ? (S.ov.sel === 0 ? 'down to namespaced…' : '…and isolated: a database of its own') : `start it ${['shared', 'namespaced', 'isolated'][S.ov.sel]}`;
-    if (ov === 'new') return S.ov.text ? `create ${S.ov.text}` : 'type a branch name, or just ⏎ for fix/login-loop';
-    if (ov === 'prs') return k === '↓' ? '#128 comes from a fork' : 'make a worktree for it';
-    if (ov === 'share') return 'yes: anyone with the link can open it';
-    if (ov === 'logs') return 'back to the list · 1–4 switch source · f filters';
-    if (ov === 'help') return 'close the help';
-    if (ov) return 'close';
-    return { n: 'make a worktree', '⏎': 'start it: you choose where its data lives', j: 'move down to a worktree', l: 'read its logs', t: 'share it with a teammate', p: 'a teammate\'s pull request', '?': 'every key there is', y: 'yes' }[k] || '';
-  }
-  let coachKey = '';
-  function renderCoach() {
-    const k = AP.user ? suggest() : null;
-    const label = k ? nextLabel(k) : '';
-    const id = k + '|' + label;
-    if (id === coachKey) return;
-    coachKey = id;
-    coachEl.classList.toggle('on', !!k);
-    if (!k) return;
-    coachEl.innerHTML = `<span class="c-l">next</span><span class="kbd">${k}</span><span>${label}</span>`;
-    coachEl.classList.remove('bump'); void coachEl.offsetWidth; coachEl.classList.add('bump');
-  }
 
-  /* ---------- the autoplay: only if nobody plays ---------- */
+  /* ---------- the autoplay: only if nobody plays, and never by itself with reduced motion ---------- */
   const SCRIPT = [
-    [1.0, 'n'], [0.5, 'type:fix/login-loop'], [0.5, '⏎'], [2.4, 'sel:fix/login-loop'], [0.2, '⏎'], [0.7, '↓'], [0.45, '↓'], [0.6, '⏎'],
+    [0.4, 'n'], [0.5, 'type:fix/login-loop'], [0.5, '⏎'], [2.4, 'sel:fix/login-loop'], [0.2, '⏎'], [0.7, '↓'], [0.45, '↓'], [0.6, '⏎'],
     [3.4, 'l'], [3.2, 'esc'], [0.9, 't'], [1.0, 'y'], [3.6, 'p'], [0.9, '↓'], [0.8, '⏎'], [2.6, 's'], [3.2, 'x'], [0.5, 'x'], [2.6, 'reset'],
   ];
-  const IDLE = 12; // seconds on screen with no key before the demo plays itself
-  const AP = { on: !P.reduced, started: false, i: 0, next: 0, user: false, typing: null, seen: 0 };
+  const IDLE = 1.5; // seconds with most of the frame in view, and no key, before it plays itself
+  const AP = { on: !P.reduced, paused: false, started: false, i: 0, next: 0, user: false, typing: null, seen: 0 };
   let ratio = 0;
-  new IntersectionObserver(es => es.forEach(e => { ratio = e.intersectionRatio; }), { threshold: [0, 0.25, 0.5, 0.75, 1] }).observe(scr);
+  new IntersectionObserver(es => es.forEach(e => { ratio = e.intersectionRatio; }), { threshold: [0, 0.3, 0.6, 1] }).observe(demo);
   function autoplay(t) {
-    if (!AP.on || AP.user) return;
+    if (!AP.on || AP.user || AP.paused) return;
     if (!AP.started) {
-      if (ratio >= 0.5) { if (!AP.seen) AP.seen = t; if (t - AP.seen > IDLE) { AP.started = true; AP.next = 0; demo.classList.add('playing'); const b = side.querySelector('.auto'); if (b) { b.textContent = 'demo playing ●'; b.classList.add('on'); } } }
+      if (ratio >= 0.6) { if (!AP.seen) AP.seen = t; if (t - AP.seen > IDLE) { AP.started = true; AP.next = 0; } }
       else AP.seen = 0;
       return;
     }
@@ -894,31 +948,60 @@
     if (AP.user) return;
     if (AP.started) { reset(); vs.clear(); S.chat = null; }
     AP.user = true; AP.started = false; AP.typing = null;
-    demo.classList.add('user'); demo.classList.remove('playing');
-    const b = side.querySelector('.auto'); if (b) { b.textContent = '▶ watch the demo'; b.classList.remove('on'); b.setAttribute('aria-pressed', 'false'); }
-    renderMissions();
-  }
-  function watch() {
-    AP.user = false; AP.started = true; AP.i = 0; AP.next = 0; AP.typing = null;
-    reset(); vs.clear();
-    demo.classList.remove('user'); demo.classList.add('playing');
-    const b = side.querySelector('.auto'); if (b) { b.textContent = 'demo playing ●'; b.classList.add('on'); b.setAttribute('aria-pressed', 'true'); }
+    renderMissions(); setPP();
   }
 
-  /* ---------- the keycap bar ---------- */
-  const BAR = [['n', 'new'], ['⏎', 'mode'], ['s', 'start'], ['l', 'logs'], ['t', 'share'], ['p', 'pull requests'], ['x', 'stop'], ['r', 'restart'], ['d', 'remove'], ['tab', 'process'], ['↑', ''], ['↓', ''], ['esc', ''], ['y', 'yes'], ['?', 'help']];
+  /* ---------- Pause / Play and Start over, above the frame ---------- */
+  const ctl = document.querySelector('.demo-ctl');
+  const pp = ctl && ctl.querySelector('.pp');
+  function setPP() {
+    if (!pp) return;
+    const moving = P.reduced ? AP.started && !AP.paused : !AP.paused;
+    pp.textContent = moving ? 'Pause' : P.reduced ? 'Play demo' : 'Play';
+  }
+  if (ctl) ctl.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b === pp) {
+      if (P.reduced) {
+        if (AP.started && !AP.paused) { AP.paused = true; if (lp) lp.kick(0); }
+        else { AP.on = true; AP.paused = false; AP.user = false; AP.started = true; AP.i = 0; AP.next = 0; reset(); vs.clear(); if (lp) lp.kick(36e5); }
+      } else {
+        AP.paused = !AP.paused;
+        if (lp) lp.pause(AP.paused);
+      }
+      setPP();
+      return;
+    }
+    if (b.classList.contains('rst')) {
+      takeOver(); reset(); vs.clear(); M.done = {}; S.celebrate = 0; renderMissions(); kickLoop();
+      showNote(['Back to the start.', 'Press <kbd>n</kbd> to make a worktree.', '', false]);
+    }
+  });
+
+  /* ---------- the key bar ---------- */
+  // On a phone the first ten keys show, and "More keys" the rest.
+  const BAR = [['n', 'new'], ['⏎', 'mode'], ['s', 'start'], ['l', 'logs'], ['t', 'share'], ['y', 'yes'], ['p', 'PRs'], ['x', 'stop'], ['↓', 'down'], ['esc', 'back'],
+    ['↑', 'up'], ['r', 'restart'], ['d', 'remove'], ['tab', 'process'], ['?', 'help']];
   function buildBar() {
-    keysEl.innerHTML = '<span class="lbl">keys</span>' + BAR.map(([k, l]) => `<button type="button" data-k="${k}" aria-label="${l || k}"><span class="kbd">${k}</span>${l ? `<span>${l}</span>` : ''}</button>`).join('')
-      ;
-    const ctl = side.querySelector('.m-ctl');
-    [keysEl, ctl].forEach(el => el && el.addEventListener('click', e => {
+    keysEl.innerHTML = BAR.map(([k, l], i) => `<button type="button"${i ? ' tabindex="-1"' : ''} data-k="${k}"${i > 9 ? ' class="xk"' : ''} aria-label="${k === '⏎' ? 'enter' : k}: ${l}"><span class="kbd">${k}</span><span>${l}</span></button>`).join('')
+      + '<button type="button" tabindex="-1" class="more-k" aria-expanded="false">More keys</button>';
+    // one tab stop for the whole bar; the arrows move along it
+    keysEl.addEventListener('keydown', e => {
+      const d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+      if (!d && e.key !== 'Home' && e.key !== 'End') return;
+      const bs = Array.from(keysEl.querySelectorAll('button')).filter(b => b.offsetParent);
+      let i = bs.indexOf(document.activeElement);
+      i = e.key === 'Home' ? 0 : e.key === 'End' ? bs.length - 1 : (i + d + bs.length) % bs.length;
+      e.preventDefault();
+      bs.forEach(b => { b.tabIndex = b === bs[i] ? 0 : -1; });
+      bs[i].focus();
+    });
+    keysEl.addEventListener('click', e => {
       const b = e.target.closest('button'); if (!b) return;
-      if (b.classList.contains('auto')) { if (AP.user || !AP.started) watch(); else takeOver(); return; }
-      if (b.classList.contains('rst')) { takeOver(); reset(); vs.clear(); M.done = {}; S.celebrate = 0; renderMissions(); showNote(['Back to the start.', 'Press <kbd>n</kbd> to make a worktree.', '', false]); return; }
-      if (!b.dataset.k) return;
-      takeOver(); key(b.dataset.k); flashKey(b.dataset.k);
+      if (b.classList.contains('more-k')) { const on = keysEl.classList.toggle('all'); b.setAttribute('aria-expanded', String(on)); b.textContent = on ? 'Fewer keys' : 'More keys'; return; }
+      takeOver(); key(b.dataset.k); flashKey(b.dataset.k); kickLoop();
       if (e.detail > 0) scr.focus({ preventScroll: true }); // a click; a keyboard press keeps its place
-    }));
+    });
   }
   let hot = null;
   function flashKey(k) { hot = { k, t: now() }; }
@@ -931,53 +1014,57 @@
     });
   }
 
-  /* ---------- keyboard: on the screen, and on the page while it is in view ---------- */
+  /* ---------- keyboard: only while the screen has focus ---------- */
   const MAP = { Enter: '⏎', Escape: 'esc', ArrowUp: '↑', ArrowDown: '↓', Backspace: 'backspace' };
   function onKey(e) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return false;
-    if (e.key === 'Tab') return false; // Tab always moves focus on
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'Tab') return; // Tab always moves focus on
     if ((e.key === 'Escape' || e.key === 'q') && !S.ov && !S.armed && AP.user) {
       e.preventDefault();
       say('q quits the real one; here it hands the keyboard back');
-      const b = keysEl.querySelector('button'); if (b) b.focus();
-      return true;
+      const b = keysEl.querySelector('button[tabindex="0"]') || keysEl.querySelector('button'); if (b) b.focus();
+      kickLoop();
+      return;
     }
     const k = MAP[e.key] || (e.key.length === 1 ? e.key : null);
-    if (!k) return false;
-    if (k === ' ' && !(S.ov && (S.ov.type === 'new' || S.ov.type === 'prs'))) return false;
+    if (!k) return;
+    if (k === ' ' && !(S.ov && (S.ov.type === 'new' || S.ov.type === 'prs'))) return;
     e.preventDefault();
-    takeOver(); key(k); flashKey(k);
-    return true;
+    takeOver(); key(k); flashKey(k); kickLoop();
   }
   scr.addEventListener('keydown', onKey);
   scr.addEventListener('pointerdown', () => { scr.focus({ preventScroll: true }); });
-  // While the screen is in view, a letter (or ⏎) goes to it without a click.
-  // Space and the arrows keep scrolling the page until the screen has focus.
-  document.addEventListener('keydown', e => {
-    if (e.defaultPrevented || ratio < 0.5) return;
-    const a = document.activeElement;
-    if (a === scr) return;
-    if (a && a !== document.body && a.closest('input, textarea, select, [contenteditable], a, button, summary, pre, .tbl-scroll')) return;
-    if (!(e.key.length === 1 && /[A-Za-z?\/!]/.test(e.key)) && e.key !== 'Enter') return;
-    if (onKey(e)) scr.focus({ preventScroll: true });
-  });
+
+  /* ---------- the missions fold on a phone ---------- */
+  const det = side.querySelector('details'), small = matchMedia('(max-width: 734px)');
+  if (det) {
+    // beside the screen the list is always open, so its summary is not a control there
+    const sum = det.querySelector('summary'), fit = () => { sum.tabIndex = small.matches ? 0 : -1; if (!small.matches) det.open = true; };
+    sum.addEventListener('click', e => { if (!small.matches) e.preventDefault(); });
+    small.addEventListener('change', fit);
+    fit();
+  }
 
   /* ---------- run ---------- */
+  let tuiAt = 0, lastT = 0, lp = null;
+  // after a key, draw at full rate for a moment; long enough, when nothing else
+  // moves, for what the key started to finish
+  function kickLoop() { if (lp) lp.kick(P.reduced || AP.paused ? 6000 : 1500); }
   reset();
   buildBar();
   renderMissions();
-  let tuiAt = 0, lastT = 0;
+  setPP();
   P.fontsReady.then(() => {
     measure();
-    new ResizeObserver(() => { measure(); view.resize(); }).observe(scr.parentElement);
+    new ResizeObserver(() => { measure(); view.resize(); if (lp) lp.redraw(); }).observe(scr.parentElement);
     window.addEventListener('pando:fonts', measure);
-    P.loop(demo, () => {
+    lp = P.loop(demo, () => {
       const t = now(), dt = lastT ? Math.min(0.1, t - lastT) : 0.016; lastT = t;
       autoplay(t);
       tick(t);
       if (S.dirty || t - tuiAt > 0.25) { renderTUI(t); tuiAt = t; S.dirty = false; }
-      renderCap(t); renderChat(t); renderBar(t); renderCoach();
+      renderChat(t); renderBar(t);
       drawGrove(P.reduced ? 0 : t, dt);
-    });
+    }, { busy: () => !!S.comet || (!!S.celebrate && now() - S.celebrate < 2) });
   });
 })();

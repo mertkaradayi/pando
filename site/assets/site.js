@@ -1,174 +1,151 @@
-/* pando · the page: the chapter marker, navigation, copy buttons, reveals. */
+/* pando · the site's one script: the menu, the section the reader is in, copy
+ * buttons, the install tabs, the docs' contents, and the grove and the demo,
+ * loaded only when the page is idle or they are a screen away. */
 (function () {
   'use strict';
-  const P = (window.PANDO = window.PANDO || {});
-  document.documentElement.classList.add('js');
+  const d = document;
+  d.documentElement.classList.add('js');
+  const $ = (s, el) => (el || d).querySelector(s), $$ = (s, el) => Array.from((el || d).querySelectorAll(s));
+  const idle = window.requestIdleCallback || (f => setTimeout(f, 200));
 
-  /* ---------- the chapter marker ---------- */
-  const hud = document.querySelector('.chap');
-  const chapters = Array.from(document.querySelectorAll('[data-chapter]'));
-  const bar = hud && hud.querySelector('.chap-bar');
-  const nEl = hud && hud.querySelector('.chap-n'), nameEl = hud && hud.querySelector('.chap-name'), beatEl = hud && hud.querySelector('.chap-beat');
-  const N = 10;
-  if (bar) for (let k = 0; k < N; k++) bar.appendChild(document.createElement('i'));
-  const segs = bar ? Array.from(bar.children) : [];
-  // the marker is written on every scroll frame: only what changed is written
-  const fill = (s, f) => { f = String(f); if (s._f !== f) { s._f = f; s.style.setProperty('--f', f); } };
-  const mark = (a, v) => { if (a._cur !== v) { a._cur = v; if (v == null) a.removeAttribute('aria-current'); else a.setAttribute('aria-current', v); } };
-
-  const GL = 'abcdefghijklmnopqrstuvwxyz0123456789/-_#%$&*+=<>{}';
-  function scramble(el, text) {
-    if (!el || el.dataset.v === text) return;
-    el.dataset.v = text;
-    if (P.reduced) { el.textContent = text; return; }
-    const t0 = performance.now(), dur = 320;
-    const step = () => {
-      if (el.dataset.v !== text) return;
-      const k = Math.min(1, (performance.now() - t0) / dur), n = Math.floor(k * text.length);
-      let s = '';
-      for (let j = 0; j < text.length; j++) s += j < n || text[j] === ' ' || text[j] === '/' ? text[j] : GL[(Math.random() * GL.length) | 0];
-      el.textContent = s;
-      if (k < 1) requestAnimationFrame(step);
+  /* ---------- a sheet: the menu on a phone, the docs' contents ---------- */
+  function sheet(btn, host, cls, panel) {
+    if (!btn || !host || !panel) return;
+    const open = () => host.classList.contains(cls);
+    const set = (o, back) => {
+      host.classList.toggle(cls, o); btn.setAttribute('aria-expanded', String(o)); d.body.classList.toggle('locked', o);
+      if (o) { const a = $('a', panel); if (a) a.focus(); } else if (back) btn.focus();
     };
-    step();
-  }
-  let current = { n: '01', name: 'Pando', beat: 'the grove' };
-  P.hud = {
-    set(n, name, beat) {
-      if (!hud || !n) return;
-      if (n === current.n && name === current.name && beat === current.beat) return;
-      if (n !== current.n) scramble(nEl, n);
-      if (name !== current.name) scramble(nameEl, name);
-      if (beat !== current.beat) scramble(beatEl, '// ' + beat);
-      current = { n, name, beat };
-      const idx = parseInt(n, 10) - 1;
-      segs.forEach((s, k) => fill(s, k < idx ? 1 : 0));
-    },
-    progress(n, f) {
-      const idx = parseInt(n, 10) - 1;
-      if (segs[idx]) fill(segs[idx], Math.max(0.04, Math.min(1, f)));
-    },
-  };
-
-  // the section under the marker decides the chapter; within a section, the
-  // last beat heading above the marker decides the beat
-  const beatsIn = new Map(chapters.map(c => [c, Array.from(c.querySelectorAll('[data-beat]'))]));
-  const story = document.querySelector('.story');
-  function onScroll() {
-    const line = window.innerHeight * 0.3;
-    if (story) {
-      const r = story.getBoundingClientRect();
-      if (r.bottom > line) {
-        // the story drives the marker itself; fill 01–03 from its progress
-        const f = Math.max(0, Math.min(1, -r.top / Math.max(1, r.height - window.innerHeight)));
-        segs.forEach((s, k) => fill(s, k < 3 ? Math.max(0, Math.min(1, f * 3 - k)) : 0));
-        navLinks.forEach(a => mark(a, null));
-        return;
+    btn.addEventListener('click', () => set(!open(), true));
+    panel.addEventListener('click', e => { if (e.target.closest('a')) set(false, false); });
+    d.addEventListener('keydown', e => {
+      if (!open()) return;
+      if (e.key === 'Escape') set(false, true);
+      else if (e.key === 'Tab') { // Tab stays inside: the button, then the sheet's links
+        const f = [btn].concat($$('a', panel)), i = f.indexOf(d.activeElement);
+        if (e.shiftKey ? i <= 0 : i === f.length - 1) { e.preventDefault(); f[e.shiftKey ? f.length - 1 : 0].focus(); }
       }
-    }
-    let active = null;
-    for (const c of chapters) { if (c.getBoundingClientRect().top <= line) active = c; }
-    if (!active) return;
-    let beat = active.dataset.beat0 || '';
-    for (const b of beatsIn.get(active)) if (b.getBoundingClientRect().top <= line) beat = b.dataset.beat;
-    // read before writing: a read after the marker's writes would lay the page out again
-    const r = active.getBoundingClientRect();
-    P.hud.set(active.dataset.chapter, active.dataset.name, beat);
-    P.hud.progress(active.dataset.chapter, (line - r.top) / Math.max(1, r.height));
-    navLinks.forEach(a => mark(a, a.hash === '#' + active.id ? 'true' : 'false'));
+    });
+    addEventListener('resize', () => { if (open() && !btn.offsetParent) set(false, false); });
   }
-  const navLinks = Array.from(document.querySelectorAll('.nav a[href^="#"]'));
-  let ticking = false;
-  window.addEventListener('scroll', () => { if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; onScroll(); }); } }, { passive: true });
-  window.addEventListener('resize', onScroll);
+  sheet($('.menu-btn'), $('#nav'), 'open', $('#nav-links'));
+  sheet($('#docs-bar button'), d.body, 'toc-open', $('#toc'));
 
-  /* ---------- navigation on small screens ---------- */
-  const nav = document.querySelector('.nav'), toggle = document.querySelector('.nav-toggle');
-  if (toggle) {
-    const setOpen = (o, focusBack) => {
-      nav.classList.toggle('open', o);
-      toggle.setAttribute('aria-expanded', o);
-      toggle.textContent = o ? 'close' : 'menu';
-      if (o) { const a = nav.querySelector('a'); if (a) a.focus(); } else if (focusBack) toggle.focus();
-    };
-    toggle.addEventListener('click', () => setOpen(!nav.classList.contains('open'), true));
-    nav.addEventListener('click', e => { if (e.target.closest('a')) setOpen(false, false); });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape' && nav.classList.contains('open')) setOpen(false, true); });
-    document.addEventListener('click', e => { if (nav.classList.contains('open') && !nav.contains(e.target)) setOpen(false, false); });
-    window.addEventListener('scroll', () => { if (nav.classList.contains('open')) setOpen(false, false); }, { passive: true });
+  /* ---------- the section under a line 30% down the screen ---------- */
+  function spy(links, onCur) {
+    const map = new Map();
+    links.forEach(a => { const h = d.getElementById(a.hash.slice(1)); if (h) map.set(h.closest('section') || h, a); });
+    let cur = null;
+    const io = new IntersectionObserver(es => es.forEach(e => {
+      const a = map.get(e.target);
+      if (e.isIntersecting) { if (cur) cur.removeAttribute('aria-current'); a.setAttribute('aria-current', 'true'); cur = a; if (onCur) onCur(a); }
+      else if (a === cur) { a.removeAttribute('aria-current'); cur = null; }
+    }), { rootMargin: '-30% 0px -69% 0px' });
+    map.forEach((a, el) => io.observe(el));
   }
+  spy($$('.nav-links a[href^="#"]'));
+  const barCur = $('#docs-bar .cur');
+  spy($$('#toc a'), a => {
+    if (barCur) barCur.textContent = a.textContent;
+    const t = a.closest('.toc'); // keep the current entry in view in a sidebar that scrolls
+    if (t && t.scrollHeight > t.clientHeight + 1 && (a.offsetTop < t.scrollTop || a.offsetTop > t.scrollTop + t.clientHeight - 40)) t.scrollTop = a.offsetTop - t.clientHeight / 2;
+  });
+  $$('.docs h2[id], .docs h3[id]').forEach(h => {
+    const a = d.createElement('a');
+    a.className = 'anchor'; a.href = '#' + h.id; a.textContent = '#'; a.tabIndex = -1; a.setAttribute('aria-hidden', 'true');
+    h.appendChild(a);
+  });
 
-  /* ---------- a jump to an anchor lands where the anchor really is ---------- */
-  // Chapters far down are left unlaid-out until they come near (site.css), so
-  // their heights are guesses; before the first jump, the page is laid out whole.
-  document.addEventListener('click', e => {
-    const a = e.target.closest && e.target.closest('a[href^="#"]');
-    if (a) document.documentElement.classList.add('laid-out');
-  }, true);
-
-  /* ---------- copy buttons ---------- */
-  document.addEventListener('click', e => {
-    const b = e.target.closest('[data-copy]');
+  /* ---------- copy buttons: the text in data-copy, or the code beside them ---------- */
+  const live = d.createElement('p');
+  live.className = 'sr-only'; live.setAttribute('aria-live', 'polite'); d.body.appendChild(live);
+  const textOf = b => (b.dataset.copy || ($('code, pre', b.closest('.cmd, .code')) || {}).textContent || '').trim();
+  $$('.copy').forEach(b => {
+    b.innerHTML = '<svg class="cp" viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg><svg class="ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    if (!b.hasAttribute('aria-label')) b.setAttribute('aria-label', 'Copy: ' + textOf(b));
+  });
+  d.addEventListener('click', e => {
+    const b = e.target.closest('.copy');
     if (!b) return;
-    const sel = b.dataset.copy;
-    const text = sel.startsWith('#') || sel.startsWith('.') ? (document.querySelector(sel) || {}).innerText : sel;
-    if (!text) return;
-    const done = () => { if (b.dataset.was == null) b.dataset.was = b.textContent; b.classList.add('done'); b.textContent = 'copied'; setTimeout(() => { b.classList.remove('done'); b.textContent = b.dataset.was; }, 1400); };
-    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text.trim()).then(done, () => fallback(text, done, b));
+    const text = textOf(b);
+    const done = () => {
+      b.classList.add('done'); live.textContent = 'Copied';
+      clearTimeout(b._t); b._t = setTimeout(() => { b.classList.remove('done'); live.textContent = ''; }, 1600);
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, () => fallback(text, done, b));
     else fallback(text, done, b);
   });
-  function fallback(text, done, b) {
-    const ta = document.createElement('textarea'); ta.value = text.trim(); ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.select();
-    try { if (document.execCommand('copy')) done(); } catch (_) { /* nothing copied: say nothing */ }
-    ta.remove();
-    if (b) b.focus();
+  function fallback(text, done, b) { // file:// has no clipboard API
+    const ta = d.createElement('textarea');
+    ta.value = text; ta.style.cssText = 'position:fixed;opacity:0';
+    d.body.appendChild(ta); ta.select();
+    try { if (d.execCommand('copy')) done(); } catch (_) { /* nothing copied: say nothing */ }
+    ta.remove(); b.focus();
   }
 
+  /* ---------- tabs: arrows move between them, Home and End jump ---------- */
+  $$('.tabs').forEach(w => {
+    const tabs = $$('[role="tab"]', w);
+    if (!tabs.length) return;
+    w.classList.add('seg-on');
+    const sel = (t, focus) => tabs.forEach(x => {
+      const on = x === t;
+      x.setAttribute('aria-selected', String(on)); x.tabIndex = on ? 0 : -1;
+      d.getElementById(x.getAttribute('aria-controls')).hidden = !on;
+      if (on && focus) x.focus();
+    });
+    tabs.forEach((t, i) => {
+      t.addEventListener('click', () => sel(t));
+      t.addEventListener('keydown', e => {
+        const k = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+        if (k == null) return;
+        e.preventDefault(); sel(tabs[(k + tabs.length) % tabs.length], true);
+      });
+    });
+    sel(tabs[0]);
+  });
+
   /* ---------- code that scrolls sideways can be reached by keyboard ---------- */
-  // A block is measured when it comes within a screen of view, and again on a
-  // resize or a font change while it is there: measuring them all at once would
-  // lay out the chapters the page leaves unrendered until they come near.
-  const near = new Set();
-  const sideways = el => { if (el.scrollWidth > el.clientWidth + 1) el.tabIndex = 0; else el.removeAttribute('tabindex'); };
-  const sio = new IntersectionObserver(es => es.forEach(e => {
-    if (e.isIntersecting) { near.add(e.target); sideways(e.target); } else near.delete(e.target);
-  }), { rootMargin: '100% 0px' });
-  document.querySelectorAll('pre, .tbl-scroll').forEach(el => { if (!el.closest('.tui, .setup')) sio.observe(el); });
-  const remeasure = () => near.forEach(sideways);
-  window.addEventListener('resize', remeasure);
-  window.addEventListener('pando:fonts', remeasure);
-  // a block inside a closed <details> has no size until it opens
-  document.addEventListener('toggle', e => {
-    if (e.target.open) e.target.querySelectorAll('pre, .tbl-scroll').forEach(el => { if (!el.closest('.tui, .setup')) sideways(el); });
-  }, true);
+  const scrollers = () => $$('pre, .tbl-wrap').forEach(el => {
+    if (el.closest('.tui, .screen')) return;
+    if (el.scrollWidth > el.clientWidth + 1) { el.tabIndex = 0; if (!el.hasAttribute('aria-label')) el.setAttribute('aria-label', 'Scrollable code'); }
+    else el.removeAttribute('tabindex');
+  });
+  idle(scrollers);
+  let rt;
+  addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(scrollers, 250); });
 
-  /* ---------- reveal on scroll ---------- */
-  const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px' });
-  document.querySelectorAll('.rv').forEach(el => io.observe(el));
+  /* ---------- media fades in once ---------- */
+  const rv = $$('.reveal');
+  if (rv.length) {
+    const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: 0.15 });
+    rv.forEach(el => io.observe(el));
+  }
 
-  /* ---------- headlines type themselves in when they arrive ---------- */
-  const heads = document.querySelectorAll('.chapter .headline[data-type]');
-  const hio = new IntersectionObserver(es => es.forEach(e => {
-    if (!e.isIntersecting) return;
-    hio.unobserve(e.target);
-    const el = e.target.querySelector('.txt');
-    if (!el || P.reduced) return;
-    const html = el.innerHTML, text = el.textContent;
-    const t0 = performance.now(), cps = 52;
-    const step = () => {
-      const n = Math.floor(((performance.now() - t0) / 1000) * cps);
-      if (n >= text.length) { el.innerHTML = html; return; }
-      let s = text.slice(0, n);
-      for (let j = n; j < Math.min(text.length, n + 3); j++) s += text[j] === ' ' ? ' ' : GL[(Math.random() * GL.length) | 0];
-      el.textContent = s;
-      requestAnimationFrame(step);
-    };
-    e.target.style.minHeight = e.target.offsetHeight + 'px';
-    step();
-  }), { rootMargin: '0px 0px -15% 0px' });
-  heads.forEach(h => hio.observe(h));
-
-  P.reduced = P.reduced || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  requestAnimationFrame(onScroll);
+  /* ---------- the grove after the page, the demo a screen ahead ---------- */
+  const got = {};
+  function script(src, cb) {
+    let s = got[src];
+    if (!s) {
+      s = got[src] = { ok: false, q: [] };
+      const el = d.createElement('script');
+      el.src = src; el.onload = () => { s.ok = true; s.q.forEach(f => f()); };
+      d.head.appendChild(el);
+    }
+    if (s.ok) cb(); else s.q.push(cb);
+  }
+  const chain = srcs => (function next(i) { if (i < srcs.length) script(srcs[i], () => next(i + 1)); })(0);
+  if ($('.hero-grove')) {
+    const go = () => idle(() => chain(['assets/grove.js']));
+    if (d.readyState === 'complete') go(); else addEventListener('load', go);
+  }
+  const demo = $('#demo');
+  if (demo) {
+    const io = new IntersectionObserver(es => {
+      if (!es.some(e => e.isIntersecting)) return;
+      io.disconnect();
+      chain(['assets/grove.js', 'assets/ports.js', 'assets/tui.js']);
+    }, { rootMargin: '100% 0px' });
+    io.observe(demo);
+  }
 })();
