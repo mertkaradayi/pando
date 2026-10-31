@@ -441,13 +441,13 @@ pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
 .pane .fine { margin: 12px auto 0; text-align: center; }
 .js .seg-on .pane h3 { display: none; }
 .js .seg-on .pane + .pane { margin-top: 0; }
-.then { display: grid; gap: var(--gap); margin: var(--s-9) auto 0; max-width: 960px; }
+.then { display: grid; gap: var(--s-5) var(--gap); margin: var(--s-8) auto 0; max-width: 760px; }
 @media (min-width: 735px) { .then { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.then pre, .then .cmd { margin-top: auto; }
+.then p { margin-bottom: 8px; color: var(--text-3); font-size: var(--t-caption); }
 .install-fine { margin: var(--s-8) auto 0; text-align: center; }
-.standing { margin: var(--s-9) auto 0; max-width: 760px; padding-top: var(--s-8); border-top: 1px solid var(--hairline); text-align: center; }
-.standing h3 { font-size: var(--t-headline); margin-bottom: 10px; }
-.standing p { color: var(--text-2); }
+/* where it stands: one line, the rest is in the docs */
+.standing { margin: var(--s-8) auto 0; max-width: var(--w-text); color: var(--text-2); text-align: center; }
+.standing .more { margin: 0 0 0 4px; }
 
 /* ---------- closing band and footer ---------- */
 .sec#install { padding-bottom: var(--s-9); }
@@ -581,7 +581,6 @@ h2:hover .anchor, h3:hover .anchor { opacity: 1; }
   .vs .card { padding: 20px; }
   .vs .card pre { padding: 14px 12px; font-size: 11px; }
   .stat { padding: 20px 16px; }
-  .standing { margin-top: var(--s-8); padding-top: var(--s-6); }
   .disk { margin-top: var(--s-9); }
   .tile { padding: 24px; }
   .demo-ctl .hint { display: none; }

@@ -373,7 +373,7 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="sec-head">
       <p class="eyebrow">Install</p>
       <h2 class="display" id="install-h"><span>Install it.</span> <span>Run it in your project.</span></h2>
-      <p class="lede">A ready-made binary for macOS (Apple silicon and Intel) and Linux (x86_64 and arm64), and inside WSL 2 on Windows. Homebrew and the script need no Rust.</p>
+      <p class="lede">A ready-made binary for macOS and Linux, on x86_64 or ARM, and for WSL 2 on Windows. Homebrew and the script need no Rust.</p>
     </div>
     <div class="tabs">
       <div class="seg" role="tablist" aria-label="Ways to install">
@@ -385,12 +385,11 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         <div class="pane" id="pane-brew" role="tabpanel" aria-labelledby="tab-brew">
           <h3>Homebrew</h3>
           <div class="cmd cmd-lg"><span class="p" aria-hidden="true">$</span><code>brew install mertkaradayi/tap/pando</code><button class="copy" type="button" data-copy></button></div>
-          <p class="fine">On macOS and Linux, WSL 2 included.</p>
         </div>
         <div class="pane" id="pane-script" role="tabpanel" aria-labelledby="tab-script">
           <h3>Install script</h3>
           <div class="cmd cmd-lg wrapping"><span class="p" aria-hidden="true">$</span><code>curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mertkaradayi/pando/releases/latest/download/pando-cli-installer.sh | sh</code><button class="copy" type="button" data-copy></button></div>
-          <p class="fine">This puts <code>pando</code> in <code>~/.local/bin</code>, or <code>$XDG_BIN_HOME</code> when that is set, and adds that folder to your PATH. Set <code>PANDO_CLI_NO_MODIFY_PATH=1</code> to leave your shell files alone.</p>
+          <p class="fine">It puts <code>pando</code> in <code>~/.local/bin</code>, or <code>$XDG_BIN_HOME</code> when that is set, and adds it to your PATH. <code>PANDO_CLI_NO_MODIFY_PATH=1</code> leaves your shell files alone.</p>
         </div>
         <div class="pane" id="pane-src" role="tabpanel" aria-labelledby="tab-src">
           <h3>From source</h3>
@@ -399,18 +398,11 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
         </div>
       </div>
     </div>
-    <div class="then list-s">
-      <div class="card"><h3>Then run it</h3><p>The first time, pando opens the setup screen. After that, every branch on one screen.</p>
-<pre class="code"><span class="p">$</span> cd your-project
-<span class="p">$</span> pando</pre></div>
-      <div class="card"><h3>Keep it current</h3><p>This upgrades pando the way you installed it.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando update</code><button class="copy" type="button" data-copy></button></div></div>
+    <div class="then">
+      <div><p>Then, in your project</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando</code><button class="copy" type="button" data-copy></button></div></div>
+      <div><p>Later, to update it</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando update</code><button class="copy" type="button" data-copy></button></div></div>
     </div>
-    <p class="fine install-fine">Every download has a checksum and a GitHub attestation. <code>pando doctor</code> names anything your project still needs; pando never installs anything itself.</p>
-    <div class="standing">
-      <h3>Where it stands</h3>
-      <p>pando is pre-release. It is used daily on the monorepo it was built for, and every change is tested on macOS and Linux. It has met only a handful of real projects. If it breaks on yours, that is the most useful issue you can open.</p>
-      <div class="links"><a class="more" href="https://github.com/mertkaradayi/pando/issues">Issues</a><a class="more" href="https://github.com/mertkaradayi/pando/blob/main/CHANGELOG.md">Changelog</a><a class="more" href="https://github.com/mertkaradayi/pando/blob/main/CONTRIBUTING.md">Contributing</a></div>
-    </div>
+    <p class="standing">pando is pre-release. If it breaks on your project, <a href="https://github.com/mertkaradayi/pando/issues">open an issue</a>. <a class="more" href="docs.html#status">Where it stands</a></p>
   </div>
 </section>
 
