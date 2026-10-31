@@ -128,6 +128,8 @@ body.locked { overflow: hidden; }
 /* the problem and the name share one band */
 #why { padding-bottom: 0; }
 #story { padding-top: var(--s-10); }
+/* a section that ends on a line of fine print ends closer to it */
+.sec:has(> .wrap > .install-fine:last-child) { padding-bottom: var(--s-10); }
 .sec-head .links { margin-top: var(--s-4); }
 .sec-head { max-width: var(--w-headline); margin: 0 auto var(--head-gap); text-align: center; display: flex; flex-direction: column; align-items: center; }
 .eyebrow { color: var(--gold); font-size: var(--t-eyebrow); font-weight: 600; line-height: 1.19; letter-spacing: 0.011em; margin-bottom: 8px; }
@@ -201,7 +203,7 @@ pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
 /* ---------- 1 · hero ---------- */
 .hero { position: relative; display: flex; flex-direction: column; overflow: hidden; text-align: center; }
 .hero-in { position: relative; z-index: 1; padding: 64px var(--gutter) 0; display: flex; flex-direction: column; align-items: center; }
-.hero h1 { font-size: var(--t-hero); line-height: 1.05; letter-spacing: -0.015em; font-weight: 700; max-width: 18ch; }
+.hero h1 { font-size: min(var(--t-hero), 10.4vw); line-height: 1.05; letter-spacing: -0.015em; font-weight: 700; max-width: 18ch; }
 .hero h1 span { display: inline-block; }
 .hero-lede { color: var(--text-2); font-size: var(--t-lede); line-height: 1.381; letter-spacing: 0.011em; max-width: 680px; margin-top: var(--s-5); }
 .hero-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px 16px; margin-top: var(--s-8); width: 100%; }
@@ -358,7 +360,8 @@ pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
 /* ---------- 3 · how it works ---------- */
 .step { display: flex; flex-direction: column; gap: 10px; }
 .step h3 { font-size: var(--t-headline); line-height: 1.19; }
-.step .cmd { margin-top: auto; }
+.step .cmd { margin-top: auto; padding-right: 14px; }
+@media (min-width: 1069px) { .steps .card { padding: 32px; } .step .cmd code, .step .cmd .p { font-size: 13px; } }
 .n { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1.5px solid var(--gold); border-radius: 50%; color: var(--gold); font-size: 14px; font-weight: 600; flex: none; }
 .cards-after { margin-top: var(--gap); }
 .cards-after .card { padding: 28px; }
