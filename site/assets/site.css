@@ -142,8 +142,8 @@ body.locked { overflow: hidden; }
 
 /* ---------- grids and cards ---------- */
 .grid { display: grid; gap: var(--gap); grid-template-columns: minmax(0, 1fr); }
-@media (min-width: 735px) { .g2, .g3, .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .g3:not(.steps) > :last-child:nth-child(odd) { grid-column: span 2; } .steps { grid-template-columns: minmax(0, 1fr); } }
-@media (min-width: 1069px) { .g3:not(.steps) > :last-child:nth-child(odd) { grid-column: auto; } }
+@media (min-width: 735px) { .g2, .g3, .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .g3 > :last-child:nth-child(odd) { grid-column: span 2; } }
+@media (min-width: 1069px) { .g3 > :last-child:nth-child(odd) { grid-column: auto; } }
 @media (min-width: 1069px) { .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .card { position: relative; display: flex; flex-direction: column; gap: 10px; padding: var(--card-pad); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg); color: var(--text-2); }
 .card > p + p { margin-top: 0; }
@@ -357,10 +357,31 @@ pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
 }
 
 /* ---------- 3 · how it works ---------- */
-.step { display: flex; flex-direction: column; gap: 10px; }
-.step h3 { font-size: var(--t-headline); line-height: 1.19; }
-.step .cmd { margin-top: auto; padding-right: 14px; }
-@media (min-width: 1069px) { .steps .card { padding: 32px; } .step .cmd code, .step .cmd .p { font-size: 13px; } }
+/* three steps: a list (S), one panel of rows with the command beside each (M), three cards (L) */
+.steps { display: grid; border-top: 1px solid var(--hairline); }
+.step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px 12px; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--hairline); color: var(--text-2); }
+.step h3 { color: var(--text); font-size: var(--t-headline); line-height: 1.19; }
+.step p, .step .cmd { grid-column: 1 / -1; }
+.step .cmd { margin-top: 6px; padding-right: 14px; }
+@media (min-width: 735px) {
+  .steps { border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-1); }
+  .step { grid-template-columns: 28px minmax(0, 1fr) 272px; grid-template-rows: auto auto; gap: 4px 16px; padding: 24px 28px; }
+  .step:last-child { border-bottom: 0; }
+  .step .n { align-self: start; grid-row: 1 / 3; }
+  .step h3 { align-self: end; }
+  .step p { grid-column: 2; align-self: start; }
+  .step .cmd { grid-column: 3; grid-row: 1 / 3; margin-top: 0; }
+}
+@media (min-width: 1069px) {
+  .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); border: 0; background: none; }
+  .step { grid-template-columns: 28px minmax(0, 1fr); grid-template-rows: auto 1fr auto; align-items: start; gap: 12px; padding: 32px; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg); }
+  .step:last-child { border-bottom: 1px solid var(--border); }
+  .step .n { grid-row: auto; }
+  .step h3 { align-self: center; }
+  .step p { grid-column: 1 / -1; }
+  .step .cmd { grid-column: 1 / -1; grid-row: auto; margin-top: 8px; }
+  .step .cmd code, .step .cmd .p { font-size: 13px; }
+}
 .n { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1.5px solid var(--gold); border-radius: 50%; color: var(--gold); font-size: 14px; font-weight: 600; flex: none; }
 .bars { margin: 0; padding: var(--card-pad); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg); display: grid; gap: 16px; align-content: start; }
 .bars .tag { justify-self: start; }
@@ -377,7 +398,8 @@ pre code { background: none; padding: 0; font-size: inherit; border-radius: 0; }
 .disk-text > p + p { margin-top: 12px; }
 .disk-text > p { max-width: var(--w-text); }
 .disk-text .fine { color: var(--text-3); }
-@media (min-width: 1069px) { .disk { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-10); } }
+@media (min-width: 735px) { .disk { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+@media (min-width: 1069px) { .disk { gap: var(--s-10); } }
 
 /* ---------- 4 · data ---------- */
 .mode .svg { height: 88px; margin-bottom: 6px; color: var(--text-3); }

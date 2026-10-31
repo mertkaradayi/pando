@@ -204,20 +204,19 @@ fix/login  <span class="ok">running</span>  http://localhost:23249</pre>
     <div class="sec-head">
       <p class="eyebrow">How it works</p>
       <h2 class="display" id="how-h"><span>Three commands.</span> <span>A branch, running.</span></h2>
-      <p class="lede">pando builds on git worktree, the side-by-side checkouts git has had since version 2.5. It adds everything that makes each one run.</p>
+      <p class="lede">pando drives git worktree and adds everything a branch needs to run.</p>
       <a class="more" href="docs.html#worktrees">How a worktree is made, step by step</a>
     </div>
-    <ol class="grid g3 steps list-s">
-      <li class="step card"><span class="n">1</span><h3>Its own checkout.</h3><p>A real git worktree in pando’s own folder, with your <code>.env</code> linked in and its dependencies installed.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando new feat/checkout</code></div></li>
-      <li class="step card"><span class="n">2</span><h3>Its own ports.</h3><p>Every process starts in the background, on ports no other branch uses, kept across restarts. Quit pando and they keep running.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando start feat/checkout</code></div></li>
-      <li class="step card"><span class="n">3</span><h3>Its own URL.</h3><p>It opens in your browser, and <code>pando share</code> gives a teammate a public link.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando open feat/checkout</code></div></li>
+    <ol class="steps">
+      <li class="step"><span class="n">1</span><h3>Its own checkout.</h3><p>A real git worktree, with your <code>.env</code> linked in and dependencies installed.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando new feat/checkout</code></div></li>
+      <li class="step"><span class="n">2</span><h3>Its own ports.</h3><p>Processes run in the background on ports no other branch uses. Quit pando and they keep running.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando start feat/checkout</code></div></li>
+      <li class="step"><span class="n">3</span><h3>Its own URL.</h3><p>It keeps its address across restarts and opens in your browser.</p><div class="cmd"><span class="p" aria-hidden="true">$</span><code>pando open feat/checkout</code></div></li>
     </ol>
     <div class="disk" id="disk">
       <div class="disk-text">
         <p class="eyebrow">Light on disk</p>
         <h3 class="title">A whole checkout, for the price of what changed.</h3>
-        <p>Where the disk can clone (APFS on macOS; btrfs, XFS or bcachefs on Linux), a new worktree’s files are copy-on-write clones of your main checkout’s, so git writes only what your branch changed.</p>
-        <p><code>clone</code> does the same for your <code>node_modules</code>, or a Rust crate’s <code>target</code>, before the install runs. A passing <code>pando check</code> measures what is left.</p>
+        <p>Where the disk can clone (APFS on macOS; btrfs, XFS or bcachefs on Linux), a new worktree’s files are copy-on-write clones of your main checkout’s. <code>clone</code> does the same for <code>node_modules</code> or a Rust <code>target</code>.</p>
         <p class="fine"><code>du</code> still counts each worktree in full. The saving shows up as free space.</p>
         <a class="more" href="docs.html#disk">Copy-on-write, clone and the disk report</a>
       </div>
