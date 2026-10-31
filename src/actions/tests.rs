@@ -8938,7 +8938,10 @@ fn a_create_waits_out_a_config_lock_another_git_holds_a_moment() {
 }
 
 // git's lock errors, each a moment's: the step is tried again once the
-// failure is undone.
+// failure is undone. `rm` of the only other worktree ends in git's rmdir
+// of `.git/worktrees` once it is empty, and an add that had just made it,
+// and not yet its own entry in it, died on that — "could not create
+// directory of" — leaving nothing.
 #[test]
 fn a_git_step_tries_again_only_on_a_lock_another_git_held() {
     let failed = Command::new("git")
@@ -8974,6 +8977,7 @@ fn a_git_step_tries_again_only_on_a_lock_another_git_held() {
         "error: cannot lock ref 'refs/heads/x': Unable to create '/r/.git/refs/heads/x.lock': \
          File exists.",
         "error: cannot lock ref 'refs/remotes/origin/x': is at 1111 but expected 2222",
+        "fatal: could not create directory of '/r/.git/worktrees/x': No such file or directory",
     ] {
         assert_eq!(tries(saying(busy), true), (true, 2, 1), "{busy}");
         // A failure whose undo left something: given up on, as it was.
