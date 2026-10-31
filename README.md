@@ -424,18 +424,19 @@ refresh, a re-sort or a filter, and goes with it.
 
 The list is a table with a header row: `branch`, then `PR` (its pull
 request, `◍ #482`), `dir` (the directory, when it is not the branch's
-own name), `port` (the port of its URL while something runs), `other
+own name, or `main checkout`, `detached` or `mixed branches`), `port`
+(the port of its URL while something runs), `other
 ports` (the rest, for a worktree that runs more than one process),
 `public` (`◈` while it is shared) and `git` (behind, ahead and `✎` for
 uncommitted changes; or prunable or locked). A column shows only when
 some row has something in it, and a narrow pane gives up the least
 useful first. The branch cell carries the rest: the glyph before the
 branch says whether it runs — `●` running, `◌` starting, `✗` failed,
-`○` stopped — and the mode (`isolated` when it runs private copies of
-the services, `namespaced` when it runs on a database, a slot or a
-prefix of its own in the main checkout's servers, each in its own
-colour) and a word such as `failed` follow it. The full URL and the rest
-are in the detail pane beside it.
+`○` stopped — and a mode mark (`▣` when it runs private copies of the
+services, `◧` when it runs on a database, a slot or a prefix of its own
+in the main checkout's servers, each in its own colour; `⌂` marks the
+main checkout) and a word such as `failed` follow it. The full URL and
+the rest are in the detail pane beside it.
 
 The main checkout is always the first row, and the worktrees with
 something up come right after it: a start moves a row up and a stop puts
