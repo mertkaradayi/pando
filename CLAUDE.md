@@ -293,6 +293,32 @@ the setup job on folders of repositories and drove the TUI in tmux,
 fixers in four worktrees fixed what they found, and 0.11.1 was built
 and tagged with it.
 
+On 2026-10-31 a full disk on the maintainer's machine was traced to what
+builds write beside a worktree rather than to copy-on-write, which was
+sharing as it should: a build cache outside the repository keyed by the
+checkout's path, filled again by every one of many worktrees, and Rust
+branches each building every dependency again. The branch
+`feat/shared-build-caches` taught pando about it without settling any
+ecosystem's trade-off for the developer, at the maintainer's word that
+one project's needs are not every project's: `clone` offers a Rust
+crate's `target` beside its `Cargo.toml` (cargo's fingerprints keep
+the dependencies fresh in a clone; a Maven `target` is never offered);
+a passing `pando check` measures its worktree before the teardown
+(`actions/check/disk.rs`, `disk` in `check --json`): every gitignored
+tree the install and processes left, marked when the main checkout has
+one `clone` could share, and the free space lost beyond them, read
+through `platform::files::free_bytes`; its line points the agent at the
+brief's "What a worktree costs on disk", which says how to judge a tree
+and a path-keyed cache and act through `clone` and a process's `env`,
+and the setup report tells the developer what a worktree costs and what
+was shared. `scripts/dev new` clones the main checkout's `target` into
+a branch's worktree, only ever as a clone (macOS's `cp -c` copies where
+it cannot clone, so it runs on one APFS volume only). Proved on a
+fixture of a made-up tool pando has no row for. A Go rule that forced
+`-trimpath` was built and dropped for the same reason: a flag that
+changes a program's behaviour is the project's call, made from the
+measurement.
+
 What is left is not a phase. `plans/open-follow-ups.md` carries the known
 edges, each with who found it and where it belongs, and the rest of the
 launch checklist in `docs/08-roadmap.md` is open: no published crate on
