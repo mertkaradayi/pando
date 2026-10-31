@@ -119,10 +119,16 @@
 //! A child another thread of this pando forks holds a copy of every
 //! descriptor open at the fork until it execs, and with a flock the copy
 //! holds the lock: a lock let go, or a look at one, can read as held a
-//! moment longer. A reader takes that as held and uses its copy. The one
-//! claim that retries is `take_removal_lock`, which asks for up to 200 ms
-//! before it believes a removal lock taken that `removal_of` has just said
-//! is free; [`is_held`] itself asks once.
+//! moment longer. A reader takes that as held and uses its copy:
+//! `actions::removals` asks [`is_held`] once. Wherever a held lock makes
+//! pando refuse, it asks again for up to [`FORK_COPY_WAIT`] first, through
+//! [`past_a_forks_copy`]: `removal_of` for every refusal over a removal
+//! under way ([`is_held_past_a_fork`]), and `rm`'s take of the removal lock
+//! and `check`'s of the check lock ([`try_lock_past_a_fork`]). The retry
+//! never hides a holder: a lock taken is held alone, and `removal_of` asks
+//! under the state lock, which the `rm` holding a removal lock needs before
+//! it can let go of it alive — so one that reads as free within the moment
+//! was let go by an `rm` that died, and the removal is interrupted.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -397,6 +403,43 @@ pub fn is_held(lock_path: &Path) -> bool {
         Err(_) => return true,
     };
     !matches!(crate::platform::files::try_lock_exclusive(&file), Ok(true))
+}
+
+/// How long a lock that reads as held is asked again before pando refuses
+/// over it: far past the moment from a fork to its exec, in which a child
+/// holds a copy of every descriptor open in the pando that forked it.
+pub const FORK_COPY_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Asks `ask` until it answers, for up to [`FORK_COPY_WAIT`]: `None` once
+/// it never did. Where pando refuses over a lock that reads as held, it
+/// asks through this, so a forked child's copy is not taken for a holder
+/// (see "A forked child's copy" above). It changes only when pando
+/// decides, never what: a lock taken is held alone whenever it is taken,
+/// and one asked about reads as free only at a moment nothing held it.
+pub fn past_a_forks_copy<T>(mut ask: impl FnMut() -> Result<Option<T>>) -> Result<Option<T>> {
+    let deadline = std::time::Instant::now() + FORK_COPY_WAIT;
+    loop {
+        if let Some(answer) = ask()? {
+            return Ok(Some(answer));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// [`is_held`], believed only once it has held for [`FORK_COPY_WAIT`]:
+/// for a caller that refuses on the answer. A reader asks [`is_held`]
+/// once and lives with a moment's wrong answer.
+pub fn is_held_past_a_fork(lock_path: &Path) -> bool {
+    past_a_forks_copy(|| Ok((!is_held(lock_path)).then_some(()))).is_ok_and(|free| free.is_none())
+}
+
+/// [`try_lock`], asked again for [`FORK_COPY_WAIT`] while it is taken: for
+/// a claim that refuses when it cannot have the lock.
+pub fn try_lock_past_a_fork(lock_path: &Path) -> Result<Option<StateLock>> {
+    past_a_forks_copy(|| try_lock(lock_path))
 }
 
 impl WorktreeRecord {

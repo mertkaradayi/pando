@@ -1937,7 +1937,7 @@ fn claim_removal(
     // `removal_of` said so above, under the lock everything reads the mark
     // under.
     let lock_file = paths.removal_lock_file(name);
-    let Some(held) = take_removal_lock(&lock_file)? else {
+    let Some(held) = state::try_lock_past_a_fork(&lock_file)? else {
         bail!("{shown} {BEING_REMOVED} — {ALREADY_REMOVING}");
     };
     if interrupted {
@@ -2045,21 +2045,6 @@ fn stop_claimed(
             Err(e)
         }
     }
-}
-
-/// A removal's lock, which nobody holds by the time `rm` takes it. Taken
-/// at once almost always: but a process another thread of this pando is
-/// spawning holds a copy of every descriptor open at its fork until its
-/// exec — a look at this lock among them — so one that reads as taken is
-/// asked again, for a moment, before it is believed.
-fn take_removal_lock(lock_file: &Path) -> Result<Option<state::StateLock>> {
-    for _ in 0..10 {
-        if let Some(held) = state::try_lock(lock_file)? {
-            return Ok(Some(held));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    Ok(None)
 }
 
 /// `rm`'s slow part, without the state lock: the containers and their
@@ -2284,22 +2269,50 @@ pub fn removals(paths: &PandoPaths) -> Result<BTreeMap<String, RemovalState>> {
             .collect());
     };
     let store = state::load(&paths.state_file())?;
+    // Asked once each: a reader shows a forked child's copy of a removal's
+    // lock as the removal under way, for a moment, rather than holding the
+    // state lock while it asks again.
     Ok(store
         .worktrees
         .keys()
-        .filter_map(|name| Some((name.clone(), removal_of(paths, &store, name)?)))
+        .filter_map(|name| {
+            Some((
+                name.clone(),
+                removal_as(paths, &store, name, state::is_held)?,
+            ))
+        })
         .collect())
 }
 
-/// Where a removal of `name` stands, if one has begun. Asked under the
-/// state lock: see [`state::is_held`].
+/// Where a removal of `name` stands, if one has begun, for a caller that
+/// refuses on the answer. Asked under the state lock: see
+/// [`state::is_held`].
+///
+/// A removal lock that reads as held is asked again for a moment
+/// ([`state::is_held_past_a_fork`]), so a forked child's copy of it does
+/// not refuse a start, a share, a `new` or an `rm` as if a removal were
+/// under way. That can never hide one that is: the state lock is held
+/// throughout, and the `rm` holding a removal lock lets go of it only
+/// after the step that takes its mark off, which needs the state lock. A
+/// lock that reads as free within the moment was let go by an `rm` that
+/// died, whose removal is interrupted.
 pub(super) fn removal_of(
     paths: &PandoPaths,
     store: &state::State,
     name: &str,
 ) -> Option<RemovalState> {
+    removal_as(paths, store, name, state::is_held_past_a_fork)
+}
+
+/// [`removal_of`], with whether the removal lock is held asked by `held`.
+fn removal_as(
+    paths: &PandoPaths,
+    store: &state::State,
+    name: &str,
+    held: fn(&Path) -> bool,
+) -> Option<RemovalState> {
     let mark = store.worktrees.get(name)?.removing.clone()?;
-    Some(match state::is_held(&paths.removal_lock_file(name)) {
+    Some(match held(&paths.removal_lock_file(name)) {
         true => RemovalState::UnderWay(mark),
         false => RemovalState::Interrupted(mark),
     })
