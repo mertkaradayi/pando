@@ -11,7 +11,12 @@
 use std::path::{Path, PathBuf};
 
 /// Every document that tells a person how to install pando.
-const INSTALL_DOCS: [&str; 3] = ["README.md", "CONTRIBUTING.md", "site/index.html"];
+const INSTALL_DOCS: [&str; 4] = [
+    "README.md",
+    "CONTRIBUTING.md",
+    "site/index.html",
+    "site/docs.html",
+];
 
 fn repo(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
@@ -182,7 +187,7 @@ fn the_docs_install_what_the_release_publishes() {
     let script = format!("{repository}/releases/latest/download/{name}-installer.sh");
     let from_source = format!("cargo install --locked --git {repository} {name}");
 
-    for doc in ["README.md", "site/index.html"] {
+    for doc in ["README.md", "site/index.html", "site/docs.html"] {
         let text = read(doc);
         for wanted in [&brew, &script, &from_source] {
             assert!(
