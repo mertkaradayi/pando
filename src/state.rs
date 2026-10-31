@@ -1,11 +1,119 @@
 //! Persistent state: what pando started, what it owns, and what it observed.
 //!
-//! Two rules are inherited from the origin tool unchanged: every mutation
-//! holds the flock, and every read path reconciles before trusting what is
-//! in the map. A read path never waits for the flock: [`save`] replaces
-//! the file whole, so a read without it sees one save or the next, never
-//! half of one. State is v2 from the first commit — there is no v1 to
-//! migrate.
+//! One JSON file per project: a [`WorktreeRecord`] per worktree name, and
+//! the boot it was written in, so [`load`] can forget the pids of an
+//! earlier one. [`save`] writes a temporary file, syncs it and renames it
+//! over the old, so a read without the lock sees one save or the next,
+//! never half of one. State is v2 from the first commit — there is no v1
+//! to migrate.
+//!
+//! # The state lock
+//!
+//! Every pando process and TUI worker thread coordinates through one flock
+//! per project ([`crate::paths::PandoPaths::lock_file`]), taken with
+//! [`lock`], which waits, and says so where the CLI asked
+//! ([`announce_lock_waits`]). It is per open descriptor, so two threads of
+//! one pando keep each other out as two processes do. Every write is a
+//! load, a change and a [`save`] under it. It is held for bookkeeping — a
+//! decision, the records it changes, the save — and the slow work runs
+//! with it let go, between two holds:
+//!
+//! | | Under the lock | Without it | Under it again |
+//! |---|---|---|---|
+//! | `start` | refusals, mode, ports and service records, saved | hooks, install, services | refusals again, races checked, spawned, saved; the `dev` hook after |
+//! | `stop`, `restart`'s stop | `mark_stop`: a [`StopMark`] per group | `wait_for`: every group signalled and waited for at once | `settle_stop`, `finish_stop` |
+//! | `rm` | `claim_removal`: refusals, the removal lock, stop marks, a [`Removal`] | `stop_claimed`'s wait, settled under the lock; `take_down` | `finish_removal`, or `abandon_removal` |
+//! | `share` | refusals, the proxy's port | proxy and tunnel, each group noted as a [`PendingShare`] | recorded, or closed again |
+//! | `unshare` | the share read, again under the share's own lock | both halves signalled | the record dropped if it names that share still |
+//! | `new` | the target directory claimed | the checkout | the record written, let go before the install |
+//!
+//! What it read may have changed by the second hold, so each re-reads and
+//! settles only what is still its own: `settle_stop` only the groups it
+//! waited on when a start changed the worktree meanwhile, `rm` only while
+//! the mark is the one it wrote (`Claim::still_ours`), a start refusing
+//! where another changed the mode or took its slot.
+//!
+//! Some still wait under it. `stop_all_with` signals every worktree at once
+//! and waits for them all holding it. A start stops what it replaces with
+//! it held: in its first hold dead-leader groups, a stale record's, and
+//! what a mode change cannot keep serving; in its second a `restart
+//! --only`'s process, and what kept serving through the change. The orphan
+//! sweep (`sweep_orphaned_groups`) and the share sweep signal and wait
+//! wherever they run; a failed `new` unwinds its checkout under it; and
+//! `finish_removal` takes down whatever a racing start recorded after the
+//! mark, which is almost always nothing.
+//!
+//! # Readers
+//!
+//! A read never waits for the lock: it asks [`try_lock`], and while
+//! another pando holds it an unlocked [`load`] stands in. `actions::refresh`
+//! advances phases on that copy and returns it; `actions::removals` reads
+//! every removal mark in it as under way. A reader shows the copy and does
+//! nothing else with it: it never saves it — the holder's save is the one
+//! that counts, and the next read to find the lock free does this one's
+//! work again and saves it — never signals, since the sweeps that signal
+//! run only under the lock, and never asks a removal's lock. A process
+//! seen dead on the copy keeps the phase it was recorded in, because a
+//! death under another pando's lock is as likely that pando's stop as a
+//! crash; a readiness timeout and a process seen ready stand. The read
+//! path advances rather than reconciles, so a crash stays visible; a
+//! mutation that runs [`reconcile`] advances first, under the lock.
+//!
+//! # The marks
+//!
+//! [`WorktreeRecord::stopping`] holds a [`StopMark`] per group a stop is
+//! waiting on: written by `mark_stop`, for `stop` and `rm`, and taken off
+//! by `unmark_stop` when the stop settles or fails. While one is live the
+//! group's death is the stop's doing: [`advance_phases`] leaves its phase,
+//! [`reconcile`] keeps its process record, the orphan sweep leaves it
+//! alone, and neither share sweep closes the worktree's share. Only
+//! process records are kept: a native server that dies under a mark is
+//! still forgotten by [`reconcile`] and [`forget_dead_native_services`].
+//! A mark is void once the pando that wrote it is gone, or after
+//! [`STOP_MARK_LIFETIME_SECS`]. A stop that dies mid-wait leaves its
+//! marks, void, and its records, which read as what they are; a group it
+//! had ended reads as failed until the next `stop`, `start` or `rm` of the
+//! worktree clears it. Nothing prunes a void mark.
+//!
+//! [`WorktreeRecord::removing`] holds the [`Removal`] `claim_removal`
+//! writes. It goes with the record in `finish_removal`, or comes off in
+//! `abandon_removal` when the worktree stays, and never goes void. While
+//! its removal lock is held the removal is under way: a start, a share and
+//! a `new` of the name are refused (`refuse_while_removed`), and so is
+//! another `rm`. Once the lock is free it was interrupted: a start, a
+//! share and a `new` are still refused, and the next `rm` finishes it from
+//! the containers and namespaces the record still names. Nor does
+//! `drop_stale_worktree_records` drop a marked record.
+//!
+//! # The removal lock
+//!
+//! Per worktree ([`crate::paths::PandoPaths::removal_lock_file`]), outside
+//! the logs and data the removal deletes. `rm` takes it in `claim_removal`
+//! and holds it to the end, whose step deletes the file under the state
+//! lock. The kernel lets go of a dead process's lock, so the lock, not
+//! `owner_pid`, tells under way from interrupted. [`is_held`] asks by
+//! taking it for a moment, so it is asked only under the state lock
+//! (`removal_of`): `rm` claims under it too, and a look outside it could
+//! fall on a claim, which would then refuse as if another were under way.
+//!
+//! # Lock order
+//!
+//! A removal lock is only ever tried under the state lock, never waited
+//! for, and the `rm` holding one waits for the state lock at each later
+//! step: the two are taken in both orders, and nothing deadlocks because
+//! the inner take of one order never blocks. Every other lock is outer: a
+//! share's own, the home's slots lock, a native service's turn and the
+//! check lock are each taken before the state lock, never while it is held.
+//!
+//! # A forked child's copy
+//!
+//! A child another thread of this pando forks holds a copy of every
+//! descriptor open at the fork until it execs, and with a flock the copy
+//! holds the lock: a lock let go, or a look at one, can read as held a
+//! moment longer. A reader takes that as held and uses its copy. The one
+//! claim that retries is `take_removal_lock`, which asks for up to 200 ms
+//! before it believes a removal lock taken that `removal_of` has just said
+//! is free; [`is_held`] itself asks once.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
