@@ -1643,7 +1643,7 @@ pub fn stop_all_listed(
 /// test can drive the path where a group refuses to die without needing
 /// one that really does.
 ///
-/// In the three steps [`stop_with`] takes, for every worktree at once:
+/// In the three steps `stop` takes, for every worktree at once:
 /// each one's groups marked under the lock, all of them signalled and
 /// waited on together without it, and each worktree settled by what its
 /// wait found under it again. One after another, a dev server slow to
@@ -1901,10 +1901,13 @@ pub(super) fn stop_recorded_with(
     let mut stopped = Vec::new();
     let mut failures = Vec::new();
     // Every group at once, each waited for on a thread of its own: a dev
-    // server takes up to `STOP_GRACE` over SIGTERM, and this runs under
-    // the project's lock, so one after another a stop of one worktree held
-    // up every other worktree's start, and the TUI's refresh, for that
-    // long per process. Together it is as long as the slowest.
+    // server takes up to `STOP_GRACE` over SIGTERM, and what this signals
+    // for real it signals under the project's lock — what a racing start
+    // recorded for a worktree being removed, a group a stop's settle
+    // finds nobody waited on; a stop hands it its waits done. One after
+    // another, that held up every other worktree's start, and the TUI's
+    // refresh, for that long per process; together it is as long as the
+    // slowest.
     let signalled: Vec<Result<()>> = std::thread::scope(|scope| {
         let waits: Vec<_> = groups
             .iter()

@@ -37,8 +37,8 @@
 //! Some still wait under it. A start stops what it replaces with it held:
 //! in its first hold dead-leader groups, a stale record's, and what a mode
 //! change cannot keep serving; in its second a `restart --only`'s
-//! process, and what kept serving through the change. The orphan
-//! sweep (`sweep_orphaned_groups`) and the share sweep signal and wait
+//! process, and what kept serving through the change. The orphan sweep
+//! (`sweep_orphaned_groups`) and the share sweep signal and wait
 //! wherever they run; a failed `new` unwinds its checkout under it; and
 //! `finish_removal` takes down whatever a racing start recorded after the
 //! mark, which is almost always nothing.
@@ -62,14 +62,15 @@
 //! # The marks
 //!
 //! [`WorktreeRecord::stopping`] holds a [`StopMark`] per group a stop is
-//! waiting on: written by `mark_stop`, for `stop` and `rm`, and taken off
-//! by `unmark_stop` when the stop settles or fails. While one is live the
-//! group's death is the stop's doing: [`advance_phases`] leaves its phase,
-//! [`reconcile`] keeps its record — a process's, a native server's, a log
-//! pump's pid — [`forget_dead_native_services`] neither forgets nor
-//! reports the server, the orphan sweep leaves it alone, and neither share
-//! sweep closes the worktree's share. The stop settles them, and removes
-//! a native server's socket directory by its record.
+//! waiting on: written by `mark_stop`, for `stop`, `stop --all` and `rm`,
+//! and taken off by `unmark_stop` when the stop settles or fails. While
+//! one is live the group's death is the stop's doing: [`advance_phases`]
+//! leaves its phase, [`reconcile`] keeps its record — a process's, a
+//! native server's, a log pump's pid — [`forget_dead_native_services`]
+//! neither forgets nor reports the server, the orphan sweep leaves it
+//! alone, and neither share sweep closes the worktree's share. The stop
+//! settles them, and removes a native server's socket directory by its
+//! record.
 //!
 //! A mark is void once the pando that wrote it is gone — a process handed
 //! its pid since is not it, for the mark says when that pando started —
@@ -109,6 +110,9 @@
 //! the inner take of one order never blocks. Every other lock is outer: a
 //! share's own, the home's slots lock, a native service's turn and the
 //! check lock are each taken before the state lock, never while it is held.
+//! git's own locks — the config's, a ref's, an index's — are the git
+//! pando runs: never waited for, by git or pando, so a create's git step
+//! that finds one held tries again a moment later (`retrying_git_locks`).
 //!
 //! # A forked child's copy
 //!
@@ -893,22 +897,6 @@ pub fn save(path: &Path, state: &State) -> Result<()> {
     Ok(())
 }
 
-/// Drops what is no longer running: process records whose pid is gone,
-/// native service records whose pid is gone, and a share whose tunnel or
-/// proxy has exited. The worktree record itself survives — `created_by_pando`
-/// and the port assignment outlive any process.
-///
-/// One exception: a `Failed` record stays. It is the one phase whose whole
-/// purpose is to outlive its process — `refresh` advances phases rather
-/// than reconciling precisely so a crashed dev server stays visible until
-/// the developer acts on it — and dropping it here erased that from
-/// `status` the moment anything else in the project was started or stopped.
-/// The mutations that *are* about those processes clear them explicitly:
-/// `start` for the ones it starts, `stop` for the ones it stops, `rm` for
-/// all of a worktree's.
-///
-/// Every read path calls this before trusting the map. Returns whether
-/// anything changed, so a caller holding the lock knows to save.
 /// Whether a process record still has something behind it.
 ///
 /// The leader first, because that is the question `stop` and the Phase 2b
@@ -964,6 +952,27 @@ impl ProcessRecord {
     }
 }
 
+/// Drops what is no longer running: process records whose pid is gone,
+/// native service records whose pid is gone, and a share whose tunnel or
+/// proxy has exited. The worktree record itself survives — `created_by_pando`
+/// and the port assignment outlive any process.
+///
+/// One exception: a `Failed` record stays. It is the one phase whose whole
+/// purpose is to outlive its process — `refresh` advances phases rather
+/// than reconciling precisely so a crashed dev server stays visible until
+/// the developer acts on it — and dropping it here erased that from
+/// `status` the moment anything else in the project was started or stopped.
+/// The mutations that *are* about those processes clear them explicitly:
+/// `start` for the ones it starts, `stop` for the ones it stops, `rm` for
+/// all of a worktree's.
+///
+/// A group a stop in flight is taking down is that stop's ([`StopMark`]):
+/// its process record, and its service record with the pid on it, stay
+/// for the stop to settle.
+///
+/// Every mutation that drops records calls this, under the lock, once it
+/// has advanced phases; the read path advances instead. Returns whether
+/// anything changed, so the caller knows to save.
 pub fn reconcile(
     state: &mut State,
     is_alive: impl Fn(u32) -> bool,
@@ -1250,13 +1259,6 @@ impl Aggregate {
     }
 }
 
-/// The phase of a whole worktree, or `None` when it is running nothing.
-///
-/// The failure reported is the *earliest* one: with a web process that died
-/// because its api never came up, the api's failure is the one that
-/// explains the worktree, and the classifier's hint for it is the one worth
-/// showing. Ties go to the first name in order, so the answer is stable
-/// across reads.
 /// How long a worktree has to have been up before a port of its processes
 /// that nothing listens on is worth saying: long enough for a second
 /// server the ready one started to bind.
@@ -1291,6 +1293,13 @@ pub fn silent_ports(record: &WorktreeRecord, now: DateTime<Utc>) -> Vec<(String,
     silent
 }
 
+/// The phase of a whole worktree, or `None` when it is running nothing.
+///
+/// The failure reported is the *earliest* one: with a web process that died
+/// because its api never came up, the api's failure is the one that
+/// explains the worktree, and the classifier's hint for it is the one worth
+/// showing. Ties go to the first name in order, so the answer is stable
+/// across reads.
 pub fn aggregate_phase(record: &WorktreeRecord) -> Option<Aggregate> {
     if record.processes.is_empty() {
         return None;
@@ -1348,10 +1357,12 @@ pub fn announce_lock_waits(say: fn(&str)) {
     let _ = LOCK_WAIT_NOTICE.set(say);
 }
 
-/// Takes the lock, waiting for whoever holds it — a `rm` or a `stop` can
-/// hold the state lock for as long as a `docker compose down` takes.
-/// Where a front end asked ([`announce_lock_waits`]), a wait that lasts is
-/// said once rather than looking like a hang.
+/// Takes the lock, waiting for whoever holds it. A holder keeps it for
+/// bookkeeping, a moment, except where something still waits under it —
+/// a start stopping what it replaces, a sweep — which can take a grace
+/// period (see the module doc). Where a front end asked
+/// ([`announce_lock_waits`]), a wait that lasts is said once rather than
+/// looking like a hang.
 pub fn lock(lock_path: &Path) -> Result<StateLock> {
     match LOCK_WAIT_NOTICE.get() {
         Some(say) => lock_announced(lock_path, LOCK_WAIT_NOTICE_AFTER, &|line| say(line)),

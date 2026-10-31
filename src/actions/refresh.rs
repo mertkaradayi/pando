@@ -55,12 +55,13 @@ pub fn refresh(paths: &PandoPaths) -> Refreshed {
         Err(e) => return unreadable(e),
     };
     let mut scans = scan_groups(&seen);
-    // Never waited for: a `rm` or a stop holds it for as long as a
-    // `docker compose down` takes, and `ls`, `status` and the TUI's first
-    // frame waited all that time with nothing on screen. While someone
-    // holds it, the answer is the copy just read, advanced and written
-    // nowhere — the holder's next save is the one that counts, and the
-    // next read that finds the lock free saves this one's work.
+    // Never waited for: a holder can still wait out a grace period under
+    // it — a start stopping what it replaces, a sweep — and `ls`, `status`
+    // and the TUI's first frame would wait all that time with nothing on
+    // screen. While someone holds it, the answer is the copy just read,
+    // advanced and written nowhere — the holder's next save is the one
+    // that counts, and the next read that finds the lock free saves this
+    // one's work.
     let _lock = match state::try_lock(&paths.lock_file()) {
         Ok(Some(lock)) => lock,
         Ok(None) => return advanced_while_held(seen, &scans),
