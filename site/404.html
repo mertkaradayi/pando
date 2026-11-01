@@ -23,7 +23,8 @@
   pre .rt { color: rgba(242,184,75,.75); }
   a { display: inline-flex; align-items: center; min-height: 44px; box-sizing: border-box; color: #050505; background: #F2B84B; padding: 0 18px; border-radius: 8px; font-weight: 700; text-decoration: none; }
   a:hover { background: #FCE4A5; }
-  a.ghost { color: rgba(236,236,236,.94); background: transparent; border: 1.5px solid rgba(236,236,236,.3); margin-left: 8px; }
+  a.ghost { color: rgba(236,236,236,.94); background: transparent; border: 1.5px solid rgba(236,236,236,.3); }
+  .go { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
   a.ghost:hover { border-color: #F2B84B; background: transparent; }
   a:focus-visible { outline: 2px solid #F2B84B; outline-offset: 3px; }
   @media (prefers-reduced-motion: reduce) { h1 .cur { animation: none; } }
@@ -45,7 +46,7 @@
 ░░▒█▒░░░░█░░░░█░▒░▒░▒░█░░░░░▒░█░░░▒░▒░█░░░▒░█░░░▒░░░█░░░░░▒█░░▒░█░░░░░░░█░░░▒█░░░░▒█░░▒░▒░█░░░░░▒░▒░
 <span class="rt">   ┃     ┃    ┃       ┃       ┃       ┃     ┃       ┃      ┃    ┃       ┃    ┃     ┃      ┃
 ╺━━┻━━━━━┻━━━━┻━━━━━━━┻━━━━━━━┻━━━━━━━┻━━━━━┻━━━━━━━┻━━━━━━┻━━━━┻━━━━━━━┻━━━━┻━━━━━┻━━━━━━┻━━━━━━━━╸</span></pre>
-  <div><a id="home" href="/pando/">back to the grove</a><a id="docs" class="ghost" href="/pando/docs.html">the docs</a></div>
+  <div class="go"><a id="home" href="/pando/">back to the grove</a><a id="docs" class="ghost" href="/pando/docs.html">the docs</a></div>
 </main>
 <script>
   // the site lives at /pando/ on GitHub Pages; anywhere else, its root
