@@ -120,7 +120,7 @@ p, li, figcaption, dd { text-wrap: pretty; }
 .chap-line { display: flex; align-items: baseline; white-space: nowrap; font-size: 15px; line-height: 1.2; min-width: 0; }
 .chap-n { color: var(--gold); font-weight: 700; text-shadow: 0 0 10px rgba(242, 184, 75, 0.5); }
 .chap-dot { color: var(--gold-dim); padding: 0 0.5ch; }
-.chap-name { color: #f2f2f2; font-weight: 500; }
+.chap-name { color: #f2f2f2; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
 .chap-beat { color: var(--dim); font-size: var(--t-xs); padding-left: 2ch; overflow: hidden; text-overflow: ellipsis; }
 .chap-line > span { transition: opacity .15s; }
 .chap-line.swap > span { opacity: 0.35; }
@@ -134,6 +134,12 @@ p, li, figcaption, dd { text-wrap: pretty; }
 .nav-cta:hover { background: var(--gold-pale); color: #000; }
 .nav-toggle { display: none; min-height: 44px; min-width: 64px; padding: 0 14px; background: none; border: 1px solid var(--line-2); border-radius: 8px; color: var(--fg); font: inherit; font-size: var(--t-sm); cursor: pointer; }
 .nav-toggle:hover { border-color: var(--gold); }
+/* the menu's own install link, for the narrowest screens, where the bar's button gives its room to the chapter's name */
+.nav-install { display: none !important; }
+@media (max-width: 359px) {
+  .nav-cta { display: none; }
+  .nav.open .nav-list .nav-install { display: flex !important; }
+}
 
 @media (max-width: 1099px) {
   .nav-toggle { display: inline-flex; align-items: center; justify-content: center; }

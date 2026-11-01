@@ -344,6 +344,8 @@
     }
   }
   let docCur = null;
+  const narrowDocs = matchMedia('(max-width: 1068px)');
+  narrowDocs.addEventListener('change', () => { docCur = null; queue(); });
   function docsScroll() {
     if (!toc) return;
     const line = innerHeight * 0.25;
@@ -355,7 +357,9 @@
     const name = tocLinks[k].textContent;
     if (barCur) barCur.textContent = name;
     const group = tocLinks[k].closest('ul') && tocLinks[k].closest('ul').previousElementSibling;
-    setChapter('docs', name, group ? group.textContent.toLowerCase() : '');
+    // where the contents bar shows the section, under the chapter bar, the bar just says docs
+    if (narrowDocs.matches) setChapter('docs', 'pando', '');
+    else setChapter('docs', name, group ? group.textContent.toLowerCase() : '');
     const a = tocLinks[k], tr = toc.getBoundingClientRect(), ar = a.getBoundingClientRect();
     if (toc.scrollHeight > toc.clientHeight && (ar.top < tr.top + 40 || ar.bottom > tr.bottom - 40)) toc.scrollTop += ar.top - tr.top - tr.height / 2;
   }
