@@ -200,6 +200,9 @@ p.d, .note-line { color: var(--fg-2); font-size: var(--t-sm); line-height: 1.65;
 .split.wide-left { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
 .split > * { min-width: 0; }
 .split > pre, .split > .term, .split > figure { margin: 0; }
+/* a column that opens on a heading starts level with its neighbour */
+.split > div > h3:first-child { margin-top: 0; }
+.split + .split { margin-top: clamp(48px, 7vh, 72px); }
 
 /* ---------- panels, terminals, code ---------- */
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; position: relative; min-width: 0; }
@@ -498,7 +501,7 @@ html:not(.js) .demo, html:not(.js) .demo-ctl { display: none; }
 .chat .msg.reply { padding-bottom: 10px; font-size: 15px; color: #f2f2f2; }
 
 .legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 32px; margin: 0; max-width: 900px; }
-.legend > div { display: grid; grid-template-columns: 6.5em minmax(0, 1fr); gap: 12px; align-items: baseline; font-size: var(--t-sm); padding: 9px 0; border-bottom: 1px solid rgba(236, 236, 236, 0.07); }
+.legend > div { display: grid; grid-template-columns: 5em minmax(0, 1fr); gap: 12px; align-items: baseline; font-size: var(--t-sm); padding: 9px 0; border-bottom: 1px solid rgba(236, 236, 236, 0.07); text-wrap: pretty; }
 .gl { font-weight: 700; white-space: nowrap; }
 .legend span:last-child { color: var(--fg-2); }
 
@@ -620,11 +623,16 @@ pre.tuiframe { color: var(--fg); }
 .rail > li:last-child { margin-bottom: 0; }
 .rail > li::before { content: ""; position: absolute; left: -30px; top: 7px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--gold); box-shadow: 0 0 10px rgba(242, 184, 75, 0.45); }
 .rail > li.ok::before { border-color: var(--green); box-shadow: 0 0 10px rgba(124, 255, 178, 0.5); }
+/* the line stops at the last dot */
+.rail > li:last-child::after { content: ""; position: absolute; left: -28px; top: 23px; bottom: 0; width: 8px; background: var(--bg); }
 .rail .step { display: inline; padding: 0; border: 0; color: var(--fg-strong); font-weight: 700; }
 
 /* ---------- 09 · the promise ---------- */
 .promise-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; align-items: stretch; }
-.promise-grid pre.code { margin-top: 18px; }
+.promise-grid pre.code { margin-top: 18px; flex: 1; }
+/* the two cards end level: the tree's box takes what the first card has spare */
+.promise-grid .panel { display: flex; flex-direction: column; }
+.promise-grid .panel > * { flex-shrink: 0; }
 .tree-ls .br { color: var(--dim); }
 .tree-ls .dir { color: var(--gold-pale); }
 .tree-ls .tn { color: var(--dim); }
@@ -689,7 +697,7 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
   .mode-art { flex: none; aspect-ratio: 16 / 10; min-height: 0; border-right: 0; border-bottom: 1px solid rgba(236, 236, 236, 0.07); }
   .panel { padding: 18px 18px; }
   .step-t p { grid-column: 1 / -1; }
-  .legend > div { grid-template-columns: 5.5em minmax(0, 1fr); }
+  .legend > div { grid-template-columns: 4.6em minmax(0, 1fr); }
   .tree-ls .tn { display: none; }
   .seg { display: flex; width: 100%; }
   .seg button { flex: 1 1 auto; padding: 0 8px; font-size: 13px; }
