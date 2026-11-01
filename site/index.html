@@ -369,13 +369,14 @@
         </div>
       </figcaption>
     </figure>
+      <p class="more"><a href="docs.html#repos">Several repositories in full →</a></p>
     </div>
 
     <div class="feature" id="share">
       <div class="f-text">
         <h3 data-beat="share">Share a branch, no staging</h3>
         <p><code>pando share</code>, or <kbd>t</kbd> in the screen, puts a running worktree on a public https link through a Cloudflare quick tunnel. A teammate opens your branch on their phone without anything being deployed, and no account is needed.</p>
-        <p class="d">Public means public: anyone with the link reaches the app until you unshare, stop or remove the worktree, so the screen asks first. If your app needs a login, <code>auth_cmd</code> can open the link already logged in.</p>
+        <p class="d">Public means public: anyone with the link reaches the app until you unshare, stop or remove the worktree, so the screen asks first. If your app needs a login, <code>auth_cmd</code> can open the link already logged in. <a href="docs.html#share">Sharing in full →</a></p>
       </div>
 <figure class="plate sm" data-plate="share" data-still="0" style="--ar: 1.75; --ar-m: 1.05" aria-label="feat/checkout runs on port 22809. pando share sends a beam up from its trunk to a public link, quiet-aspen-grove.trycloudflare.com, which a teammate opens on a phone. pando unshare takes the link down.">
       <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
@@ -394,7 +395,7 @@
       <div class="f-text">
         <h3 data-beat="pull requests">A teammate’s pull request, running</h3>
         <p>Press <kbd>p</kbd> for the repository’s open pull requests, type to narrow them, and press <kbd>⏎</kbd>. The pull request becomes a worktree you can start, even when it comes from a fork. Reviewing stops meaning “stash my work and check out theirs”.</p>
-        <p class="d">A row with a pull request shows <code>◍ #128</code>, and <kbd>space</kbd> <kbd>p</kbd> opens it on GitHub. It uses the GitHub CLI, <code>gh</code>, signed in.</p>
+        <p class="d">A row with a pull request shows <code>◍ #128</code>, and <kbd>space</kbd> <kbd>p</kbd> opens it on GitHub. It uses the GitHub CLI, <code>gh</code>, signed in. <a href="docs.html#prs">Pull requests in full →</a></p>
       </div>
 <figure class="plate sm" data-plate="prs" style="--ar: 1.75; --ar-m: 1.05" aria-label="Beside the main checkout, the repository's open pull requests hang in a list. Enter on #128 plants it as a young trunk, pr-128/cart-drawer, which starts like any other branch, on port 23417.">
       <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
@@ -414,7 +415,7 @@
       <div class="f-text">
         <h3 data-beat="git menu">A careful git menu</h3>
         <p><kbd>space</kbd> <kbd>g</kbd> on a row says where its branch stands against its base, then offers to fetch, pull, rebase or merge the base in. Every move shows its exact git commands before <kbd>⏎</kbd> runs them.</p>
-        <p class="d">A rebase or merge that hits a conflict is aborted, so the checkout ends as it was. It never pushes, resets, stashes or switches branches, and with uncommitted changes it only fetches.</p>
+        <p class="d">A rebase or merge that hits a conflict is aborted, so the checkout ends as it was. It never pushes, resets, stashes or switches branches, and with uncommitted changes it only fetches. <a href="docs.html#git-menu">The git menu →</a></p>
       </div>
       <div class="kv-box" role="group" aria-label="The moves the git menu offers">
         <p class="kv-h"><span class="lbl">space g</span> <span class="d">base</span> origin/main <span class="d">↓3</span> <span class="gr">↑2</span> <span class="d">· fetched 2m ago</span></p>
@@ -431,7 +432,7 @@
       <div class="f-text">
         <h3 data-beat="many at once">Many at once</h3>
         <p><code>start</code>, <code>stop</code>, <code>restart</code> and <code>rm</code> take several names and act on them side by side, each reported as it finishes. On screen, <kbd>+</kbd> marks rows, and <kbd>s</kbd> <kbd>x</kbd> <kbd>r</kbd> <kbd>d</kbd> then act on every marked one at once.</p>
-        <p class="d">Removing several asks in one dialog that says what each removal stops or takes with it. A worktree with uncommitted changes is only removed when you say so.</p>
+        <p class="d">Removing several asks in one dialog that says what each removal stops or takes with it. A worktree with uncommitted changes is only removed when you say so. <a href="docs.html#several-at-once">Several at once →</a></p>
       </div>
 <figure class="plate sm" data-plate="many" data-still="1" style="--ar: 1.75; --ar-m: 1.05" aria-label="Five trunks. Plus marks three of them, feat/a, feat/b and fix/c. s starts all three at once, each turning green as it finishes. d removes the three, and they go back into the root while the others stay.">
       <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
@@ -451,7 +452,7 @@
       <div class="f-text">
         <h3 data-beat="keyboard and mouse">Keyboard first, mouse too</h3>
         <p>Every action has a key, and <kbd>?</kbd> lists them all. The mouse works as well: click a worktree or a dialog’s option, click it again for <kbd>⏎</kbd>, and the wheel scrolls whatever is under it.</p>
-        <p class="d">The log viewer has a tab per process and one for all of them, search, a filter by level, and a jump from error to error. Fifteen colour themes follow your system’s light and dark.</p>
+        <p class="d">The log viewer has a tab per process and one for all of them, search, a filter by level, and a jump from error to error. Fifteen colour themes follow your system’s light and dark. <a href="docs.html#tui">Every key →</a></p>
       </div>
 <pre class="code fit"><span class="d">⏎</span>      pick its mode and start it
 <span class="d">l</span>      its logs

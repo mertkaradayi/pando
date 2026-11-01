@@ -388,7 +388,7 @@
     },
     draw(S, view, st) {
       const A = S.ga, B = S.gb, G = A.G, X = S.X, t = st.now;
-      const F = st.ph === 1 ? E.out(clamp(st.raw * 1.2)) : st.ph === 0 ? (st.from === 0 ? 0 : 1 - E.io(st.raw)) : 1;
+      const F = st.ph === 0 ? (st.from === 0 ? 0 : 1 - E.io(st.raw)) : st.from === 0 ? E.out(clamp(st.raw * 1.2)) : 1;
       let green = st.v([0, 0, 1]), gold = 0;
       if (st.ph === 2 && st.from !== 2) { gold = Math.sin(Math.PI * clamp(st.raw / 0.7)) * 0.7; green = ss(0.5, 1, st.raw); }
       const set = clamp(st.ph === 1 ? ss(0.45, 1, st.raw) : st.v([0, 1, 1]) * (st.ph === 0 ? 0 : 1)) * (F > 0.3 ? 1 : 0);
@@ -459,7 +459,7 @@
         if (st.ph === 1) {
           const done = 0.45 + j * 0.17; // each reported as it finishes
           const e = st.from === 1 ? 1 : st.raw;
-          return { F: 1, green: ss(done, done + 0.12, e), gold: e < done ? 0.35 + 0.35 * Math.sin(t * 7 + j) : 0 };
+          return { F: st.from === 2 ? E.out(clamp(st.raw * 1.3)) : 1, green: ss(done, done + 0.12, e), gold: e < done ? 0.35 + 0.35 * Math.sin(t * 7 + j) : 0 };
         }
         if (st.ph === 2) { const s0 = 0.08 + j * 0.12; return { F: st.from === 2 ? 0 : 1 - E.io(clamp((st.raw - s0) / 0.55)), green: 1, gold: 0 }; }
         return { F: st.from === 2 ? E.out(clamp(st.raw * 1.3)) : 1, green: st.from === 1 ? 1 - st.k : 0, gold: 0 };
@@ -531,7 +531,7 @@
     draw(S, view, st) {
       const g = S.g, G = g.G, X = S.X, t = st.now;
       const list = st.ph === 0 ? clamp(st.raw * 1.6) : st.ph === 1 ? 1 - ss(0, 0.5, st.from === 1 ? 1 : st.raw) : 0;
-      const F = st.ph === 1 ? (st.from === 1 ? 1 : E.out(clamp((st.raw - 0.25) * 1.4))) : st.ph === 2 ? 1 : (st.from === 0 ? 0 : 1 - st.k);
+      const F = st.ph === 1 ? (st.from === 1 ? 1 : E.out(clamp((st.raw - 0.25) * 1.4))) : st.ph === 2 ? (st.from === 0 ? E.out(clamp(st.raw * 1.3)) : 1) : (st.from === 0 ? 0 : 1 - st.k);
       let green = st.v([0, 0, 1]), gold = 0;
       if (st.ph === 2 && st.from !== 2) { gold = Math.sin(Math.PI * clamp(st.raw / 0.7)) * 0.7; green = ss(0.5, 1, st.raw); }
       view.clear(); view.world();
@@ -578,7 +578,7 @@
       const g = S.g, G = g.G, X = S.X, t = st.now, p = st.ph - 1, ctx = view.ctx;
       let F = 1, green = 0, gold = 0;
       if (st.ph === 0) F = st.from > 0 && st.from < 4 ? 1 - E.io(clamp(st.raw * 1.4)) : 0;
-      if (p === 0) F = E.out(clamp(st.raw * 1.2));
+      if (p === 0 || ((p === 1 || p === 2) && (st.from === 0 || st.from === 4))) F = E.out(clamp(st.raw * 1.2));
       if (p === 1) gold = st.settled ? 0.45 : 0.3 + 0.3 * Math.sin(t * 6);
       if (p === 2) { green = st.from === 3 ? 1 : ss(0.4, 0.9, st.raw); gold = (1 - green) * 0.45; }
       if (p === 3) { green = 1; F = st.from === 4 ? 0 : 1 - E.io(clamp(st.raw * 1.2)); }
