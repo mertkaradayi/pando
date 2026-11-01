@@ -77,8 +77,10 @@ code, kbd, samp, pre { font-family: var(--mono); font-variant-ligatures: none; }
 code { color: var(--gold-pale); font-size: 0.94em; overflow-wrap: anywhere; }
 pre code { color: inherit; font-size: inherit; overflow-wrap: normal; }
 h1, h2, h3, h4 { text-wrap: balance; }
-/* prose never ends a paragraph on one short word */
+/* prose never ends a paragraph on one short word; the short // captions
+   are balanced, so none ends on a stray pair of words */
 p, li, figcaption, dd { text-wrap: pretty; }
+.sub, .cap, .code-h, .bars figcaption, .kicker, .hero-fine, .docs .lede { text-wrap: balance; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .skip { position: absolute; left: 12px; top: -60px; z-index: 100; background: var(--gold); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-weight: 700; text-decoration: none; }
 .skip:focus { top: 12px; }
