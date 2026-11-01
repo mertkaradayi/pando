@@ -47,6 +47,10 @@
   --measure: 68ch;
   --wrap: 1180px;
   --gutter: clamp(16px, 5vw, 72px);
+  /* the page's one left and right edge: the gutter, or wider where the
+     content column (--wrap) is centred; the bar, the grove's controls and
+     the footer sit on it too. A percentage, so it resolves on its element. */
+  --inset: max(var(--gutter), calc((100% - var(--wrap)) / 2));
   --hud-h: 64px;
   color-scheme: dark;
 }
@@ -93,7 +97,7 @@ h1, h2, h3, h4 { text-wrap: balance; }
 .hud {
   position: fixed; inset: 0 0 auto 0; z-index: 50; height: var(--hud-h);
   display: flex; align-items: center; justify-content: space-between; gap: 20px;
-  padding: 0 var(--gutter);
+  padding: 0 var(--inset);
 }
 /* the bar's surface is a layer of its own: a blur on .hud itself would make
    the phone menu (position: fixed, inside it) size itself to the bar */
@@ -366,7 +370,7 @@ html:not(.js) .beat-text { position: static; }
 }
 
 /* ---------- 04 · the screen you can press keys in ---------- */
-.try-stage { max-width: calc(1340px + var(--gutter) * 2); margin: 0 auto; padding: 0 var(--gutter); }
+.try-stage { max-width: calc(var(--wrap) + var(--gutter) * 2); margin: 0 auto; padding: 0 var(--gutter); }
 .demo-ctl { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; margin: 0 0 12px; }
 .demo-ctl .hint { margin: 0; color: var(--fg-2); font-size: var(--t-sm); }
 .demo-ctl .btns { display: flex; gap: 8px; }
@@ -615,7 +619,7 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
 .end-copy .tagline span { display: block; }
 .end-copy .tagline span:last-child { color: #ededed; }
 .end-links { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; max-width: none; margin: 0; }
-.foot { display: flex; justify-content: space-between; align-items: center; gap: 8px 24px; flex-wrap: wrap; padding: 18px var(--gutter) 22px; font-size: var(--t-xs); color: var(--fg-2); border-top: 1px solid var(--line); }
+.foot { display: flex; justify-content: space-between; align-items: center; gap: 8px 24px; flex-wrap: wrap; padding: 18px var(--inset) 22px; font-size: var(--t-xs); color: var(--fg-2); border-top: 1px solid var(--line); }
 .foot nav { display: flex; flex-wrap: wrap; gap: 0 18px; }
 .foot a { display: inline-flex; align-items: center; min-height: 44px; color: var(--fg-2); }
 .foot a:hover { color: var(--gold); }
