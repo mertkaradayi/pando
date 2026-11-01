@@ -237,7 +237,7 @@
       S.pw = pw; S.pH = ph;
       const bottom = nar ? G + 236 + ph * 2 + 64 : G + 236 + ph;
       const half = nar ? pw / 2 + 40 : pw + 40;
-      frameOn(view, [S.X[0] - half, G - crown(S.g) - 8, S.X[1] + half, bottom], [6, 0, 30, 0]);
+      frameOn(view, [S.X[0] - half, G - crown(S.g) - 8, S.X[1] + half, bottom], [12, 0, 30, 0]);
     },
     // where a pad sits: k 0 the files, 1 node_modules
     at(S, i, k) {
@@ -296,9 +296,15 @@
       // a narrow screen keeps the names short, so neighbours never touch
       const n = S.nar;
       under(0, 0, 'files', 'gold', 1);
-      under(1, 0, cow < 0.5 ? (n ? 'all written' : 'every file written') : (n ? '40 written' : '40 written · rest cloned'), cow < 0.5 ? 'white' : 'green', clamp(st.ph === 0 && st.from === 0 ? st.raw * 2 : 1));
+      under(1, 0, cow < 0.5 ? (n ? 'all written' : 'every file written') : '40 written', cow < 0.5 ? 'white' : 'green', clamp(st.ph === 0 && st.from === 0 ? st.raw * 2 : 1));
       under(0, 1, 'node_modules', 'gold', nm);
-      under(1, 1, n ? '2 written' : 'cloned · 2 written', 'green', nm);
+      under(1, 1, '2 written', 'green', nm);
+      // the threads say what the hollow squares are: main's own blocks, shared
+      if (cow > 0.01) {
+        const mx = (bx + ax) / 2 + S.pw / 2, my = Math.min(by, ay) - 6 - 56;
+        const [qx, qy] = view.proj(mx, my);
+        chip(view, qx, qy, n ? 'cloned' : 'cloned from main ⌂', { tone: 'gold', size: 12, alpha: cow });
+      }
     },
   };
 
@@ -552,7 +558,8 @@
     },
   };
 
-  // 08 · pando check: a throwaway trunk, tested, then gone
+  // 08 · the first run: your agent writes its answers beside the grove, never
+  // into it; then pando check grows a throwaway trunk, tests it, and removes it
   SPECS.check = {
     layout(S, view) {
       const nar = view.w < 560, key = nar ? 'n' : 'w';
@@ -562,34 +569,48 @@
         S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 7, x0: 360, x1: 1460, seed: 91 });
       }
       const G = S.g.G;
-      frameOn(view, [S.nar ? 520 : 430, G - crown(S.g) - 8, S.nar ? 1330 : 1390, G + 200], [36, 0, 4, 0]);
+      frameOn(view, [S.nar ? 520 : 430, G - crown(S.g) - 8, S.nar ? 1330 : 1390, G + 200], [40, 0, 4, 0]);
     },
     draw(S, view, st) {
-      const g = S.g, G = g.G, X = S.X, t = st.now;
+      const g = S.g, G = g.G, X = S.X, t = st.now, p = st.ph - 1, ctx = view.ctx;
       let F = 1, green = 0, gold = 0;
-      if (st.ph === 0) F = st.from === 0 ? E.out(clamp(st.raw * 1.2)) : E.out(clamp(st.raw * 1.2));
-      if (st.ph === 1) gold = st.settled ? 0.45 : 0.3 + 0.3 * Math.sin(t * 6);
-      if (st.ph === 2) { green = st.from === 2 ? 1 : ss(0.4, 0.9, st.raw); gold = (1 - green) * 0.45; }
-      if (st.ph === 3) { green = 1; F = st.from === 3 ? 0 : 1 - E.io(clamp(st.raw * 1.2)); }
-      const ready = st.ph === 3 ? ss(0.5, 1, st.from === 3 ? 1 : st.raw) : 0;
+      if (st.ph === 0) F = st.from > 0 && st.from < 4 ? 1 - E.io(clamp(st.raw * 1.4)) : 0;
+      if (p === 0) F = E.out(clamp(st.raw * 1.2));
+      if (p === 1) gold = st.settled ? 0.45 : 0.3 + 0.3 * Math.sin(t * 6);
+      if (p === 2) { green = st.from === 3 ? 1 : ss(0.4, 0.9, st.raw); gold = (1 - green) * 0.45; }
+      if (p === 3) { green = 1; F = st.from === 4 ? 0 : 1 - E.io(clamp(st.raw * 1.2)); }
+      const ready = p === 3 ? ss(0.5, 1, st.from === 4 ? 1 : st.raw) : 0;
+      const agent = st.v([1, 0, 0, 0, 0]);
       view.clear(); view.world();
       g.drawGround(view, 1);
       g.drawRoots(view, { alpha: 1, glow: 1 + 0.7 * ready, trunks: conns(g, X, [{ green: 0.85 * ready }, { pres: clamp(F * 3), green }]), particles: 0.65 }, t);
-      if (st.ph === 3 && !st.settled) { const xa = view.unproj(0, 0)[0], xb = view.unproj(view.w, 0)[0]; g.drawWave(view, ss(0.35, 1, st.raw), '124,255,178', xa - 200, xb + 200); }
+      if (p === 3 && !st.settled) { const xa = view.unproj(0, 0)[0], xb = view.unproj(view.w, 0)[0]; g.drawWave(view, ss(0.35, 1, st.raw), '124,255,178', xa - 200, xb + 200); }
       g.drawGhosts(view, 1, 0.22, t);
       P.drawTree(view, g.trees[0], { x: X[0], y: G, s: 1, F: 1, alpha: 1, green: 0.85 * ready, glow: 12, still: st.settled }, t);
       P.drawTree(view, g.trees[1], { x: X[1], y: G, s: 0.9, F, alpha: 0.85, green, gold, glow: 12, still: st.settled }, t);
       view.screen();
       const size = labelSize(view);
       names(view, X, G, [{ text: 'main ⌂', green: ready }, { text: '(no branch)', green, gold: gold > 0.2, alpha: clamp(F * 2) }], size);
+      // your agent answers through pando, into ~/.pando: beside the grove, not in it
+      if (agent > 0.01) {
+        const a = chip(view, 8, 20, 'your coding agent', { tone: 'white', size: 12, align: 'left', alpha: agent });
+        const b = chip(view, view.w - 8, 20, '~/.pando', { tone: 'gold', size: 12, align: 'right', alpha: agent });
+        if (a && b) {
+          const k = st.ph === 0 && st.from === 0 ? ss(0.15, 0.85, st.raw) : 1, x0 = a.x + a.w + 4, x1 = b.x - 4, y = 20;
+          ctx.save(); ctx.globalAlpha = agent; ctx.setLineDash([4, 5]); ctx.lineDashOffset = -t * 18;
+          ctx.strokeStyle = 'rgba(242,184,75,.8)'; ctx.lineWidth = 1.3;
+          ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(lerp(x0, x1, k), y); ctx.stroke(); ctx.restore();
+        }
+        tag(view, X[0], G - 120, 'untouched', { tone: 'white', size: 12, side: -1, alpha: agent * (st.ph === 0 && st.from === 0 ? ss(0.6, 1, st.raw) : 1) });
+      }
       const ta = clamp(F * 2 - 0.6);
-      tag(view, X[1], G - 70, 'a1b2c3d', { tone: 'dim', size: 12, side: -1, alpha: st.ph === 0 ? ta : st.ph === 3 ? ta : 1 });
-      const svc = st.ph === 1 ? clamp(st.raw * 1.5) : st.ph === 2 ? 1 : st.ph === 3 ? ta : 0;
+      tag(view, X[1], G - 70, 'a1b2c3d', { tone: 'dim', size: 12, side: -1, alpha: p === 0 || p === 3 ? ta : p > 0 ? 1 : 0 });
+      const svc = p === 1 ? clamp(st.raw * 1.5) : p === 2 ? 1 : p === 3 ? ta : 0;
       tag(view, X[1], G - 130, 'api :29848', { tone: green > 0.5 ? 'green' : 'gold', size, side: 1, alpha: svc });
       tag(view, X[1], G - 180, 'web :29849', { tone: green > 0.5 ? 'green' : 'gold', size, side: 1, alpha: svc });
       // asked for its first page
       const [cx, top] = view.proj(X[1], G - treeTop(g, 1) * 0.9);
-      const ok = st.ph === 2 ? clamp(st.raw * 1.4) : st.ph === 3 ? ta : 0;
+      const ok = p === 2 ? clamp(st.raw * 1.4) : p === 3 ? ta : 0;
       beam(view, cx, top + 4, cx, Math.max(16, top - 26) + 10, ok, '124,255,178', { alpha: ok });
       chip(view, cx, Math.max(16, top - 26), 'GET / → HTTP 200', { tone: 'green', size: 12, alpha: clamp(ok * 2 - 1) });
       const [mx, my] = view.proj(X[0], G - treeTop(g, 0));

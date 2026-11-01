@@ -547,7 +547,7 @@ html:not(.js) .demo, html:not(.js) .demo-ctl { display: none; }
    The art on top, the steps under it, and what the step says below. The
    says of every step share one cell, so changing step never moves the page;
    without JavaScript they read as a list and the art is gone. */
-.plate { margin: 28px 0 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-width: 0; }
+.plate { container: plate / inline-size; margin: 28px 0 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; min-width: 0; }
 .plate-art { position: relative; aspect-ratio: var(--ar, 2.4); background: #060504; border-bottom: 1px solid rgba(236, 236, 236, 0.07); }
 .plate-art canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 html:not(.js) .plate-art, html:not(.js) .plate-ctl, html:not(.js) .plate-meter { display: none; }
@@ -595,12 +595,19 @@ html:not(.js) .plate-says > .say + .say { margin-top: 18px; padding-top: 18px; b
 .plate.sm .plate-says { padding: 14px 16px 16px; }
 .plate.sm .say p { margin: 0; }
 /* pando check: the transcript prints as the check goes; lines not reached yet keep their room */
-.plate-says.log { padding: 0; background: var(--term); }
+.plate-says.log { padding: 0; background: var(--term); align-content: start; }
 .log-h { display: flex; gap: 10px; margin: 0; max-width: none; padding: 9px 16px; border-bottom: 1px solid rgba(236, 236, 236, 0.08); color: var(--dim); font-size: var(--t-xs); }
 .log-h .grow { flex: 1; color: var(--fg-2); }
 .log pre { margin: 0; padding: 14px 16px 16px; font-size: var(--t-code); line-height: 1.6; }
 .js .log .l.off { visibility: hidden; }
 .feature > .plate { margin: 0; }
+/* the first run, on a wide screen: the grove and its steps beside the transcript */
+@media (min-width: 1069px) {
+  .plate.side { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .plate.side .plate-art { grid-column: 1; grid-row: 1; aspect-ratio: var(--ar-side, 1.3); border-right: 1px solid rgba(236, 236, 236, 0.07); }
+  .plate.side .plate-ctl { grid-column: 1; grid-row: 2; align-self: stretch; align-items: flex-start; border-bottom: 0; border-right: 1px solid rgba(236, 236, 236, 0.07); }
+  .plate.side .plate-says { grid-column: 2; grid-row: 1 / span 2; }
+}
 .feature.wide { grid-template-columns: minmax(0, 1fr); align-items: start; }
 .feature.wide .f-text p { max-width: 78ch; }
 .feature.wide > .plate { margin-top: 4px; }
@@ -739,11 +746,12 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
   pre.code { padding: 14px 14px; }
   .foot { flex-direction: column; align-items: flex-start; }
 }
-/* a phone: the steps are tabs, a key over its word, and play is its icon */
-@media (max-width: 520px) {
+/* a narrow plate (a phone, a half column): the steps are tabs, a key
+   over its word, and play is its icon */
+@container plate (max-width: 600px) {
   .plate-ctl { padding: 5px 6px; gap: 6px; }
   .plate-steps { flex-wrap: nowrap; gap: 3px; }
-  .ps { flex: 1 1 auto; flex-direction: column; justify-content: center; gap: 4px; min-height: 54px; padding: 4px 4px 7px; font-size: 12.5px; line-height: 1.1; }
+  .ps { flex: 1 1 0; max-width: 128px; flex-direction: column; justify-content: center; gap: 4px; min-height: 54px; padding: 4px 4px 7px; font-size: 12.5px; line-height: 1.1; }
   .ps-n { min-width: 1.75em; height: 1.75em; font-size: 12px; }
   .ps::after { left: 6px; right: 6px; bottom: 3px; }
   .plate-play { width: 44px; padding: 0; justify-content: center; }

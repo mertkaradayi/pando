@@ -390,7 +390,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p><code>pando share</code>, or <kbd>t</kbd> in the screen, puts a running worktree on a public https link through a Cloudflare quick tunnel. A teammate opens your branch on their phone without anything being deployed, and no account is needed.</p>
         <p class="d">Public means public: anyone with the link reaches the app until you unshare, stop or remove the worktree, so the screen asks first. If your app needs a login, <code>auth_cmd</code> can open the link already logged in.</p>
       </div>
-<figure class="plate sm" data-plate="share" style="--ar: 1.5; --ar-m: 1.05" aria-label="feat/checkout runs on port 22809. pando share sends a beam up from its trunk to a public link, quiet-aspen-grove.trycloudflare.com, which a teammate opens on a phone. pando unshare takes the link down.">
+<figure class="plate sm" data-plate="share" data-still="0" style="--ar: 1.75; --ar-m: 1.05" aria-label="feat/checkout runs on port 22809. pando share sends a beam up from its trunk to a public link, quiet-aspen-grove.trycloudflare.com, which a teammate opens on a phone. pando unshare takes the link down.">
       <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
       <div class="plate-ctl">
         <div class="plate-steps" role="group" aria-label="Show a step"><button type="button" class="ps" aria-pressed="true"><span class="ps-n" aria-hidden="true">t</span>share</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">t</span>unshare</button></div>
@@ -409,7 +409,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p>Press <kbd>p</kbd> for the repository’s open pull requests, type to narrow them, and press <kbd>⏎</kbd>. The pull request becomes a worktree you can start, even when it comes from a fork. Reviewing stops meaning “stash my work and check out theirs”.</p>
         <p class="d">A row with a pull request shows <code>◍ #128</code>, and <kbd>space</kbd> <kbd>p</kbd> opens it on GitHub. It uses the GitHub CLI, <code>gh</code>, signed in.</p>
       </div>
-<figure class="plate sm" data-plate="prs" style="--ar: 1.5; --ar-m: 1.05" aria-label="Beside the main checkout, the repository's open pull requests hang in a list. Enter on #128 plants it as a young trunk, pr-128/cart-drawer, which starts like any other branch, on port 23417.">
+<figure class="plate sm" data-plate="prs" style="--ar: 1.75; --ar-m: 1.05" aria-label="Beside the main checkout, the repository's open pull requests hang in a list. Enter on #128 plants it as a young trunk, pr-128/cart-drawer, which starts like any other branch, on port 23417.">
       <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
       <div class="plate-ctl">
         <div class="plate-steps" role="group" aria-label="Show a key"><button type="button" class="ps" aria-pressed="true"><span class="ps-n" aria-hidden="true">p</span>the list</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">⏎</span>a worktree</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">s</span>start</button></div>
@@ -446,7 +446,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p><code>start</code>, <code>stop</code>, <code>restart</code> and <code>rm</code> take several names and act on them side by side, each reported as it finishes. On screen, <kbd>+</kbd> marks rows, and <kbd>s</kbd> <kbd>x</kbd> <kbd>r</kbd> <kbd>d</kbd> then act on every marked one at once.</p>
         <p class="d">Removing several asks in one dialog that says what each removal stops or takes with it. A worktree with uncommitted changes is only removed when you say so.</p>
       </div>
-<figure class="plate sm" data-plate="many" style="--ar: 1.5; --ar-m: 1.05" aria-label="Five trunks. Plus marks three of them, feat/a, feat/b and fix/c. s starts all three at once, each turning green as it finishes. d removes the three, and they go back into the root while the others stay.">
+<figure class="plate sm" data-plate="many" data-still="1" style="--ar: 1.75; --ar-m: 1.05" aria-label="Five trunks. Plus marks three of them, feat/a, feat/b and fix/c. s starts all three at once, each turning green as it finishes. d removes the three, and they go back into the root while the others stay.">
       <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
       <div class="plate-ctl">
         <div class="plate-steps" role="group" aria-label="Show a key"><button type="button" class="ps" aria-pressed="true"><span class="ps-n" aria-hidden="true">+</span>mark</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">s</span>start</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">d</span>remove</button></div>
@@ -525,24 +525,27 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
       </div>
     </div>
 
+    <figure class="plate side check" data-plate="check" style="--ar: 2.3; --ar-m: 1.05; --ar-side: 1.3" aria-label="The first run on an example project, acme-shop. Your coding agent writes its answers into ~/.pando, beside the grove, and the repository stays untouched. Then pando check grows a throwaway trunk with no branch at commit a1b2c3d, installs it, starts api and web, asks web for its first page and gets HTTP 200, removes the trunk, and acme-shop is ready.">
+      <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
+      <div class="plate-ctl">
+        <div class="plate-steps" role="group" aria-label="Show a step of the first run"><button type="button" class="ps" aria-pressed="true"><span class="ps-n" aria-hidden="true">1</span>agent</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">2</span>grow</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">3</span>start</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">4</span>ask</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">5</span>ready</button></div>
+        <button type="button" class="plate-play" hidden><span class="ico" aria-hidden="true"></span><span class="lbl">play</span></button>
+      </div>
+      <figcaption class="plate-says log">
+        <p class="log-h"><span class="grow">the first run</span><span>example project</span></p>
+<pre class="hang h7"><span class="l c" data-ph="0"># your coding agent, doing what pando init --agent says</span><span class="l" data-ph="0"><span class="p">$</span> pando init --yes</span><span class="l" data-ph="0"><span class="p">$</span> pando init --answers - <span class="c"># only what is still open</span></span><span class="l" data-ph="0"><span class="p">$</span> pando check</span><span class="l d" data-ph="1">pando: testing acme-shop's setup at a1b2c3d (origin/main), in a throwaway worktree (no branch)</span><span class="l d" data-ph="2">pando: installing</span><span class="l d" data-ph="2">pando: starting api, web</span><span class="l d" data-ph="2">pando: waiting for api, web to be ready</span><span class="l d" data-ph="3">pando: asking web for its first page on :29849</span><span class="l d" data-ph="3">pando: installed 14.2s · api ready :29848 · web ready :29849 (HTTP 200)</span><span class="l d" data-ph="3">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: "What a worktree costs on disk" in `pando init <span class="nw">--agent</span> <span class="nw">--reference</span> brief`</span><span class="l d" data-ph="4">pando: removed the test worktree; nothing left behind</span><span class="l h2" data-ph="4"><span class="gr">✓</span> acme-shop is ready: `pando` opens it</span></pre>
+      </figcaption>
+    </figure>
+
     <div class="split">
       <div>
         <h3 data-beat="no agent">No agent? Or no setup?</h3>
         <p>Press <kbd>⏎</kbd> on the setup screen and pando makes its own guess, tested by the same check. Press <kbd>esc</kbd> to skip setup and only manage worktrees; nothing waits on it.</p>
+      </div>
+      <div>
         <h3 data-beat="what it reads">What it reads</h3>
         <p>Your lockfile, dev scripts, env example, version files and compose file. It knows Next.js, Vite, Nuxt, Astro, Angular, Expo, Django, Rails, Phoenix and Laravel, as well as plain Node, Go and Rust projects. Every decision lands in <code>~/.pando</code>, with its reason, and you can edit any of it.</p>
       </div>
-      <figure class="plate sm check" data-plate="check" style="--ar: 1.55; --ar-m: 1.05" aria-label="pando check on an example project, acme-shop: a throwaway trunk with no branch grows beside the main checkout at commit a1b2c3d, installs, starts api and web, is asked for its first page and answers HTTP 200, then goes back into the root, and acme-shop is ready.">
-      <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
-      <div class="plate-ctl">
-        <div class="plate-steps" role="group" aria-label="Show a step of the check"><button type="button" class="ps" aria-pressed="true"><span class="ps-n" aria-hidden="true">1</span>grow</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">2</span>install</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">3</span>answer</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">4</span>remove</button></div>
-        <button type="button" class="plate-play" hidden><span class="ico" aria-hidden="true"></span><span class="lbl">play</span></button>
-      </div>
-      <figcaption class="plate-says log">
-        <p class="log-h"><span class="grow">pando check</span><span>example project</span></p>
-<pre class="hang h7"><span class="l d" data-ph="0">pando: testing acme-shop's setup at a1b2c3d (origin/main), in a throwaway worktree (no branch)</span><span class="l d" data-ph="1">pando: installing</span><span class="l d" data-ph="1">pando: starting api, web</span><span class="l d" data-ph="1">pando: waiting for api, web to be ready</span><span class="l d" data-ph="2">pando: asking web for its first page on :29849</span><span class="l d" data-ph="2">pando: installed 14.2s · api ready :29848 · web ready :29849 (HTTP 200)</span><span class="l d" data-ph="2">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: "What a worktree costs on disk" in `pando init <span class="nw">--agent</span> <span class="nw">--reference</span> brief`</span><span class="l d" data-ph="3">pando: removed the test worktree; nothing left behind</span><span class="l h2" data-ph="3"><span class="gr">✓</span> acme-shop is ready: `pando` opens it</span></pre>
-      </figcaption>
-    </figure>
     </div>
     <p class="more"><a href="docs.html#first-run">How the first run works →</a> <a href="docs.html#config">Setup and <code>pando.toml</code> →</a> <a href="docs.html#agents">For agents: JSON and exit codes →</a></p>
   </div>
