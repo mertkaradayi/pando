@@ -457,7 +457,7 @@
         if (!marked.includes(i)) return { F: 1, green: i === 0 ? 1 : 0, gold: 0 };
         const j = marked.indexOf(i);
         if (st.ph === 1) {
-          const done = 0.45 + j * 0.17; // each reported as it finishes
+          const done = 0.45 + [1, 2, 0][j] * 0.17; // each reported as it finishes: fix/c, feat/a, feat/b
           const e = st.from === 1 ? 1 : st.raw;
           return { F: st.from === 2 ? E.out(clamp(st.raw * 1.3)) : 1, green: ss(done, done + 0.12, e), gold: e < done ? 0.35 + 0.35 * Math.sin(t * 7 + j) : 0 };
         }
@@ -548,7 +548,8 @@
       // the open pull requests, as the picker lists them; ⏎ plants one
       if (list > 0.01 || (st.ph === 1 && st.raw < 0.6)) {
         const [cx] = view.proj(X[1], 0), y0 = 22, dy = size * 1.9;
-        const rows = ['#131 fix VAT rounding', '#128 cart drawer', '#124 search filters'];
+        // #128 is a fork's: one from the repository itself keeps its own branch name
+        const rows = ['#131 fix VAT rounding', '#128 cart drawer · fork', '#124 search filters'];
         rows.forEach((r, i) => {
           if (i === 1 && st.ph === 1) {
             const e = st.from === 1 ? 1 : clamp(st.raw / 0.5), [tx, ty] = view.proj(X[1], G - 200);

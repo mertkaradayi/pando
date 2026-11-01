@@ -282,13 +282,13 @@
         <div class="say" data-mw="1.2%" data-ml="pando’s writes" data-mv="≈ 3 MB" data-mus>
           <div class="say-t"><h3>pando’s clones them, and writes what changed.</h3><p>Where the disk can clone (APFS on macOS; btrfs, XFS or bcachefs on Linux), a new worktree’s files are <b>copy-on-write clones</b> of your main checkout’s: they share disk space until one of them changes. git writes only the 40 files your branch changed.</p></div>
         </div>
-        <div class="say" data-mw="1.2%" data-ml="node_modules, cloned: the install adds" data-mv="what differs" data-mus>
+        <div class="say" data-mw="1.2%" data-ml="node_modules, cloned · the install writes" data-mv="only what differs" data-mus>
           <div class="say-t"><h3>Dependencies and builds, cloned too.</h3><p><code>clone</code> gives a new worktree your main checkout’s <code>node_modules</code> before the install, so the install only fixes what differs. A Rust crate’s <code>target</code> can come along, so a branch compiles only its own crates. A passing <code>pando check</code> measures what a worktree costs:</p></div>
 <pre class="code hang h7"><span class="l d">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: "What a worktree costs on disk" in `pando init <span class="nw">--agent</span> <span class="nw">--reference</span> brief`</span></pre>
         </div>
       </figcaption>
     </figure>
-    <p class="note-line">On a disk that cannot clone, such as ext4, pando uses git’s own checkout. <code>du</code> still counts each worktree in full; the saving shows up as free space. What to share is your project’s call: pando measures, and proposes <code>clone</code> when your main checkout has <code>node_modules</code>.</p>
+    <p class="note-line">On a disk that cannot clone, such as ext4, pando uses git’s own checkout. <code>du</code> still counts each worktree in full; the saving shows up as free space. What to share is your project’s call: pando measures, and proposes <code>clone</code> for the <code>node_modules</code> or Rust <code>target</code> your main checkout has, but not where the install deletes it first, as <code>npm ci</code> does.</p>
       <p class="more"><a href="docs.html#disk">Copy-on-write, <code>clone</code> and the disk report →</a></p>
     </div>
   </div>
@@ -327,7 +327,7 @@
     <div class="split">
       <div>
         <p>Through its environment. pando reads the address your <code>.env</code> already has and changes only what the mode needs: the port, the database name or the slot. Your app needs no code for pando, and no file is written to tell it.</p>
-        <p class="d">Namespaced mode works inside a server you own, so it is careful. It is opt-in. Every name it makes begins with your main database’s name, so it can never be your main database. It takes a Redis slot only while the slot is empty, and <code>pando rm</code> drops only what pando’s own records say it made.</p>
+        <p class="d">Namespaced mode works inside a server you own, so it is careful. It is opt-in. Every database it makes is named after your main one (<code>shop__…</code>), so it can never be your main database. It takes a Redis slot only while the slot is empty, and <code>pando rm</code> drops only what pando’s own records say it made.</p>
       </div>
 <pre class="code hang env"><span class="l c">#&nbsp;your .env, on main</span><span class="l">DATABASE_URL=postgres://app@<wbr>localhost:5432/<span class="d">shop</span></span><span class="l">&nbsp;</span><span class="l c">#&nbsp;what feat/login’s processes get</span><span class="l m"><span class="d">shared     </span> <span class="nw">…@localhost:5432/shop</span></span><span class="l m"><span class="d">namespaced </span> <span class="nw">…@localhost:5432/<span class="g">shop__feat_login</span></span></span><span class="l m"><span class="d">isolated   </span> <span class="nw">…@localhost:<span class="g">30010</span>/shop</span></span></pre>
     </div>
@@ -361,7 +361,7 @@
         </div>
         <div class="say">
           <div class="say-t"><p>One branch, a trunk on every root: a worktree of each repository on <code>feat/x</code>, kept together as one set, one row on the screen. A repository that has the branch uses it; one that does not makes it from its own base.</p></div>
-<pre class="code hang"><span class="l"><span class="p">$</span> pando new feat/x</span><span class="l d">→ backend/ and frontend/, each on feat/x, in one set</span></pre>
+<pre class="code hang"><span class="l"><span class="p">$</span> pando new feat/x</span><span class="l d">pando: checking out feat/x in backend</span><span class="l d">pando: checking out feat/x in frontend</span><span class="l">created feat+x at ~/.pando/projects/…/feat+x</span></pre>
         </div>
         <div class="say">
           <div class="say-t"><p>One start runs every process of the set in one port window, so the frontend reaches the backend through <code>{port:api}</code>. <code>stop</code>, <code>rm</code>, <code>open</code>, <code>share</code> and <code>check</code> act on the whole set.</p></div>
@@ -376,7 +376,7 @@
       <div class="f-text">
         <h3 data-beat="share">Share a branch, no staging</h3>
         <p><code>pando share</code>, or <kbd>t</kbd> in the screen, puts a running worktree on a public https link through a Cloudflare quick tunnel. A teammate opens your branch on their phone without anything being deployed, and no account is needed.</p>
-        <p class="d">Public means public: anyone with the link reaches the app until you unshare, stop or remove the worktree, so the screen asks first. If your app needs a login, <code>auth_cmd</code> can open the link already logged in. <a href="docs.html#share">Sharing in full →</a></p>
+        <p class="d">Public means public: anyone with the link reaches the app until you unshare, stop, restart or remove the worktree, so the screen asks first. If your app needs a login, <code>auth_cmd</code> can open the link already logged in. <a href="docs.html#share">Sharing in full →</a></p>
       </div>
 <figure class="plate sm" data-plate="share" data-still="0" style="--ar: 1.75; --ar-m: 1.05" aria-label="feat/checkout runs on port 22809. pando share sends a beam up from its trunk to a public link, quiet-aspen-grove.trycloudflare.com, which a teammate opens on a phone. pando unshare takes the link down.">
       <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
@@ -386,7 +386,7 @@
       </div>
       <figcaption class="plate-says">
         <div class="say on"><pre class="code hang"><span class="l"><span class="p">$</span> pando share feat/checkout</span><span class="l g">https://quiet-aspen-grove.trycloudflare.com</span></pre></div>
-        <div class="say"><pre class="code hang"><span class="l"><span class="p">$</span> pando unshare feat/checkout</span><span class="l d">the link stops working; the branch keeps running</span></pre></div>
+        <div class="say"><pre class="code hang"><span class="l"><span class="p">$</span> pando unshare feat/checkout</span><span class="l">unshared feat+checkout</span><span class="l c">#&nbsp;the link is gone; the branch keeps running</span></pre></div>
       </figcaption>
     </figure>
     </div>
@@ -397,7 +397,7 @@
         <p>Press <kbd>p</kbd> for the repository’s open pull requests, type to narrow them, and press <kbd>⏎</kbd>. The pull request becomes a worktree you can start, even when it comes from a fork. Reviewing stops meaning “stash my work and check out theirs”.</p>
         <p class="d">A row with a pull request shows <code>◍ #128</code>, and <kbd>space</kbd> <kbd>p</kbd> opens it on GitHub. It uses the GitHub CLI, <code>gh</code>, signed in. <a href="docs.html#prs">Pull requests in full →</a></p>
       </div>
-<figure class="plate sm" data-plate="prs" style="--ar: 1.75; --ar-m: 1.05" aria-label="Beside the main checkout, the repository's open pull requests hang in a list. Enter on #128 plants it as a young trunk, pr-128/cart-drawer, which starts like any other branch, on port 23417.">
+<figure class="plate sm" data-plate="prs" style="--ar: 1.75; --ar-m: 1.05" aria-label="Beside the main checkout, the repository's open pull requests hang in a list. Enter on #128, a pull request from a fork, plants it as a young trunk, pr-128/cart-drawer, which starts like any other branch, on port 23417. A pull request from the repository itself keeps its own branch name.">
       <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
       <div class="plate-ctl">
         <div class="plate-steps" role="group" aria-label="Show a key"><button type="button" class="ps" aria-pressed="true"><span class="ps-n" aria-hidden="true">p</span>the list</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">⏎</span>a worktree</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">s</span>start</button></div>
@@ -405,7 +405,7 @@
       </div>
       <figcaption class="plate-says">
         <div class="say on"><p>The open pull requests, as the screen lists them. Type to narrow them.</p></div>
-        <div class="say"><p><code>#128</code> becomes a worktree. From a fork, it is fetched from <code>pull/128/head</code> into <span class="nw"><code>pr-128/cart-drawer</code>.</span></p></div>
+        <div class="say"><p><code>#128</code> becomes a worktree. One from the repository keeps its own branch; this one is from a fork, so it is fetched from <code>pull/128/head</code> into <span class="nw"><code>pr-128/cart-drawer</code>.</span></p></div>
         <div class="say"><p>It starts like any other branch, on ports of its own, and its row shows <code>◍ #128</code>.</p></div>
       </figcaption>
     </figure>
@@ -432,9 +432,9 @@
       <div class="f-text">
         <h3 data-beat="many at once">Many at once</h3>
         <p><code>start</code>, <code>stop</code>, <code>restart</code> and <code>rm</code> take several names and act on them side by side, each reported as it finishes. On screen, <kbd>+</kbd> marks rows, and <kbd>s</kbd> <kbd>x</kbd> <kbd>r</kbd> <kbd>d</kbd> then act on every marked one at once.</p>
-        <p class="d">Removing several asks in one dialog that says what each removal stops or takes with it. A worktree with uncommitted changes is only removed when you say so. <a href="docs.html#several-at-once">Several at once →</a></p>
+        <p class="d">On screen, removing several asks once, in one dialog that says what each removal stops or takes with it. A worktree with uncommitted changes is only removed when you say so: <kbd>F</kbd> in that dialog, <code>--force</code> on the command line. <a href="docs.html#several-at-once">Several at once →</a></p>
       </div>
-<figure class="plate sm" data-plate="many" data-still="1" style="--ar: 1.75; --ar-m: 1.05" aria-label="Five trunks. Plus marks three of them, feat/a, feat/b and fix/c. s starts all three at once, each turning green as it finishes. d removes the three, and they go back into the root while the others stay.">
+<figure class="plate sm" data-plate="many" data-still="1" style="--ar: 1.75; --ar-m: 1.05" aria-label="Five trunks. Plus marks three of them, feat/a, feat/b and fix/c. s starts all three at once, each turning green as it finishes. d asks once, in one dialog, then removes the three, and they go back into the root while the others stay.">
       <div class="plate-art"><canvas aria-hidden="true"></canvas></div>
       <div class="plate-ctl">
         <div class="plate-steps" role="group" aria-label="Show a key"><button type="button" class="ps" aria-pressed="true"><span class="ps-n" aria-hidden="true">+</span>mark</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">s</span>start</button><button type="button" class="ps" aria-pressed="false"><span class="ps-n" aria-hidden="true">d</span>remove</button></div>
@@ -442,8 +442,8 @@
       </div>
       <figcaption class="plate-says">
         <div class="say on"><p><kbd>+</kbd> marks the row under the cursor and moves down; <kbd>esc</kbd> unmarks them all.</p></div>
-        <div class="say"><pre class="code hang"><span class="l"><span class="p">$</span> pando start feat/a feat/b fix/c</span><span class="l d">each on its own worker, each said as it finishes</span></pre></div>
-        <div class="say"><pre class="code hang"><span class="l"><span class="p">$</span> pando rm feat/a feat/b fix/c</span><span class="l d">one dialog says what each removal stops or takes</span></pre></div>
+        <div class="say"><pre class="code hang"><span class="l"><span class="p">$</span> pando start feat/a feat/b fix/c</span><span class="l d">pando: feat+a: starting web</span><span class="l d">pando: feat+b: starting web</span><span class="l d">pando: fix+c: starting web</span><span class="l">started fix+c — <span class="g">http://localhost:22937</span></span><span class="l">started feat+a — <span class="g">http://localhost:21705</span></span><span class="l">started feat+b — <span class="g">http://localhost:23161</span></span></pre></div>
+        <div class="say"><p><kbd>d</kbd> on the marked rows asks once, in one dialog that says what each removal stops or takes with it. The branches are kept, and one with uncommitted changes goes only if you press <kbd>F</kbd>.</p></div>
       </figcaption>
     </figure>
     </div>
@@ -456,7 +456,7 @@
       </div>
 <pre class="code fit"><span class="d">⏎</span>      pick its mode and start it
 <span class="d">l</span>      its logs
-<span class="d">/ e</span>    search · next error
+<span class="d">/ e</span>    filter · open in $EDITOR
 <span class="d">x r</span>    stop · restart
 <span class="d">o c t</span>  open · copy its URL · share
 <span class="d">n d</span>    new worktree · remove one
@@ -497,10 +497,10 @@
 <span class="lb">   main  feat/checkout        fix/login-loop        feat/search         chore/deps</span>
 <span class="lb">Pando: one aspen, 47,000 stems, one root. Your repo, every branch alive.</span></pre>
         <p class="setup-hello">Let’s set pando up for acme-shop.</p>
-        <div class="setup-step"><span class="g b">1</span> Copy this prompt <span class="d">(a)</span></div>
+        <div class="setup-step"><span class="g b">1</span> Copy this prompt: <span class="cap">a</span><span class="d"> copy</span></div>
         <div class="setup-prompt">Set up pando here: run `pando init --agent` and follow what it says.</div>
         <div class="setup-step"><span class="g b">2</span> Paste it into Claude Code or Codex, opened in <span class="w">~/code/acme-shop</span></div>
-        <div class="setup-step"><span class="g b">3</span> Come back: this screen turns green by itself</div>
+        <div class="setup-step"><span class="g b">3</span> Come back here: this screen turns green by itself when it’s done</div>
         <div class="setup-wait"><span class="spin g" aria-hidden="true">⠋</span> <span class="setup-state">waiting for the setup…</span></div>
         <div class="setup-keys"><span><b>a</b> copy the prompt</span><span><b>⏎</b> let pando try on its own</span><span><b>esc</b> just manage worktrees</span></div>
       </div>

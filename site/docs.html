@@ -484,7 +484,7 @@ fingerprint = [<span class="s">"prisma/migrations/**"</span>]</pre></figure>
 <h3 id="public-url">A public URL</h3>
 <p><code>pando share feat/login</code> publishes a running worktree through a <a href="https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/">cloudflared quick tunnel</a>. It needs no account, and it prints one line: <code class="lg">https://&lt;random&gt;.trycloudflare.com</code>. In the TUI, <kbd>t</kbd> shares and asks first.</p>
 <p>Every share gets a new random host. The link closes on <code>unshare</code>, <code>stop</code>, <code>rm</code>, and a restart of the whole worktree. <code>restart --only</code> keeps it.</p>
-<div class="note warn"><span class="lbl">Warning</span><p><strong>Public means public.</strong> Anyone with the link reaches the app until you unshare, stop or remove the worktree. The link does not expire.</p></div>
+<div class="note warn"><span class="lbl">Warning</span><p><strong>Public means public.</strong> Anyone with the link reaches the app until you unshare, stop, restart or remove the worktree. The link does not expire.</p></div>
 
 <h3 id="auth-cmd">Apps that need a login</h3>
 <p>If your app needs a login, <code>[share] auth_cmd</code> runs a command in the worktree, and its output becomes a Cookie header. A small proxy, bound to 127.0.0.1, puts that header on every visitor's request in place of any cookies their browser sent.</p>
@@ -1170,7 +1170,7 @@ theme = "catppuccin"
 <details><summary>How many worktrees can run at once?</summary>
 <p>As many as your machine can run. Every running worktree runs its own dev servers, and in isolated mode its own databases too. The ceilings in the code are 1,971 port windows, and 15 Redis slots per Redis server for namespaced worktrees. The TUI is built for dozens of rows.</p></details>
 <details><summary>Is a share link private?</summary>
-<p>No. Anyone with the link reaches the app until you unshare, stop or remove the worktree, and with <code>auth_cmd</code> every visitor gets the same session. See <a href="#share">Sharing</a>.</p></details>
+<p>No. Anyone with the link reaches the app until you unshare, stop, restart or remove the worktree, and with <code>auth_cmd</code> every visitor gets the same session. See <a href="#share">Sharing</a>.</p></details>
 <details><summary>Logged in on one worktree, logged in on all of them?</summary>
 <p>Browsers keep cookies per host, not per port, so every <code>http://localhost:&lt;port&gt;</code> shares them. That is how the web works, and pando does not change it. When two branches' sessions get in each other's way, use a private window for one of them.</p></details>
 <details><summary>Linux? Windows?</summary>

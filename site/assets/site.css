@@ -655,6 +655,7 @@ html:not(.js) .plate-says > .say + .say { margin-top: 18px; padding-top: 18px; b
 .setup-art .lb { color: var(--dim); }
 .setup-hello { color: var(--fg-strong); font-weight: 700; margin: 0 0 8px; }
 .setup-step { margin: 6px 0; color: var(--fg); font-size: 13px; }
+.setup-step .cap { padding: 0 0.5ch; background: var(--gold); color: var(--term); font-weight: 700; border-radius: 2px; }
 .setup-prompt { margin: 6px 0 10px; padding: 10px 14px; background: rgba(242, 184, 75, 0.08); border-top: 3px solid rgba(242, 184, 75, 0.55); border-bottom: 3px solid rgba(242, 184, 75, 0.55); color: var(--gold-pale); font-size: 13px; overflow-wrap: anywhere; }
 .setup-wait { margin: 12px 0 8px; color: var(--fg-2); font-size: 13px; }
 .setup.ready .setup-wait, .setup.ready .spin { color: var(--green); }
