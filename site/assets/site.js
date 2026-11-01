@@ -1,6 +1,6 @@
 /* pando · the page: the chapter marker, the menu, copy buttons, tabs, the
- * headlines that type themselves in, the demo loaded a screen ahead, the
- * setup screen, and the docs' contents. Nothing here moves on its own for
+ * headlines that type themselves in, the demo and the feature plates loaded
+ * a screen ahead, the setup screen, and the docs' contents. Nothing here moves on its own for
  * more than a moment, and nothing moves at all with reduced motion. */
 (function () {
   'use strict';
@@ -293,6 +293,17 @@
     };
     const dio = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { dio.disconnect(); load(); } }, { rootMargin: '120% 0px' });
     dio.observe(demo);
+  }
+
+  /* ---------- the feature plates: loaded when the first comes near ---------- */
+  const plates = Array.from(document.querySelectorAll('.plate[data-plate]'));
+  if (plates.length && 'IntersectionObserver' in window) {
+    const pio = new IntersectionObserver(es => {
+      if (!es.some(e => e.isIntersecting)) return;
+      pio.disconnect();
+      const s = document.createElement('script'); s.src = 'assets/plates.js'; s.async = false; document.body.appendChild(s);
+    }, { rootMargin: '150% 0px' });
+    plates.forEach(p => pio.observe(p));
   }
 
   /* ---------- the setup screen: waiting, then green, once ---------- */

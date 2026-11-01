@@ -784,6 +784,9 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
 
 @media print {
   .hud, .stage, .demo, .demo-ctl, .endcard canvas { display: none !important; }
+  .plate-art, .plate-ctl, .plate-meter { display: none !important; }
+  .js .plate-says > .say { grid-area: auto; visibility: visible; margin-bottom: 14px; }
+  .js .log .l.off { visibility: visible; }
   .js .beats { margin-top: 0; }
   .beat-text { opacity: 1 !important; transform: none !important; position: static !important; }
   .js .headline .ch { opacity: 1 !important; }
