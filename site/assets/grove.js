@@ -550,9 +550,13 @@
       cv.dataset.drawn = '1';
       grove._cache = {};
       const G = grove.G, w = view.w, h = view.h, narrow = w < 700;
-      let z = Math.min(w / 1900, h / 840);
-      if (narrow) z = Math.max(z, w / 1100);
-      view.cam = { x: narrow ? 830 : 960, y: G - 0.34 * h / z, z };
+      // the crowns stand clear of the words and buttons above them, the
+      // roots reach the bottom: as large as both allow, and as the width allows
+      const words = box.querySelector('.end-links'), top = words ? words.getBoundingClientRect().bottom - box.getBoundingClientRect().top + 56 : h * 0.45;
+      const crown = Math.max(...grove.trees.map(t => t.H)) + 30, roots = 230;
+      const z = Math.max(0.2, Math.min(narrow ? w / 1100 : w / 1900, (h - top - 16) / (crown + roots)));
+      const gy = h - 16 - roots * z;
+      view.cam = { x: narrow ? 830 : 960, y: G - (gy - h / 2) / z, z };
       view.clear(); sky.draw(view); view.world();
       grove.drawGround(view, 1);
       const conns = grove.X.map((x, i) => ({ x, y: G, cdx: grove.trees[i].cdx, pres: 1, green: 1 }));
