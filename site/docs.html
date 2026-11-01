@@ -24,23 +24,27 @@
 </head>
 <body class="docs-page">
 <a class="skip" href="#main">Skip to content</a>
-<header class="nav" id="nav">
-  <div class="nav-in">
-    <a class="logo" href="index.html"><svg viewBox="0 0 64 64" aria-hidden="true"><g stroke="currentColor" stroke-linecap="round" fill="none"><path d="M18 44V24M18 30l-5-6M18 27l5-7" stroke-width="3.4"/><path d="M32 44V16M32 24l-6-7M32 21l6-7M32 30l5-4" stroke-width="3.8"/><path d="M46 44V26M46 31l-5-5M46 29l5-6" stroke-width="3.4"/></g><path d="M8 51c8-3 14 2 24 0s16-4 24 0" stroke="#F2B84B" stroke-width="4" fill="none" stroke-linecap="round"/></svg>pando</a>
-    <nav class="nav-links" id="nav-links" aria-label="Site">
-      <a href="index.html#try">Try it</a>
-      <a href="index.html#how">How it works</a>
-      <a href="index.html#data">Data</a>
-      <a href="index.html#setup">Setup</a>
-      <a href="docs.html" aria-current="page">Docs</a>
-      <a href="https://github.com/mertkaradayi/pando" aria-label="GitHub (opens github.com)">GitHub <span class="ext" aria-hidden="true">↗</span></a>
-    </nav>
-    <a class="btn btn-sm btn-primary" href="index.html#install">Install</a>
-    <button class="menu-btn" type="button" aria-expanded="false" aria-controls="nav-links" aria-label="Menu"><i></i><i></i></button>
-  </div>
+
+<header class="hud" id="hud">
+  <a class="chap" href="index.html" aria-label="pando, the home page">
+    <span class="chap-line" aria-hidden="true"><span class="chap-n">docs</span><span class="chap-dot">·</span><span class="chap-name">pando</span><span class="chap-beat">// every command, key and setting</span></span>
+  </a>
+  <nav class="nav" id="nav" aria-label="Site">
+    <div class="nav-list" id="nav-list">
+      <a href="index.html#try">try it</a>
+      <a href="index.html#how">how it works</a>
+      <a href="index.html#data">data</a>
+      <a href="index.html#first-run">first run</a>
+      <a href="index.html#promise">the promise</a>
+      <a href="docs.html" aria-current="page">docs</a>
+      <a class="nav-gh" href="https://github.com/mertkaradayi/pando">github <span aria-hidden="true">↗</span></a>
+    </div>
+    <a class="nav-cta" href="#install">install</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav-list">menu</button>
+  </nav>
 </header>
 
-<div class="docs-bar" id="docs-bar"><button type="button" aria-expanded="false" aria-controls="toc">Contents <span class="cur"></span></button></div>
+<div class="docs-bar" id="docs-bar"><button type="button" aria-expanded="false" aria-controls="toc">contents <span class="cur"></span></button></div>
 
 <div class="docs-shell" id="docs-shell">
 <nav class="toc" id="toc" aria-label="Docs contents">
@@ -94,8 +98,8 @@
 </nav>
 
 <main class="docs" id="main">
-<h1>Docs</h1>
-<p class="lede">Every command, key and setting, in one page. New here? Start with <a href="#install">Install</a> and <a href="#first-run">Your first run</a>.</p>
+<h1>The docs.</h1>
+<p class="lede">every command, key and setting, on one page · new here? start with <a href="#install">install</a> and <a href="#first-run">your first run</a></p>
 
 <section>
 <h2 id="install">Install</h2>
