@@ -208,7 +208,13 @@ pre.code, .term pre {
   tab-size: 2; white-space: pre; scrollbar-width: thin; scrollbar-color: rgba(242, 184, 75, 0.35) transparent;
 }
 pre.code { background: var(--term); border: 1px solid rgba(236, 236, 236, 0.14); border-radius: 10px; }
-pre.code.wrapl { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 18px; }
+/* output that wraps: each line a block, its continuation hung under its
+   text (7ch: after "pando: "), so a long line reads whole, never cut */
+pre.hang { white-space: normal !important; overflow-wrap: break-word; }
+pre.hang .l { display: block; white-space: pre-wrap; padding-left: var(--hang, 2ch); text-indent: calc(-1 * var(--hang, 2ch)); }
+pre.hang.h7 { --hang: 7ch; }
+pre.hang .l.h2 { --hang: 2ch; }
+.sub-chapter pre.hang { margin-top: 18px; }
 pre .p { color: var(--gold); user-select: none; -webkit-user-select: none; }
 pre .c { color: var(--dim); }
 pre .k { color: var(--gold-pale); }
@@ -728,8 +734,6 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
 .docs .code pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-size: var(--t-code); line-height: 1.62; white-space: pre; scrollbar-width: thin; scrollbar-color: rgba(242, 184, 75, 0.35) transparent; }
 .docs pre .w { color: var(--fg-strong); }
 .docs pre .l { display: block; }
-pre.hang { white-space: normal !important; overflow-wrap: anywhere; }
-pre.hang .l { display: block; white-space: pre-wrap; padding-left: 2ch; text-indent: -2ch; }
 .code-h { margin: 0; padding: 9px 16px; border-bottom: 1px solid rgba(236, 236, 236, 0.08); color: var(--fg-2); font-size: var(--t-xs); }
 .code-h::before { content: "// "; color: var(--dim); }
 .docs .cmd { display: flex; align-items: stretch; margin: 16px 0; background: var(--term); border: 1px solid rgba(236, 236, 236, 0.16); border-radius: 10px; overflow: hidden; }

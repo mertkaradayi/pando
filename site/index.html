@@ -311,7 +311,7 @@ feat/checkout   <span class="gr">running</span>  http://localhost:22809</pre>
           <p>A passing <code>pando check</code> reports what a new worktree costs on disk and what could still be shared. What to share is your project’s call.</p>
         </div>
       </div>
-<pre class="code wrapl"><span class="d">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: …</span></pre>
+<pre class="code hang h7"><span class="l d">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: "What a worktree costs on disk" in `pando init <span class="nw">--agent</span> <span class="nw">--reference</span> brief`</span></pre>
       <p class="more"><a href="docs.html#disk">Copy-on-write, <code>clone</code> and the disk report →</a></p>
     </div>
   </div>
@@ -531,15 +531,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
       </div>
       <div class="term">
         <div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="grow">pando check</span><span>example project</span></div>
-<pre><span class="d">pando: testing acme-shop's setup at a1b2c3d (origin/main), in a throwaway worktree (no branch)
-pando: installing
-pando: starting api, web
-pando: waiting for api, web to be ready
-pando: asking web for its first page on :29849
-pando: installed 14.2s · api ready :29848 · web ready :29849 (HTTP 200)
-pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: …
-pando: removed the test worktree; nothing left behind</span>
-<span class="gr">✓</span> acme-shop is ready: `pando` opens it</pre>
+<pre class="hang h7"><span class="l d">pando: testing acme-shop's setup at a1b2c3d (origin/main), in a throwaway worktree (no branch)</span><span class="l d">pando: installing</span><span class="l d">pando: starting api, web</span><span class="l d">pando: waiting for api, web to be ready</span><span class="l d">pando: asking web for its first page on :29849</span><span class="l d">pando: installed 14.2s · api ready :29848 · web ready :29849 (HTTP 200)</span><span class="l d">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: "What a worktree costs on disk" in `pando init <span class="nw">--agent</span> <span class="nw">--reference</span> brief`</span><span class="l d">pando: removed the test worktree; nothing left behind</span><span class="l h2"><span class="gr">✓</span> acme-shop is ready: `pando` opens it</span></pre>
       </div>
     </div>
     <p class="more"><a href="docs.html#first-run">How the first run works →</a> <a href="docs.html#config">Setup and <code>pando.toml</code> →</a> <a href="docs.html#agents">For agents: JSON and exit codes →</a></p>

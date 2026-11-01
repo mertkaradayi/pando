@@ -457,7 +457,7 @@ fingerprint = [<span class="s">"prisma/migrations/**"</span>]</pre></figure>
 <li><strong>Each gitignored tree</strong> the install and the processes left, a megabyte or more, twelve at most, marked when your main checkout has one <code>clone</code> could share.</li>
 <li><strong>What was written outside it</strong>, such as a build cache keyed by the checkout's path, which fills again for every worktree.</li>
 </ul>
-<figure class="code"><figcaption class="code-h">Example: the disk line of a passing check</figcaption><pre class="hang"><span class="l"><span class="d">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: "What a worktree costs on disk" in `pando init --agent --reference brief`</span></span></pre></figure>
+<figure class="code"><figcaption class="code-h">Example: the disk line of a passing check</figcaption><pre class="hang"><span class="l"><span class="d">pando: a worktree holds node_modules 480 MB (the main checkout has one: `clone` could share it) — how to judge it: "What a worktree costs on disk" in `pando init <span class="nw">--agent</span> <span class="nw">--reference</span> brief`</span></span></pre></figure>
 <p><code>pando check --json</code> carries the same numbers as <code>disk</code>:</p>
 <div class="code"><pre><span class="k">"disk"</span>: {
   <span class="k">"trees"</span>: [
