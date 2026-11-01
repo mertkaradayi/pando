@@ -537,7 +537,7 @@ fingerprint = [<span class="s">"prisma/migrations/**"</span>]</pre></figure>
 </div>
 
 <h3 id="choosing-a-mode">Choosing and switching</h3>
-<p><kbd>⏎</kbd> in the TUI opens the mode chooser on any worktree. On a stopped one, the mode it last ran in sits under the cursor, marked <em>last used</em>, so <kbd>⏎</kbd> <kbd>⏎</kbd> is still one quick start. A worktree never started has shared there.</p>
+<p><kbd>⏎</kbd> in the TUI opens the mode chooser on any worktree; the main checkout has one mode, so there it starts at once, shared. On a stopped worktree, the mode it last ran in sits under the cursor, marked <em>last used</em>, so <kbd>⏎</kbd> <kbd>⏎</kbd> is still one quick start. A worktree never started has shared there.</p>
 <p>On a running worktree, its mode is marked <em>running</em>, and choosing another switches it: every process restarts on the other services. <kbd>i</kbd> and <kbd>S</kbd> go straight to isolated and shared. The main checkout always runs shared. From the command line, <code>start</code> and <code>restart</code> take <code>--isolated</code> or <code>--namespaced</code>, and <code>start --shared</code> is the way back.</p>
 
 <h3 id="wiring">How the app finds its database</h3>
@@ -1112,10 +1112,10 @@ theme = "catppuccin"
 <p>Inside <code>.git</code>, only git itself writes: its records of the worktrees, branches and fetches pando asks for. pando writes no file in your checkout; only the git menu, when you pick a move, has git move a branch.</p>
 <p>Inside a worktree, pando may create or link a file only if the project's own gitignore already ignores that path. <code>.env</code> and <code>.env.local</code> pass. Anything that would show up as untracked in <code>git status</code> is refused.</p>
 <figure class="code"><figcaption class="code-h">Everything pando learns and runs lives under its own home</figcaption><pre><span class="w">~/.pando/</span>
-<span class="d">├──</span> config.toml                <span class="d">your choices: theme, appearance</span>
+<span class="d">├──</span> config.toml                <span class="d">the machine’s: prelude, isolation, the screen</span>
 <span class="d">├──</span> recipes/  themes/          <span class="d">your native services and engines, colour themes</span>
 <span class="d">└──</span> projects/acme-shop-2bdf70d7/
-<span class="d">    ├──</span> pando.toml             <span class="d">the whole config for one project</span>
+<span class="d">    ├──</span> pando.toml             <span class="d">one project’s config</span>
 <span class="d">    ├──</span> state.json             <span class="d">what runs where, on which ports</span>
 <span class="d">    ├──</span> worktrees/feat+login/  <span class="d">the branch's own checkout</span>
 <span class="d">    ├──</span> logs/feat+login/       <span class="d">every process's log</span>

@@ -527,7 +527,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <h3 data-beat="no agent">No agent? Or no setup?</h3>
         <p>Press <kbd>⏎</kbd> on the setup screen and pando makes its own guess, tested by the same check. Press <kbd>esc</kbd> to skip setup and only manage worktrees; nothing waits on it.</p>
         <h3 data-beat="what it reads">What it reads</h3>
-        <p>Your lockfile, dev scripts, env example, version files and compose file. It knows Next.js, Vite, Nuxt, Astro, Angular, Expo, Django, Rails, Phoenix and Laravel, as well as plain Node, Go and Rust projects. Every decision goes into one file in <code>~/.pando</code>, with its reason beside it, and you can edit any of it.</p>
+        <p>Your lockfile, dev scripts, env example, version files and compose file. It knows Next.js, Vite, Nuxt, Astro, Angular, Expo, Django, Rails, Phoenix and Laravel, as well as plain Node, Go and Rust projects. Every decision lands in <code>~/.pando</code>, with its reason, and you can edit any of it.</p>
       </div>
       <div class="term">
         <div class="term-bar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="grow">pando check</span><span>example project</span></div>
@@ -551,7 +551,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p>No config file, no gitignore line, no lockfile change. Everything pando learns and runs lives in <code>~/.pando</code>, and its tests run every command and then check that <code>git status</code> has nothing to report.</p>
 <pre class="code tree-ls"><span class="dir">~/.pando/</span>
 <span class="br">└── </span><span class="dir">projects/acme-shop-2bdf70d7/</span>
-<span class="br">    ├── </span>pando.toml             <span class="tn">the whole config</span>
+<span class="br">    ├── </span>pando.toml             <span class="tn">the project’s config</span>
 <span class="br">    ├── </span><span class="dir">worktrees/feat+login/</span>  <span class="tn">the branch’s checkout</span>
 <span class="br">    ├── </span><span class="dir">logs/feat+login/</span>
 <span class="br">    └── </span><span class="dir">data/feat+login/</span>
