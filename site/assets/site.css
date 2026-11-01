@@ -459,12 +459,14 @@ html:not(.js) .demo, html:not(.js) .demo-ctl { display: none; }
 .tui .fl3 { background: rgba(124, 255, 178, 0.06); }
 .tui .sp { display: inline-block; width: 1ch; overflow: hidden; vertical-align: bottom; }
 
-.keys { grid-area: keys; display: flex; flex-wrap: wrap; gap: 2px 4px; align-items: center; padding: 6px 10px; border-top: 1px solid rgba(236, 236, 236, 0.08); background: var(--term); }
-.keys button { font: inherit; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; background: transparent; color: var(--fg-2); border: 0; padding: 0 6px; border-radius: 6px; cursor: pointer; }
+.keys { grid-area: keys; display: flex; flex-wrap: wrap; gap: 2px 1px; align-items: center; padding: 6px 8px; border-top: 1px solid rgba(236, 236, 236, 0.08); background: var(--term); }
+.keys button { font: inherit; font-size: 12.5px; display: inline-flex; align-items: center; gap: 5px; min-height: 44px; background: transparent; color: var(--fg-2); border: 0; padding: 0 5px; border-radius: 6px; cursor: pointer; }
 .keys button:hover { color: var(--fg-strong); background: rgba(236, 236, 236, 0.05); }
 .keys button .kbd { font-size: 12.5px; transition: border-color .15s, color .15s, box-shadow .15s; }
 .keys button.next .kbd, .keys button.hit .kbd { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 14px rgba(242, 184, 75, 0.35); }
 .keys .more-k { display: none; color: var(--gold); }
+/* Between a phone and a wide screen the keys take two even rows, not a full row and a stray two. */
+@media (min-width: 735px) and (max-width: 1279px) { .keys { display: grid; grid-template-columns: repeat(8, max-content); justify-content: start; } }
 
 .missions { grid-area: side; background: #0a0806; border-left: 1px solid rgba(236, 236, 236, 0.08); padding: 16px 18px 18px; font-size: var(--t-sm); min-width: 0; overflow: auto; }
 .missions details { margin: 0; }
