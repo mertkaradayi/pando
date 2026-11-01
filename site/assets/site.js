@@ -134,6 +134,13 @@
   // whole page past. A jump settles every headline at once (below).
   let jumpUntil = 0;
   const jumping = () => performance.now() < jumpUntil;
+  // a fast scroll counts as a jump too: what it passes is shown whole, never typed
+  let lastY = window.scrollY, lastT = performance.now();
+  window.addEventListener('scroll', () => {
+    const t = performance.now(), y = window.scrollY, dt = t - lastT;
+    if (dt > 0 && dt < 250 && Math.abs(y - lastY) / dt > 2.5) jumpUntil = Math.max(jumpUntil, t + 500);
+    lastY = y; lastT = t;
+  }, { passive: true });
   document.addEventListener('click', e => {
     const a = e.target.closest && e.target.closest('a[href^="#"]');
     if (!a || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
