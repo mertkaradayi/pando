@@ -343,7 +343,7 @@ html:not(.js) .beat-text { position: static; }
 .hero-what { font-size: var(--t-base); color: var(--fg-2); max-width: 66ch; margin: 0 auto 32px; text-wrap: balance; text-shadow: 0 0 12px #050505, 0 0 3px #050505; }
 .hero-row { display: flex; gap: 10px; justify-content: center; align-items: stretch; flex-wrap: wrap; max-width: 100%; }
 .hero-cmd { display: flex; align-items: center; gap: 12px; padding: 0 0 0 18px; min-height: 48px; border-radius: 10px; border: 1px solid var(--line-2); background: rgba(8, 7, 5, 0.86); max-width: 100%; }
-.hero-cmd code { font-size: 14px; color: var(--fg-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.hero-cmd code { flex: 1; min-width: 0; padding: 12px 0 12px 2ch; text-indent: -2ch; font-size: 14px; line-height: 1.5; color: var(--fg-strong); white-space: normal; overflow-wrap: normal; text-align: left; }
 .hero-cmd code .p { color: var(--gold); white-space: pre; }
 .hero-copy { flex: none; align-self: stretch; min-width: 64px; font: inherit; font-size: var(--t-xs); color: var(--fg-2); background: transparent; border: 0; border-left: 1px solid var(--line); padding: 0 14px; cursor: pointer; }
 .hero-copy:hover, .hero-copy.done { color: var(--gold); }
@@ -357,9 +357,9 @@ html:not(.js) .beat-text { position: static; }
   .hero-what { font-size: 15px; margin-bottom: 24px; }
   .hero-row { flex-direction: column; width: 100%; max-width: 420px; }
   .hero-cmd { padding-left: 14px; }
-  .hero-cmd code { font-size: 12.5px; flex: 1; }
-  .hero-note .sep { display: none; }
-  .hero-note a { display: flex; justify-content: center; align-items: center; min-height: 44px; }
+  /* the note's first dot becomes a line break; the two links share a line */
+  .hero-note .sep:first-of-type { display: block; height: 0; overflow: hidden; }
+  .hero-note a { min-height: 44px; }
 }
 /* short screens: the beats' words take less height, so the grove stays clear of them */
 @media (max-height: 720px) {
