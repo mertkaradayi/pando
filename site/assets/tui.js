@@ -946,7 +946,9 @@
   }
 
   /* ---------- keyboard: only while the screen has focus ---------- */
-  const MAP = { Enter: '⏎', Escape: 'esc', ArrowUp: '↑', ArrowDown: '↓', Backspace: 'backspace' };
+  // Home and End are g and G, as in the real one; the screen owns every key
+  // it has focus for, so none of them scrolls the page away from it
+  const MAP = { Enter: '⏎', Escape: 'esc', ArrowUp: '↑', ArrowDown: '↓', Backspace: 'backspace', Home: 'g', End: 'G' };
   function onKey(e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Tab') return; // Tab always moves focus on
@@ -962,6 +964,7 @@
       kickLoop();
       return;
     }
+    if (e.key === 'PageUp' || e.key === 'PageDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); return; }
     const k = MAP[e.key] || (e.key.length === 1 ? e.key : null);
     if (!k) return;
     e.preventDefault(); // space included: here it is the leader key, never a page scroll
