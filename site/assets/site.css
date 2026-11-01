@@ -40,7 +40,9 @@
   --t-base: 16px;
   --t-lede: 18px;
   --t-h3: 20px;
-  --t-h2: clamp(30px, 4.2vw, 52px);
+  /* on a phone the headline scale follows the width, so the longest phrase
+     a headline keeps whole (.nw, about 12em) fits at every width */
+  --t-h2: min(clamp(30px, 4.2vw, 52px), calc((100vw - 2 * var(--gutter)) / 12));
   --t-tag: clamp(19px, 2.3vw, 32px);
   --t-code: 13.5px;
 
@@ -75,6 +77,8 @@ code, kbd, samp, pre { font-family: var(--mono); font-variant-ligatures: none; }
 code { color: var(--gold-pale); font-size: 0.94em; overflow-wrap: anywhere; }
 pre code { color: inherit; font-size: inherit; overflow-wrap: normal; }
 h1, h2, h3, h4 { text-wrap: balance; }
+/* prose never ends a paragraph on one short word */
+p, li, figcaption, dd { text-wrap: pretty; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .skip { position: absolute; left: 12px; top: -60px; z-index: 100; background: var(--gold); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-weight: 700; text-decoration: none; }
 .skip:focus { top: 12px; }
@@ -160,7 +164,7 @@ h1, h2, h3, h4 { text-wrap: balance; }
 
 .headline {
   font-size: var(--t-h2); line-height: 1.14; font-weight: 500; letter-spacing: -0.01em;
-  color: #f2f2f2; margin: 0 0 0.45em; max-width: 30ch;
+  color: #f2f2f2; margin: 0 0 0.45em; max-width: 32ch;
 }
 .headline .chev { color: var(--gold); margin-right: 0.35em; }
 .headline .hi { color: var(--gold); text-shadow: 0 0 16px rgba(242, 184, 75, 0.5); }
@@ -312,7 +316,9 @@ html:not(.js) .stage { display: none; }
 .story-live .beat:not(.beat-hero) .beat-text { opacity: 0; transform: translateY(14px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
 .story-live .beat.on .beat-text, .story-live .beat .beat-text:focus-within { opacity: 1; transform: none; pointer-events: auto; transition: opacity .4s ease .04s, transform .55s cubic-bezier(.2, .7, .2, 1) .04s; }
 .beat-text > * { max-width: 60ch; }
-.beat-text .headline { max-width: none; font-size: clamp(28px, 3.8vw, 48px); }
+/* each of the story's sentences on a line of its own, down to a phone: the
+   longest, "› It looks like a forest.", is 14.6em wide */
+.beat-text .headline { max-width: none; font-size: min(clamp(28px, 3.8vw, 48px), calc((100vw - 2 * var(--gutter)) / 14.6)); }
 /* the last beat is one screen and not sticky, so its words and the grove leave together */
 .js .beat:last-child { min-height: 100vh; min-height: 100svh; }
 .beat:last-child .beat-text { position: relative; top: auto; padding-top: calc(var(--hud-h) + clamp(16px, 5vh, 56px) + 8px); }
@@ -358,7 +364,7 @@ html:not(.js) .beat-text { position: static; }
 /* short screens: the beats' words take less height, so the grove stays clear of them */
 @media (max-height: 720px) {
   .beat-text { top: calc(var(--hud-h) + 12px); padding-top: 4px; }
-  .beat-text .headline { font-size: clamp(24px, 3vw, 36px); margin-bottom: 0.35em; }
+  .beat-text .headline { font-size: min(clamp(24px, 3vw, 36px), calc((100vw - 2 * var(--gutter)) / 14.6)); margin-bottom: 0.35em; }
   .beat-text p { font-size: 14.5px; line-height: 1.6; margin-bottom: 0.8em; }
   .beat-text .kicker { font-size: 13px; margin-bottom: 6px; }
   .beat:last-child .beat-text { padding-top: calc(var(--hud-h) + 16px); }
@@ -514,7 +520,7 @@ html:not(.js) .demo, html:not(.js) .demo-ctl { display: none; }
 .panel-title .gl { margin-left: 4px; color: var(--gold); }
 
 .sub-chapter { margin-top: clamp(64px, 9vh, 104px); padding-top: clamp(48px, 7vh, 80px); border-top: 1px dashed rgba(242, 184, 75, 0.22); }
-.h-sub { font-size: clamp(24px, 2.8vw, 34px); font-weight: 500; line-height: 1.2; color: #f2f2f2; margin: 0 0 0.45em; max-width: 30ch; }
+.h-sub { font-size: min(clamp(24px, 2.8vw, 34px), calc((100vw - 2 * var(--gutter)) / 12)); font-weight: 500; line-height: 1.2; color: #f2f2f2; margin: 0 0 0.45em; max-width: 32ch; }
 .h-sub .chev { color: var(--gold); margin-right: 0.35em; }
 .sub-chapter .sub { margin-bottom: 0; }
 

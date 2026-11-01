@@ -78,7 +78,7 @@
     <div class="beat beat-hero" data-chap="01" data-name="Pando" data-tag="the grove">
       <div class="hero">
         <h1 class="wordmark">pando</h1>
-        <p class="tagline">One repo. Every branch alive.<span class="cur" aria-hidden="true"></span></p>
+        <p class="tagline"><span class="nw">One repo.</span> <span class="nw">Every branch alive.</span><span class="cur" aria-hidden="true"></span></p>
         <p class="hero-what">Every branch you are working on, running at once: each in its own checkout, on its own ports, with its own logs and, if you want, its own database. All on one terminal screen.</p>
         <div class="hero-row">
           <div class="hero-cmd">
@@ -88,13 +88,13 @@
           <a class="btn" href="#try">Try it <span aria-hidden="true">↓</span></a>
         </div>
         <p class="hero-note">then run <code>pando</code> in any project<span class="sep"> · </span><a href="#install">other ways to install</a><span class="sep"> · </span><a href="docs.html">read the docs</a></p>
-        <p class="hero-fine">macOS · Linux · Windows with WSL 2 · free and open source</p>
+        <p class="hero-fine"><span class="nw">macOS · Linux · Windows with WSL 2</span> · <span class="nw">free and open source</span></p>
       </div>
     </div>
 
     <div class="beat" data-chap="01" data-name="Pando" data-tag="one tree">
       <div class="beat-text">
-        <p class="kicker">Fishlake National Forest, Utah</p>
+        <p class="kicker">Fishlake National <span class="nw">Forest, Utah</span></p>
         <h2 class="headline"><span class="chev" aria-hidden="true">›</span><span class="txt">It looks like a forest.<br>It is one tree.</span></h2>
         <p>Pando is a grove of quaking aspen. Its roughly <b>47,000 trunks</b> all grow from <b>one root system</b>, which makes it a single living thing, and the heaviest known on Earth. Its name is Latin for “I spread”.</p>
       </div>
@@ -102,7 +102,7 @@
 
     <div class="beat" data-chap="02" data-name="The map" data-tag="root → repository">
       <div class="beat-text">
-        <p class="kicker">trunk → branch · root → repository</p>
+        <p class="kicker"><span class="nw">trunk → branch</span> · <span class="nw">root → repository</span></p>
         <h2 class="headline"><span class="chev" aria-hidden="true">›</span><span class="txt">Your repository grows the same way.</span></h2>
         <p>Git can check out many branches side by side, each in a folder of its own, all sharing one history. Git calls these checkouts <b>worktrees</b>. Your repository is the root; every branch can be a trunk.</p>
       </div>
@@ -110,7 +110,7 @@
 
     <div class="beat" data-chap="03" data-name="Why" data-tag="branches take turns">
       <div class="beat-text">
-        <p class="kicker">one checkout · one port 3000 · one branch at a time</p>
+        <p class="kicker"><span class="nw">one checkout</span> · <span class="nw">one port 3000</span> · <span class="nw">one branch at a time</span></p>
         <h2 class="headline"><span class="chev" aria-hidden="true">›</span><span class="txt">But in one checkout,<br>branches take turns.</span></h2>
         <p>To look at another branch you stash, switch, reinstall and restart, and the port is still taken. Its migrations land in the database you were using. To show a teammate, it goes to staging first. Then you do it all again to come back.</p>
       </div>
@@ -118,7 +118,7 @@
 
     <div class="beat" data-chap="03" data-name="Why" data-tag="every branch alive">
       <div class="beat-text">
-        <p class="kicker">so I built pando, for my own work first · Mert Karadayi</p>
+        <p class="kicker">so I built pando, <span class="nw">for my own work first</span> · <span class="nw">Mert Karadayi</span></p>
         <h2 class="headline"><span class="chev" aria-hidden="true">›</span><span class="txt"><span class="hi">pando</span> lets every branch run at once.</span></h2>
         <p>Each branch you work on gets a checkout of its own, already running, on ports no other branch uses. You see all of them on one screen, and switching branches stops being a chore.</p>
         <p class="beat-cta"><a class="btn ghost" href="#try">See it <span aria-hidden="true">↓</span></a></p>
@@ -130,7 +130,7 @@
 <!-- ============ 04 · try it ============ -->
 <section class="chapter try" id="try" data-chapter="04" data-name="Try it" data-beat0="your turn">
   <div class="wrap">
-    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt">This is <span class="hi">pando</span>. Try it.</span><span class="cur" aria-hidden="true"></span></h2>
+    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt"><span class="nw">This is <span class="hi">pando</span>.</span> Try it.</span><span class="cur" aria-hidden="true"></span></h2>
     <p class="sub">a working copy of its terminal screen, in your browser · each key you press is one command in your terminal</p>
   </div>
 
@@ -283,7 +283,7 @@ feat/checkout   <span class="gr">running</span>  http://localhost:22809</pre>
     <p class="more"><a href="docs.html#worktrees">How a worktree is made, step by step →</a> <a href="docs.html#running">Readiness, stopping and restarts →</a></p>
 
     <div class="sub-chapter" id="disk">
-      <h3 class="h-sub" data-beat="light on disk"><span class="chev" aria-hidden="true">›</span>A whole checkout, for the price of what changed.</h3>
+      <h3 class="h-sub" data-beat="light on disk"><span class="chev" aria-hidden="true">›</span>A whole checkout, <span class="nw">for the price</span> of what changed.</h3>
       <p class="sub">copy-on-write worktrees · <code>clone</code> · measured by <code>pando check</code></p>
       <div class="split">
         <div>
@@ -484,7 +484,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
 <section class="chapter" id="first-run" data-chapter="08" data-name="First run" data-beat0="your agent sets it up">
   <span class="anchor" id="setup" aria-hidden="true"></span>
   <div class="wrap">
-    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt">Your coding agent sets it up.<br><span class="hi">pando</span> proves it works.</span><span class="cur" aria-hidden="true"></span></h2>
+    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt"><span class="nw">Your coding agent</span> sets it up.<br><span class="hi">pando</span> proves <span class="nw">it works.</span></span><span class="cur" aria-hidden="true"></span></h2>
     <p class="sub">the first time you run pando in a project, it hands the setup to the agent you already use, then tests the result in a throwaway worktree</p>
 
     <div class="split wide-left">
