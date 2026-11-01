@@ -271,6 +271,7 @@ html:not(.js) .stage-ctl { display: none; }
   min-height: 44px; padding: 0 14px; font: inherit; font-size: var(--t-xs); color: var(--fg-2);
   background: rgba(5, 5, 5, 0.72); border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
 }
+.stage-pause[hidden] { display: none; }
 .stage-pause:hover { color: var(--fg-strong); border-color: var(--gold); }
 .stage-pause .lbl { display: inline; margin: 0; color: inherit; font-size: inherit; font-weight: 400; letter-spacing: 0; text-transform: none; }
 .stage-pause[aria-pressed="true"] { color: var(--gold); border-color: rgba(242, 184, 75, 0.6); }
