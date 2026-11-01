@@ -227,11 +227,7 @@
           <h3>Its own checkout.</h3>
           <p>A real git worktree, kept in pando’s own folder, with your <code>.env</code> linked in and its dependencies installed. Your main checkout is left exactly as it was.</p>
         </div>
-<pre class="code"><span class="p">$</span> pando new feat/checkout
-<span class="d">pando: checking out feat/checkout
-pando: provisioning
-pando: installing</span>
-created feat+checkout at ~/.pando/projects/…/feat+checkout</pre>
+<pre class="code hang"><span class="l"><span class="p">$</span> pando new feat/checkout</span><span class="l d">pando: checking out feat/checkout</span><span class="l d">pando: provisioning</span><span class="l d">pando: installing</span><span class="l">created feat+checkout at ~/.pando/projects/…/feat+checkout</span></pre>
       </li>
       <li class="step">
         <div class="step-t">
@@ -239,10 +235,7 @@ created feat+checkout at ~/.pando/projects/…/feat+checkout</pre>
           <h3>Its own ports.</h3>
           <p>Every process starts in the background, on ports no other branch uses, worked out from the project and the branch name, so they stay the same across restarts. pando waits until each one is ready.</p>
         </div>
-<pre class="code"><span class="p">$</span> pando start feat/checkout
-<span class="d">pando: starting api
-pando: starting web</span>
-started feat+checkout — <span class="g">http://localhost:22809</span></pre>
+<pre class="code hang"><span class="l"><span class="p">$</span> pando start feat/checkout</span><span class="l d">pando: starting api</span><span class="l d">pando: starting web</span><span class="l">started feat+checkout — <span class="g">http://localhost:22809</span></span></pre>
       </li>
       <li class="step">
         <div class="step-t">
@@ -250,7 +243,7 @@ started feat+checkout — <span class="g">http://localhost:22809</span></pre>
           <h3>Its own URL.</h3>
           <p>It opens in your browser, and every branch you started is there beside it, each on its own address.</p>
         </div>
-<pre class="code"><span class="p">$</span> pando open feat/checkout
+<pre class="code fit"><span class="p">$</span> pando open feat/checkout
 http://localhost:22809
 
 <span class="p">$</span> pando ls
@@ -369,7 +362,7 @@ feat/checkout   <span class="gr">running</span>  http://localhost:22809</pre>
         <p>Through its environment. pando reads the address your <code>.env</code> already has and changes only what the mode needs: the port, the database name or the slot. Your app needs no code for pando, and no file is written to tell it.</p>
         <p class="d">Namespaced mode works inside a server you own, so it is careful. It is opt-in. Every name it makes begins with your main database’s name, so it can never be your main database. It takes a Redis slot only while the slot is empty, and <code>pando rm</code> drops only what pando’s own records say it made.</p>
       </div>
-<pre class="code"><span class="c"># your .env, on main</span>
+<pre class="code fit"><span class="c"># your .env, on main</span>
 DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
 
 <span class="c"># what feat/login’s processes get</span>
@@ -393,7 +386,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p><code>pando share</code>, or <kbd>t</kbd> in the screen, puts a running worktree on a public https link through a Cloudflare quick tunnel. A teammate opens your branch on their phone without anything being deployed, and no account is needed.</p>
         <p class="d">Public means public: anyone with the link reaches the app until you unshare, stop or remove the worktree, so the screen asks first. If your app needs a login, <code>auth_cmd</code> can open the link already logged in.</p>
       </div>
-<pre class="code"><span class="p">$</span> pando share feat/checkout
+<pre class="code fit"><span class="p">$</span> pando share feat/checkout
 <span class="g">https://quiet-aspen-grove.trycloudflare.com</span>
 
 <span class="p">$</span> pando unshare feat/checkout</pre>
@@ -405,7 +398,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p>Press <kbd>p</kbd> for the repository’s open pull requests, type to narrow them, and press <kbd>⏎</kbd>. The pull request becomes a worktree you can start, even when it comes from a fork. Reviewing stops meaning “stash my work and check out theirs”.</p>
         <p class="d">A row with a pull request shows <code>◍ #128</code>, and <kbd>space</kbd> <kbd>p</kbd> opens it on GitHub. It uses the GitHub CLI, <code>gh</code>, signed in.</p>
       </div>
-<pre class="code tuiframe"><span class="g">╭ open pull requests ───────────────────╮</span>
+<pre class="code tuiframe fit"><span class="g">╭ open pull requests ───────────────────╮</span>
 <span class="g">│</span> filter ▏                              <span class="g">│</span>
 <span class="g">│</span>                                       <span class="g">│</span>
 <span class="g">│</span> <span class="g">▸</span> <span class="w">#131</span> fix VAT rounding         <span class="d">@sam</span> <span class="g">│</span>
@@ -449,7 +442,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p>A product split across repositories cloned side by side is one project: run <code>pando</code> in the folder that holds them. One branch then spans all of them, in one row, and one start runs every process in one port window, so the frontend is told the backend’s port.</p>
         <p class="d">A repository that has the branch uses it; one that does not forks it from its own base.</p>
       </div>
-<pre class="code"><span class="w">product/</span>          <span class="d">a plain folder</span>
+<pre class="code fit"><span class="w">product/</span>          <span class="d">a plain folder</span>
 <span class="d">├──</span> backend/      <span class="d">a git repository</span>
 <span class="d">└──</span> frontend/     <span class="d">a git repository</span>
 
@@ -463,7 +456,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p>Every action has a key, and <kbd>?</kbd> lists them all. The mouse works as well: click a worktree or a dialog’s option, click it again for <kbd>⏎</kbd>, and the wheel scrolls whatever is under it.</p>
         <p class="d">The log viewer has a tab per process and one for all of them, search, a filter by level, and a jump from error to error. Fifteen colour themes follow your system’s light and dark.</p>
       </div>
-<pre class="code"><span class="d">⏎</span>      pick its mode and start it
+<pre class="code fit"><span class="d">⏎</span>      pick its mode and start it
 <span class="d">l</span>      its logs   <span class="d">/</span> search   <span class="d">e</span> next error
 <span class="d">x r</span>    stop · restart
 <span class="d">o c t</span>  open · copy its URL · share it
@@ -549,7 +542,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p class="lbl">invariant 1</p>
         <h3 class="panel-title">pando never writes into your repository.</h3>
         <p>No config file, no gitignore line, no lockfile change. Everything pando learns and runs lives in <code>~/.pando</code>, and its tests run every command and then check that <code>git status</code> has nothing to report.</p>
-<pre class="code tree-ls"><span class="dir">~/.pando/</span>
+<pre class="code tree-ls fit"><span class="dir">~/.pando/</span>
 <span class="br">└── </span><span class="dir">projects/acme-shop-2bdf70d7/</span>
 <span class="br">    ├── </span>pando.toml             <span class="tn">the project’s config</span>
 <span class="br">    ├── </span><span class="dir">worktrees/feat+login/</span>  <span class="tn">the branch’s checkout</span>

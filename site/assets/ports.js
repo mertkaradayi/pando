@@ -73,6 +73,7 @@
     rs.forEach((r, i) => { s += `<span class="d">${esc(r.padEnd(8).slice(0, 8))}</span>  <span class="g">${base + i}</span>${r === url ? `  <span class="d">← http://localhost:${base + i}</span>` : ''}\n`; });
     if (!rs.length) s += '<span class="d">no roles: nothing to serve</span>\n';
     out.innerHTML = s.trimEnd();
+    if (window.PANDO && window.PANDO.measureCode) window.PANDO.measureCode();
     clearTimeout(update.t);
     const live = document.getElementById('pw-live');
     if (live) update.t = setTimeout(() => { live.textContent = rs.length ? `${name}: ports ${base} to ${base + rs.length - 1}` : `${name}: no roles`; }, 600);

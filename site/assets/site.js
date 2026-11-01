@@ -251,10 +251,27 @@
     select(tabs.find(t => t.getAttribute('aria-selected') === 'true') || tabs[0], false);
   });
 
-  /* ---------- code that scrolls sideways can be reached by keyboard ---------- */
-  const sideways = el => { if (el.scrollWidth > el.clientWidth + 1) { el.tabIndex = 0; el.setAttribute('role', 'region'); if (!el.hasAttribute('aria-label')) el.setAttribute('aria-label', 'Code, scrolls sideways'); } else if (el.getAttribute('role') === 'region') { el.removeAttribute('tabindex'); el.removeAttribute('role'); } };
+  /* ---------- output with columns fits its box; what still scrolls says so ---------- */
+  // A table or a frame (pre.fit) cannot wrap without losing its columns, so
+  // on a narrow screen its type steps down until its longest line fits,
+  // never under 10px. Whatever still scrolls sideways can be reached by
+  // keyboard and shows a gold edge where more of it is (.sideways).
+  const fits = Array.from(document.querySelectorAll('pre.fit'));
+  const fitCode = () => fits.forEach(el => {
+    el.style.fontSize = '';
+    if (el.scrollWidth <= el.clientWidth + 1) return;
+    const cs = getComputedStyle(el), base = parseFloat(cs.fontSize);
+    const cols = Math.max(...el.innerText.split('\n').map(l => l.replace(/\s+$/, '').length));
+    const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    el.style.fontSize = Math.max(10, Math.min(base, Math.floor((room / (cols * 0.6)) * 10) / 10)) + 'px';
+  });
+  const sideways = el => {
+    const over = el.scrollWidth > el.clientWidth + 1;
+    el.classList.toggle('sideways', over);
+    if (over) { el.tabIndex = 0; el.setAttribute('role', 'region'); if (!el.hasAttribute('aria-label')) el.setAttribute('aria-label', 'Code, scrolls sideways'); } else if (el.getAttribute('role') === 'region') { el.removeAttribute('tabindex'); el.removeAttribute('role'); }
+  };
   const blocks = Array.from(document.querySelectorAll('pre, .tbl-wrap')).filter(el => !el.closest('.tui, .setup'));
-  const measureBlocks = () => blocks.forEach(sideways);
+  const measureBlocks = (P.measureCode = () => { fitCode(); blocks.forEach(sideways); });
   window.addEventListener('resize', measureBlocks);
   window.addEventListener('pando:fonts', measureBlocks);
   requestAnimationFrame(measureBlocks);

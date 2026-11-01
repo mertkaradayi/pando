@@ -216,6 +216,16 @@ pre.hang.h7 { --hang: 7ch; }
 pre.hang .l.h2 { --hang: 2ch; }
 .sub-chapter pre.hang { margin-top: 18px; }
 pre .p { color: var(--gold); user-select: none; -webkit-user-select: none; }
+/* code that scrolls sideways: a gold edge on the side where more of it is
+   (the covers scroll with the text, the edges stay with the box) */
+pre.sideways, .tbl-wrap.sideways {
+  background:
+    linear-gradient(to right, var(--term) 40%, rgba(8, 7, 5, 0)) left center / 32px 100% no-repeat local,
+    linear-gradient(to left, var(--term) 40%, rgba(8, 7, 5, 0)) right center / 32px 100% no-repeat local,
+    linear-gradient(to right, rgba(242, 184, 75, 0.28), rgba(242, 184, 75, 0)) left center / 12px 100% no-repeat scroll,
+    linear-gradient(to left, rgba(242, 184, 75, 0.28), rgba(242, 184, 75, 0)) right center / 12px 100% no-repeat scroll,
+    var(--term);
+}
 pre .c { color: var(--dim); }
 pre .k { color: var(--gold-pale); }
 pre .s { color: #b9e6c9; }
@@ -252,11 +262,14 @@ pre .s { color: #b9e6c9; }
 .copy:hover { color: var(--gold); }
 .copy.done { color: var(--green); }
 .cmdline { display: flex; align-items: stretch; background: var(--term); border: 1px solid rgba(236, 236, 236, 0.16); border-radius: 10px; overflow: hidden; max-width: 100%; margin: 12px 0 0; }
-.cmdline code { flex: 1; min-width: 0; display: flex; align-items: center; padding: 11px 16px; color: var(--fg-strong); font-size: var(--t-code); white-space: nowrap; overflow-x: auto; scrollbar-width: none; overflow-wrap: normal; }
-.cmdline code::-webkit-scrollbar { display: none; }
+/* a command is never cut: it wraps at a space, hung under its text after
+   the prompt, and a long URL wraps anywhere (.wrapping) */
+.cmdline code { flex: 1; min-width: 0; align-self: center; padding: 11px 16px; color: var(--fg-strong); font-size: var(--t-code); line-height: 1.55; white-space: normal; overflow-wrap: break-word; }
+.cmdline code:has(> .p) { padding-left: calc(16px + 2ch); text-indent: -2ch; }
 .cmdline code .p { color: var(--gold); user-select: none; -webkit-user-select: none; white-space: pre; }
-.cmdline.wrapping code, .rail .cmdline code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cmdline.wrapping code { overflow-wrap: anywhere; }
 .cmdline.lg code { font-size: 15px; padding: 14px 18px; }
+.cmdline.lg code:has(> .p) { padding-left: calc(18px + 2ch); }
 
 .tag { display: inline-block; font-size: var(--t-xs); font-weight: 500; color: var(--fg-2); border: 1px solid var(--line-2); border-radius: 999px; padding: 0 9px; line-height: 1.6; vertical-align: 0.15em; }
 .tag.exp, .tag.gold { color: var(--orange); border-color: rgba(232, 154, 60, 0.6); }
@@ -675,6 +688,8 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
   .seg { display: flex; width: 100%; }
   .seg button { flex: 1 1 auto; padding: 0 8px; font-size: 13px; }
   .cmdline.lg code { font-size: 13px; padding: 12px 14px; }
+  .cmdline.lg code:has(> .p) { padding-left: calc(14px + 2ch); }
+  pre.code, .term pre { padding: 14px 14px; }
   .foot { flex-direction: column; align-items: flex-start; }
 }
 

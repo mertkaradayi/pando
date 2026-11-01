@@ -298,7 +298,7 @@
 <section>
 <h2 id="repos">Several repositories</h2>
 <p>A product split across repositories cloned side by side is one project. Run <code>pando</code> in the plain folder that holds them:</p>
-<div class="code"><pre><span class="w">product/</span>       <span class="d">a plain folder, not a repository</span>
+<div class="code"><pre class="fit"><span class="w">product/</span>       <span class="d">a plain folder, not a repository</span>
 <span class="d">├──</span> backend/   <span class="d">a git repository</span>
 <span class="d">└──</span> frontend/  <span class="d">a git repository</span></pre></div>
 <p>Its worktree is a <em>set</em>, laid out like the folder. <code>pando new feat/x</code> makes <code>&lt;set&gt;/backend</code> and <code>&lt;set&gt;/frontend</code>, each a worktree of its own repository on <code>feat/x</code>. A repository that already has the branch, locally or on <code>origin</code>, uses it. One that does not forks a new branch from its own base.</p>
@@ -493,7 +493,7 @@ fingerprint = [<span class="s">"prisma/migrations/**"</span>]</pre></figure>
 <section>
 <h2 id="prs">Pull requests</h2>
 <p>In the TUI, <kbd>p</kbd> lists the repository's open pull requests through the GitHub CLI. Typing narrows them by number, title, branch or author. <kbd>⏎</kbd> makes a worktree for one, or goes to the worktree it already has.</p>
-<div class="code"><pre>╭ open pull requests ────────────────────────────╮
+<div class="code"><pre class="fit">╭ open pull requests ────────────────────────────╮
 │ filter ▏                                       │
 │                                                │
 │ <span class="g">▸</span> <span class="w">#131</span> fix VAT rounding                  <span class="d">@sam</span>  │
@@ -564,7 +564,7 @@ fingerprint = [<span class="s">"prisma/migrations/**"</span>]</pre></figure>
 <span class="l">    -f docker-compose.yml \</span>
 <span class="l">    -f ~/.pando/projects/shop-0b790793/compose/feat+login.override.yml \</span>
 <span class="l">    up -d postgres redis</span></pre></div>
-<figure class="code"><figcaption class="code-h">The override, generated on every isolated start</figcaption><pre><span class="k">services:</span>
+<figure class="code"><figcaption class="code-h">The override, generated on every isolated start</figcaption><pre class="fit"><span class="k">services:</span>
   <span class="k">postgres:</span>
     ports: !override ["127.0.0.1:30010:5432"]
     container_name: !reset
@@ -1219,7 +1219,7 @@ theme = "catppuccin"
 <tr><td>a clearer way to explain it</td><td data-th="Contribution">a change to this website: plain HTML, no build step</td><td data-th="Where"><code>site/</code></td></tr>
 </tbody></table></div>
 <p>Every change passes three gates:</p>
-<div class="code"><pre><span class="p">$</span> cargo test
+<div class="code"><pre class="fit"><span class="p">$</span> cargo test
 <span class="p">$</span> cargo clippy --all-targets -- -D warnings
 <span class="p">$</span> cargo fmt --check</pre></div>
 <ul>
