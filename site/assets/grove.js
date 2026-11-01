@@ -7,7 +7,8 @@
  * sprites and caches, never with a blur in the frame itself. A loop runs only
  * while its canvas is on screen, at 30 frames a second unless something just
  * happened, and not at all with reduced motion. The tail of this file draws the
- * end card's still grove; the story (story.js) and the demo (tui.js) drive their own.
+ * end card's still grove; the story (story.js), the demo (tui.js) and the
+ * feature plates (plates.js) drive their own.
  */
 (function () {
   'use strict';
@@ -103,7 +104,10 @@
       this.ghosts.push({ x, y: G - 10 - gr() * 12, s: 0.62 + gr() * 0.26, tr: makeTree(500 + k * 13 + o.seed, 1, 7), a: 0.7 + gr() * 0.3 });
     }
     // the root: two strands, links between them, rootlets
-    const RX0 = (this.RX0 = o.x0 - 400), RX1 = (this.RX1 = o.x1 + 400);
+    // a grove of its own beside another (a second repository) keeps its root short
+    const pad = o.rootPad == null ? 400 : o.rootPad;
+    this.fade = o.fade || 0;
+    const RX0 = (this.RX0 = o.x0 - pad), RX1 = (this.RX1 = o.x1 + pad);
     this.rootY = x => G + 95 + 16 * Math.sin(x * 0.0065 + 1) + 7 * Math.sin(x * 0.021);
     this.deepY = x => G + 185 + 14 * Math.sin(x * 0.0051 + 2.3) + 6 * Math.sin(x * 0.017 + 0.7);
     const main = [], deep = [];
@@ -112,7 +116,7 @@
     main.forEach((p, i) => (i ? pMain.lineTo(p[0], p[1]) : pMain.moveTo(p[0], p[1])));
     deep.forEach((p, i) => (i ? pDeep.lineTo(p[0], p[1]) : pDeep.moveTo(p[0], p[1])));
     const rr = mulberry(21 + o.seed);
-    for (let x = RX0 + 150; x < RX1 - 100; x += 125) {
+    for (let x = RX0 + Math.min(150, pad + 60); x < RX1 - Math.min(100, pad); x += 125) {
       const xx = x + (rr() - 0.5) * 60, dx = (rr() - 0.5) * 90, y0 = this.rootY(xx), x1 = xx + dx, y1 = this.deepY(x1);
       pLinks.moveTo(xx, y0);
       pLinks.bezierCurveTo(xx + (rr() - 0.5) * 60, lerp(y0, y1, 0.35), x1 + (rr() - 0.5) * 60, lerp(y0, y1, 0.7), x1, y1);
@@ -302,6 +306,12 @@
       cx.shadowColor = 'rgba(242,184,75,.9)';
       cx.shadowBlur = 5 * sc; cx.strokeStyle = 'rgba(242,184,75,.5)'; cx.lineWidth = 1.6; cx.stroke(this.roots.pDeep);
       cx.shadowBlur = 11 * sc; cx.strokeStyle = 'rgba(242,184,75,.82)'; cx.lineWidth = 2.5; cx.stroke(this.roots.pMain);
+      // a root that stops (a repository beside another) fades out at both ends
+      if (this.fade) {
+        const f = this.fade / (this.RX1 - this.RX0), lg = cx.createLinearGradient(this.RX0, 0, this.RX1, 0);
+        lg.addColorStop(0, 'rgba(0,0,0,0)'); lg.addColorStop(f, '#000'); lg.addColorStop(1 - f, '#000'); lg.addColorStop(1, 'rgba(0,0,0,0)');
+        cx.shadowBlur = 0; cx.globalCompositeOperation = 'destination-in'; cx.fillStyle = lg; cx.fillRect(this.RX0, G + 40, this.RX1 - this.RX0, 260);
+      }
     });
     // extra glow: the cached root again, added on top
     if (gl > 1.02) {
@@ -339,6 +349,7 @@
       const s0 = 1 / Math.max(z, 0.8);
       for (const p of this.rp) {
         const u = (((p.u + p.v * now) % 1) + 1) % 1, q = at(p.strand ? this.roots.deep : this.roots.main, u), s = p.s * s0;
+        if (this.fade && (q[0] < this.RX0 + this.fade * 0.7 || q[0] > this.RX1 - this.fade * 0.7)) continue;
         ctx.rect(q[0] - s / 2, q[1] - s / 2, s, s);
       }
       ctx.fill();
@@ -460,7 +471,7 @@
       ctx.stroke();
     }
     const c = clamp(k * 1.6 - 0.5);
-    if (c > 0) drawCylinder(ctx, 0, 0, c * A, o.cylinders || 1, o.cylColor);
+    if (c > 0 && o.cylinders !== 0) drawCylinder(ctx, 0, 0, c * A, o.cylinders || 1, o.cylColor);
     if (k > 0.6) {
       ctx.fillStyle = `rgba(250,222,150,${(k - 0.6) * 2 * A})`; ctx.beginPath();
       for (let j = 0; j < 12; j++) { const a = now * 0.9 + j * 0.5236; ctx.rect(Math.cos(a) * 80 - 1.8, Math.sin(a) * 40 - 1.8, 3.6, 3.6); }
@@ -517,7 +528,7 @@
   P.MONO = MONO; P.C = C;
   P.m = { mulberry, hash, clamp, lerp, ss, E };
   P.Grove = Grove; P.View = View;
-  P.drawTree = drawTree; P.drawLabel = drawLabel;
+  P.drawTree = drawTree; P.drawLabel = drawLabel; P.drawCylinder = drawCylinder;
   P.loop = loop; P.reduced = reduced;
   // Measure once the mono face is here, or after a moment without it; when it
   // arrives late, 'pando:fonts' tells whoever measured text to measure again.
@@ -584,63 +595,8 @@
     io.observe(box);
   }
 
-  /* ---------- the three data modes: one still drawing each ---------- */
-  // Two trunks over one root: the main checkout (left) with the project's
-  // database under it, and a worktree (right). The mode decides what the
-  // worktree drinks from. Drawn once when it comes near, again on a resize.
-  function modeStill(cv, idx) {
-    const mode = cv.dataset.mode, MX = 620, WX = 1300, DEPTH = 262;
-    let grove = null, view = null;
-    const paint = () => {
-      if (!grove) { grove = new Grove({ trunks: [MX, WX], ghosts: 7, x0: 150, x1: 1800, seed: 11 + idx }); view = new View(cv, { maxDpr: 2 }); }
-      if (!view.resize() && cv.dataset.drawn) return;
-      cv.dataset.drawn = '1';
-      grove._cache = {};
-      const G = grove.G, w = view.w, h = view.h;
-      view.cam = { x: 960, y: 640, z: Math.min(w / 1320, h / 870) };
-      view.clear(); view.world();
-      grove.drawGround(view, 1);
-      const conns = [{ x: MX, y: G, cdx: grove.trees[0].cdx, pres: 1 }, { x: WX, y: G, cdx: grove.trees[1].cdx, pres: 1, green: 1 }];
-      grove.ghosts.forEach(g => conns.push({ x: g.x, y: g.y, cdx: g.tr.cdx, pres: 0.4 }));
-      grove.drawRoots(view, { alpha: 0.85, glow: 1, trunks: conns, particles: 0.6 }, 2.2 + idx);
-      grove.drawPocket(view, MX, 1, 1.7, { depth: DEPTH, cylinders: mode === 'namespaced' ? 2 : 1 });
-      if (mode === 'isolated') grove.drawPocket(view, WX, 1, 3, { depth: DEPTH, rgb: '124,255,178', cylColor: '#C8FFE0' });
-      else {
-        const tx = MX + (mode === 'namespaced' ? 36 : 0), ty = G + DEPTH - 22, ctx = view.ctx;
-        ctx.save(); ctx.setLineDash([7, 8]);
-        ctx.strokeStyle = mode === 'namespaced' ? 'rgba(124,255,178,.8)' : 'rgba(242,184,75,.8)';
-        ctx.lineWidth = 2.2 / Math.max(0.5, view.cam.z);
-        ctx.beginPath(); ctx.moveTo(WX, G + 8); ctx.bezierCurveTo(WX, G + 170, tx + 200, ty - 60, tx + 34, ty); ctx.stroke();
-        ctx.restore();
-      }
-      grove.drawGhosts(view, 1, 0.22, 0);
-      drawTree(view, grove.trees[0], { x: MX, y: G, s: 1, F: 1, alpha: 1, green: 0.85, still: true }, 0);
-      drawTree(view, grove.trees[1], { x: WX, y: G, s: 1, F: 1, alpha: 1, green: 1, still: true }, 0);
-      view.screen();
-      const size = Math.round(clamp(view.cam.z * 30, 11, 15));
-      const [mx, my] = view.proj(MX, G), [wx, wy] = view.proj(WX, G);
-      drawLabel(view, mx, my, 'main ⌂', { size, green: 1 });
-      drawLabel(view, wx, wy, 'feat/login' + (mode === 'isolated' ? ' ▣' : mode === 'namespaced' ? ' ◧' : ''), { size, green: 1 });
-      const ctx = view.ctx, ls = Math.round(clamp(view.cam.z * 26, 11, 14));
-      ctx.save(); ctx.font = `400 ${ls}px ${MONO}`; ctx.textAlign = 'center';
-      const [dx, dy] = view.proj(MX, G + DEPTH + 80);
-      ctx.fillStyle = 'rgba(242,184,75,.95)';
-      ctx.fillText(mode === 'namespaced' ? 'shop · shop__feat_login' : 'shop · your database', dx, dy);
-      if (mode === 'isolated') { const [ix, iy] = view.proj(WX, G + DEPTH + 80); ctx.fillStyle = 'rgba(124,255,178,.95)'; ctx.fillText('its own, on :30010', ix, iy); }
-      ctx.restore();
-    };
-    const io = new IntersectionObserver(es => {
-      if (!es.some(e => e.isIntersecting)) return;
-      io.disconnect();
-      P.fontsReady.then(() => requestAnimationFrame(paint));
-      new ResizeObserver(() => requestAnimationFrame(paint)).observe(cv);
-    }, { rootMargin: '60% 0px' });
-    io.observe(cv);
-  }
-
   P.Sky = Sky;
   P.BR = BR;
   P.segments = g => g.trees.reduce((a, t) => a + t.n, 0) + g.ghosts.reduce((a, x) => a + x.tr.n, 0);
   still(document.querySelector('.endcard'));
-  document.querySelectorAll('canvas[data-mode]').forEach(modeStill);
 })();
