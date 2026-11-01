@@ -2,7 +2,7 @@
  *
  * A plate is a figure: a canvas drawn with the grove engine (grove.js), a
  * row of steps under it, and what each step says. The first time a plate
- * comes into view it plays its steps once, a short ease into each, and
+ * stays in view a moment it plays its steps once, a short ease into each, and
  * settles on the last; after that it draws nothing until a step is chosen,
  * or play runs them again. Frames come from P.loop, so none are drawn off
  * screen, never more than 30 a second, and with reduced motion each step is
@@ -636,7 +636,7 @@
     const last = N - 1, still = fig.dataset.still != null ? +fig.dataset.still : last;
     // before it first plays, a plate shows where its first step begins
     const S = { ph: reduced ? still : 0, from: reduced ? still : 0, t0: reduced ? -99 : Infinity, view: null, built: false };
-    let auto = false, played = false, timer = 0, due = 0, left = 0, seen = false, lp = null;
+    let auto = false, played = false, timer = 0, due = 0, left = 0, seen = false, lp = null, look = 0;
 
     function show() {
       btns.forEach((b, i) => b.setAttribute('aria-pressed', String(i === S.ph)));
@@ -670,7 +670,8 @@
     function advance() { timer = 0; if (S.ph < last) go(S.ph + 1); else stop(); }
     function stop() { auto = false; clearTimeout(timer); timer = 0; fig.classList.remove('hold'); show(); }
     function start() { auto = true; played = true; go(0); }
-    btns.forEach((b, i) => b.addEventListener('click', () => { if (auto) stop(); fig.querySelector('.plate-says').setAttribute('aria-live', 'polite'); go(i); }));
+    // a step chosen is the reader's: the plate no longer plays by itself
+    btns.forEach((b, i) => b.addEventListener('click', () => { if (auto) stop(); played = true; clearTimeout(look); look = 0; fig.querySelector('.plate-says').setAttribute('aria-live', 'polite'); go(i); }));
     if (play) {
       if (reduced) play.hidden = true;
       else { play.hidden = false; play.addEventListener('click', () => { if (auto) stop(); else start(); }); }
@@ -687,13 +688,16 @@
     lp = P.loop(art, frame, { still: true });
     show();
 
-    // the first time most of its art is in view, it plays; off screen it waits
+    // the first time most of its art stays in view a moment, it plays (a
+    // flick past it is not a look); off screen it waits. The moment is
+    // measured again when it ends: a busy page can report the leaving late
+    const most = () => { const r = art.getBoundingClientRect(); return r.height > 0 && (Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)) / r.height >= 0.45; };
     new IntersectionObserver(es => {
       const e = es[es.length - 1];
       if (e.intersectionRatio >= 0.45 && !seen) {
-        seen = true;
-        if (!reduced && !played) start(); else lp.kick(0);
-      }
+        if (reduced || played) { seen = true; lp.kick(0); }
+        else if (!look) look = setTimeout(() => { look = 0; if (most()) { seen = true; start(); } }, 250);
+      } else if (look) { clearTimeout(look); look = 0; }
       if (!auto) return;
       if (!e.isIntersecting && timer) { left = Math.max(400, due - performance.now()); clearTimeout(timer); timer = 0; fig.classList.add('hold'); }
       else if (e.intersectionRatio >= 0.45 && !timer) { fig.classList.remove('hold'); schedule(left || HOLD * 1000); }
