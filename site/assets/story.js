@@ -1,12 +1,13 @@
 /* pando · 01–03, the story: a grove the first chapters scroll over.
  *
- * The stage is sticky; the beats scroll past it, as ordinary text. Each beat
- * names a state of the grove (one tree, your repository, branches taking
- * turns, every branch alive). When a beat's text reaches the upper half of
- * the screen, the grove eases towards that beat's state: a jump or a fast
- * scroll goes straight there, and nothing is ever typed, decoded or
- * scrubbed. With reduced motion the grove changes state in one frame; the
- * pause button stops whatever moves by itself.
+ * The stage is sticky; the beats scroll past it. Each beat names a state of
+ * the grove (one tree, your repository, branches taking turns, every branch
+ * alive). When a beat's words come up to where they rest under the bar
+ * (P.storyNow, in site.js, which also shows them), the grove eases towards
+ * that beat's state: a jump or a fast scroll goes straight there, and
+ * nothing is ever typed, decoded or scrubbed. With reduced motion the grove
+ * changes state in one frame; the pause button, on the grove's bottom edge,
+ * stops whatever moves by itself.
  */
 (function () {
   'use strict';
@@ -28,11 +29,14 @@
     stash: stage.querySelector('.co.stash'), pop: stage.querySelector('.co.pop'), ask: stage.querySelector('.co.ask'),
   };
 
+  // from here on the words show one beat at a time (site.css)
+  if (P.storyNow) story.classList.add('story-live');
   const grove = new P.Grove({ ghosts: 20 });
   const view = new P.View(canvas, { maxDpr: 2 });
   view.trackPointer(story);
   const sky = new P.Sky(150, 33);
   const X = grove.X, G = grove.G, BR = P.BR;
+  grove.H = Math.max(...grove.trees.map(t => t.H)) + 30; // the tallest crown, in the grove's units
   if (seedHud) seedHud.textContent = `seed 0x5eed · ${commas(P.segments(grove))} segments`;
 
   /* ---------- what each beat shows ---------- */
@@ -54,12 +58,16 @@
   const still = () => P.reduced || paused;
 
   /* ---------- which beat the reader is on ---------- */
-  let tops = [];
+  let tops = [], heroBottom = 0;
+  const hero = story.querySelector('.hero');
   function measure() {
     const y0 = window.scrollY;
     tops = beats.map(b => b.getBoundingClientRect().top + y0);
+    // where the hero's words end, from the top of the page (and the stage)
+    heroBottom = hero ? hero.getBoundingClientRect().bottom - story.getBoundingClientRect().top : 0;
   }
   function current() {
+    if (P.storyNow) return Math.min(P.storyNow().cur, STATES.length - 1);
     const line = window.scrollY + innerHeight * 0.45;
     let k = 0;
     for (let i = 1; i < tops.length; i++) if (tops[i] <= line) k = i;
@@ -93,7 +101,12 @@
     const base = Math.max(Math.min(w / 1920, h / 1080), portrait ? w / 1250 : 0);
     // on a short screen the grove keeps lower and smaller, under the words
     const short = h < 720;
-    const zH = base * (portrait ? 0.95 : 0.62), gyH = portrait ? (short ? 0.97 : 0.9) : 0.975;
+    let zH = base * (portrait ? 0.95 : 0.62);
+    const gyH = portrait ? (short ? 0.97 : 0.9) : 0.975;
+    // under the hero the crowns stay clear of its words: on a short phone
+    // the grove is drawn smaller rather than behind them
+    const room = gyH * h - heroBottom - 20, tall = grove.H;
+    if (heroBottom && tall * zH > room) zH = Math.max(zH * 0.45, room / tall);
     const zS = base * (portrait ? (short ? 0.92 : 1.05) : short ? 0.72 : 0.9), gyS = short ? 0.87 : portrait ? 0.74 : h < 820 ? 0.8 : 0.75;
     const k = E.ioSine(clamp(v.cam));
     const z = lerp(zH, zS, k) * (1 + 0.1 * v.lone);
@@ -188,8 +201,9 @@
   function bracket() {
     const a = v.bracket;
     if (a <= 0.01) return;
-    const ctx = view.ctx, y = view.proj(0, G + 240)[1], x0 = Math.max(16, view.w * 0.05), x1 = view.w - x0;
-    if (y > view.h - 8) return;
+    // on the page's grid (--inset), and above the controls on the bottom edge
+    const g = clamp(view.w * 0.05, 16, 72), x0 = Math.max(g, (view.w - 1180) / 2), x1 = view.w - x0;
+    const ctx = view.ctx, y = Math.min(view.proj(0, G + 240)[1], view.h - 84);
     const size = Math.round(clamp(view.cam.z * 34, 15, 30)), mid = view.w / 2;
     ctx.save(); ctx.globalAlpha = a;
     ctx.font = `700 ${size}px ${P.MONO}`;

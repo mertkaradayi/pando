@@ -377,15 +377,22 @@
     o = o || {};
     const ctx = view.ctx, size = o.size || 22, row = o.row || 0, a = o.alpha == null ? 1 : o.alpha;
     if (a <= 0 || !text) return;
-    const ly = sy + (row ? size * 2.95 : size * 1.6);
+    // two rows, so neighbours never touch: the second row's chip starts a
+    // quarter of a line below the first's
+    const ly = sy + (row ? size * 3.2 : size * 1.6);
     ctx.save();
     ctx.font = `${o.weight || 400} ${size}px ${o.sans ? SANS : MONO}`; const w = ctx.measureText(text).width;
     const lx = clamp(sx, w / 2 + 12, view.w - w / 2 - 12);
     ctx.globalAlpha = a;
-    ctx.fillStyle = 'rgba(5,5,5,.8)'; ctx.fillRect(lx - w / 2 - 8, ly - size * 0.95, w + 16, size * 1.3);
-    const green = o.green > 0.5;
-    ctx.strokeStyle = o.gold ? 'rgba(242,184,75,.7)' : green ? 'rgba(124,255,178,.55)' : 'rgba(236,236,236,.35)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(sx, sy + 3); ctx.lineTo(sx, ly - size * 0.95); ctx.stroke();
+    // every name on the same chip, an opaque tag with a hairline edge, so a
+    // name reads the same over a glow as over the night
+    const green = o.green > 0.5, edge = o.gold ? 'rgba(242,184,75,.7)' : green ? 'rgba(124,255,178,.5)' : 'rgba(236,236,236,.3)';
+    const bx = Math.round(lx - w / 2 - 9) + 0.5, by = Math.round(ly - size * 0.98) + 0.5, bw = Math.round(w + 18), bh = Math.round(size * 1.36);
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 4); else ctx.rect(bx, by, bw, bh);
+    ctx.fillStyle = 'rgba(8,7,5,.94)'; ctx.fill();
+    ctx.strokeStyle = edge; ctx.lineWidth = 1; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx, sy + 3); ctx.lineTo(sx, by); ctx.stroke();
     ctx.fillStyle = o.color || (o.gold ? C.gold : green ? C.green : C.fg); ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
     ctx.fillText(text, lx, ly);
     ctx.restore();

@@ -265,17 +265,21 @@ pre .s { color: #b9e6c9; }
 .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .stage::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 55%, rgba(0, 0, 0, 0) 45%, rgba(0, 0, 0, 0.55) 100%); }
 html:not(.js) .stage { display: none; }
-.seed-hud { position: absolute; right: var(--gutter); bottom: 18px; z-index: 3; font-size: var(--t-xs); color: var(--dim); background: rgba(5, 5, 5, 0.72); padding: 2px 8px; border-radius: 4px; pointer-events: none; }
-/* the pause sits at the bottom of the screen while the story is on it, above
-   the words scrolling past, and leaves with the story */
-.stage-ctl { position: sticky; bottom: 10px; z-index: 3; height: 44px; margin-top: -54px; padding: 0 var(--gutter); pointer-events: none; }
-html:not(.js) .stage-ctl { display: none; }
+/* the grove's own controls, on its bottom edge: they stay with the grove and
+   leave with it, and the words never pass over them (story.js shows a beat's
+   words only where they rest, at the top) */
+.stage-foot {
+  position: absolute; z-index: 3; left: var(--inset); right: var(--inset); bottom: max(14px, env(safe-area-inset-bottom));
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; pointer-events: none;
+}
+.seed-hud { margin-left: auto; font-size: var(--t-xs); line-height: 1.6; color: var(--dim); background: rgba(5, 5, 5, 0.72); padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
 .stage-pause {
   pointer-events: auto; display: inline-flex; align-items: center; gap: 9px;
   min-height: 44px; padding: 0 14px; font: inherit; font-size: var(--t-xs); color: var(--fg-2);
   background: rgba(5, 5, 5, 0.72); border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
 }
 .stage-pause[hidden] { display: none; }
+@media (max-width: 359px) { .seed-hud { display: none; } }
 .stage-pause:hover { color: var(--fg-strong); border-color: var(--gold); }
 .stage-pause .lbl { display: inline; margin: 0; color: inherit; font-size: inherit; font-weight: 400; letter-spacing: 0; text-transform: none; }
 .stage-pause[aria-pressed="true"] { color: var(--gold); border-color: rgba(242, 184, 75, 0.6); }
@@ -301,6 +305,12 @@ html:not(.js) .stage-ctl { display: none; }
   position: sticky; top: calc(var(--hud-h) + clamp(16px, 5vh, 56px));
   max-width: min(var(--wrap), 100%); margin: 0 auto; padding: 8px 0 24px;
 }
+/* one beat's words at a time, and only where they rest: words on their way
+   up or out are hidden, so they never cross the grove, its labels or each
+   other. A fade in time, never tied to the scroll, so no word is left half
+   shown; site.js sets .on, story.js sets .story-live once it runs */
+.story-live .beat:not(.beat-hero) .beat-text { opacity: 0; transform: translateY(14px); pointer-events: none; transition: opacity .18s ease, transform .18s ease; }
+.story-live .beat.on .beat-text, .story-live .beat .beat-text:focus-within { opacity: 1; transform: none; pointer-events: auto; transition: opacity .4s ease .04s, transform .55s cubic-bezier(.2, .7, .2, 1) .04s; }
 .beat-text > * { max-width: 60ch; }
 .beat-text .headline { max-width: none; font-size: clamp(28px, 3.8vw, 48px); }
 /* the last beat is one screen and not sticky, so its words and the grove leave together */
@@ -664,8 +674,9 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
 .still .headline .cur, .still .tagline .cur { animation: none; }
 
 @media print {
-  .hud, .stage, .demo, .demo-ctl, .endcard canvas, .stage-pause { display: none !important; }
+  .hud, .stage, .demo, .demo-ctl, .endcard canvas { display: none !important; }
   .js .beats { margin-top: 0; }
+  .beat-text { opacity: 1 !important; transform: none !important; position: static !important; }
   .js .headline .ch { opacity: 1 !important; }
   body { background: #fff; color: #000; }
 }

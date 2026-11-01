@@ -36,19 +36,53 @@
   const chapters = Array.from(document.querySelectorAll('[data-chapter]'));
   const beatsIn = new Map(chapters.map(c => [c, Array.from(c.querySelectorAll('[data-beat]'))]));
   const storyBeats = Array.from(document.querySelectorAll('.story .beat'));
+  const story = storyBeats.length ? storyBeats[0].closest('.story') : null;
+
+  /* ---------- the story: which beat is on, and whether its words show ---------- */
+  // One rule for the grove (story.js), the words and the chapter marker: a
+  // beat is on once its words have come up to where they rest, under the
+  // bar. Its words show only while they rest there; the last beat's leave
+  // with the grove. So words never cross the grove on their way up, and the
+  // words of two beats are never on the screen together.
+  const storyTexts = storyBeats.map(b => b.querySelector('.beat-text'));
+  let sm = null, shownBeat = null;
+  const storyMeasure = () => {
+    const t = storyTexts.find(Boolean);
+    if (!t) return;
+    const cs = getComputedStyle(t);
+    sm = { rest: parseFloat(cs.top) + parseFloat(cs.paddingTop), pads: storyTexts.map(x => (x ? parseFloat(getComputedStyle(x).paddingTop) : 0)) };
+  };
+  P.storyNow = function () {
+    if (!sm) storyMeasure();
+    if (!sm) return { cur: 0, shown: 0 };
+    const near = sm.rest + Math.min(80, innerHeight * 0.08), far = sm.rest - Math.min(64, innerHeight * 0.07), last = storyTexts.length - 1;
+    let cur = 0, y = 0;
+    for (let i = 1; i <= last; i++) {
+      if (!storyTexts[i]) continue;
+      const yi = storyTexts[i].getBoundingClientRect().top + sm.pads[i];
+      if (yi <= near) { cur = i; y = yi; }
+    }
+    return { cur, shown: cur === 0 || cur === last || y >= far ? cur : -1 };
+  };
+  window.addEventListener('resize', () => { sm = null; });
+  window.addEventListener('pando:fonts', () => { sm = null; queue(); });
 
   function onScroll() {
     if (hud && !isDocs) hud.classList.toggle('top', window.scrollY < 8);
     if (isDocs) return docsScroll();
     const line = window.innerHeight * 0.32;
-    // the story's beats first: the one whose top has passed the line
     let active = null, beat = '';
-    const story = storyBeats.length ? storyBeats[0].closest('.story') : null;
-    if (story && story.getBoundingClientRect().bottom > line) {
-      let b = storyBeats[0];
-      for (const s of storyBeats) if (s.getBoundingClientRect().top <= innerHeight * 0.45) b = s;
+    const sr = story && story.getBoundingClientRect();
+    const now = sr && sr.bottom > 0 ? P.storyNow() : null;
+    if (now && shownBeat !== now.shown) {
+      shownBeat = now.shown;
+      storyBeats.forEach((b, i) => b.classList.toggle('on', i === now.shown));
+    }
+    // the story's beats first
+    if (now && sr.bottom > line) {
+      const b = storyBeats[now.cur];
       setChapter(b.dataset.chap, b.dataset.name, b.dataset.tag);
-      const k = storyBeats.indexOf(b), n = parseInt(b.dataset.chap, 10);
+      const k = now.cur, n = parseInt(b.dataset.chap, 10);
       segs.forEach((s, i) => fill(s, i < n - 1 ? 1 : i === n - 1 ? Math.max(0.15, (k + 1) / storyBeats.length) : 0));
       navLinks.forEach(a => mark(a, false));
       return;
