@@ -585,7 +585,8 @@ html:not(.js) .plate-art, html:not(.js) .plate-ctl, html:not(.js) .plate-meter {
 .js .plate-says > .say { grid-area: 1 / 1; visibility: hidden; }
 .js .plate-says > .say.on { visibility: visible; }
 html:not(.js) .plate-says > .say + .say { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
-.say { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 14px 40px; align-items: start; }
+/* every step keeps the tallest one's room, so the page never moves; a shorter one sits at its top */
+.say { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 14px 40px; align-items: start; align-content: start; }
 .say > * { min-width: 0; }
 .say-t > :last-child { margin-bottom: 0; }
 .say h3 { margin: 0 0 0.45em; }
@@ -764,6 +765,12 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
   .plate-meter { grid-template-columns: auto minmax(0, 1fr); }
   .plate-meter .pm-l { grid-column: 1 / -1; grid-row: 2; }
   .plate-meter .pm-v { text-align: right; }
+}
+/* a phone's plate: five steps share the row evenly, none under a thumb's 44px */
+@container plate (max-width: 360px) {
+  .plate-ctl { padding: 5px 4px; gap: 4px; }
+  .plate-steps { gap: 2px; }
+  .ps { flex: 1 1 0; min-width: 44px; padding-inline: 2px; }
 }
 /* a phone: a row too long for the line goes on under it, a little in, whole */
 @media (max-width: 480px) {

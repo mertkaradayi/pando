@@ -239,7 +239,7 @@
       S.pw = pw; S.pH = ph;
       const bottom = nar ? G + 236 + ph * 2 + 64 : G + 236 + ph;
       const half = nar ? pw / 2 + 40 : pw + 40;
-      frameOn(view, [S.X[0] - half, G - crown(S.g) - 8, S.X[1] + half, bottom], [12, 0, 30, 0]);
+      frameOn(view, [S.X[0] - half, G - crown(S.g) - 8, S.X[1] + half, bottom], [12, 0, nar ? 30 : 52, 0]);
     },
     // where a pad sits: k 0 the files, 1 node_modules
     at(S, i, k) {
@@ -290,10 +290,11 @@
       view.screen();
       const size = labelSize(view);
       names(view, X, G, [{ text: 'main ⌂', green: 1 }, { text: 'feat/checkout', green: 1, alpha: clamp(F * 2) }], size);
-      // what each pad is, under it
+      // what each pad is, under it; side by side, node_modules' a row lower,
+      // since a short plate's pads are narrower than their names
       const under = (i, k, text, tone, al) => {
         const [x, y] = this.at(S, i, k), [mx, my] = view.proj(x + S.pw / 2, y + S.pH);
-        chip(view, mx, my + 15, text, { tone, size: 12, alpha: al });
+        chip(view, mx, my + 15 + (!S.nar && k ? 22 : 0), text, { tone, size: 12, alpha: al });
       };
       // a narrow screen keeps the names short, so neighbours never touch
       const n = S.nar;
@@ -433,7 +434,7 @@
       }
       // the frontend had no feat/x: it was made from its own base
       const forked = st.ph === 1 ? ss(0.6, 1, st.raw) : st.ph === 2 ? 1 - green : 0;
-      tag(view, X[2], G - 150, 'new, from main', { tone: 'dim', size: 12, side: 1, alpha: forked, avoid: hung.slice(1) });
+      tag(view, X[2], G - 150, S.nar ? 'from main' : 'new, from main', { tone: 'dim', size: 12, side: 1, alpha: forked, avoid: hung.slice(1) });
     },
   };
 
@@ -607,11 +608,11 @@
         }
         tag(view, X[0], G - 120, 'untouched', { tone: 'white', size: 12, side: -1, alpha: agent * (st.ph === 0 && st.from === 0 ? ss(0.6, 1, st.raw) : 1) });
       }
-      const ta = clamp(F * 2 - 0.6);
-      tag(view, X[1], G - 70, 'a1b2c3d', { tone: 'dim', size: 12, side: -1, alpha: p === 0 || p === 3 ? ta : p > 0 ? 1 : 0 });
+      const ta = clamp(F * 2 - 0.6), hung = [];
+      tag(view, X[1], G - 70, 'a1b2c3d', { tone: 'dim', size: 12, side: -1, alpha: p === 0 || p === 3 ? ta : p > 0 ? 1 : 0, avoid: hung });
       const svc = p === 1 ? clamp(st.raw * 1.5) : p === 2 ? 1 : p === 3 ? ta : 0;
-      tag(view, X[1], G - 130, 'api :29848', { tone: green > 0.5 ? 'green' : 'gold', size, side: 1, alpha: svc });
-      tag(view, X[1], G - 180, 'web :29849', { tone: green > 0.5 ? 'green' : 'gold', size, side: 1, alpha: svc });
+      tag(view, X[1], G - 130, 'api :29848', { tone: green > 0.5 ? 'green' : 'gold', size, side: 1, alpha: svc, avoid: hung });
+      tag(view, X[1], G - 180, 'web :29849', { tone: green > 0.5 ? 'green' : 'gold', size, side: 1, alpha: svc, avoid: hung });
       // asked for its first page
       const [cx, top] = view.proj(X[1], G - treeTop(g, 1) * 0.9);
       const ok = p === 2 ? clamp(st.raw * 1.4) : p === 3 ? ta : 0;
