@@ -719,7 +719,7 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
    ============================================================ */
 .docs-page .hud .chap-bar { display: none; }
 .docs-bar { display: none; }
-.docs-shell { display: grid; grid-template-columns: 250px minmax(0, 760px); gap: clamp(32px, 4vw, 64px); justify-content: center; width: min(100% - 2 * var(--gutter), 1180px); margin: 0 auto; padding-top: var(--hud-h); }
+.docs-shell { display: grid; grid-template-columns: 250px minmax(0, 760px); gap: clamp(32px, 4vw, 64px); justify-content: start; width: min(100% - 2 * var(--gutter), 1180px); margin: 0 auto; padding-top: var(--hud-h); }
 .toc { position: sticky; top: var(--hud-h); align-self: start; max-height: calc(100vh - var(--hud-h)); overflow: auto; padding: 44px 8px 40px 0; font-size: 13.5px; scrollbar-width: thin; scrollbar-color: rgba(242, 184, 75, 0.3) transparent; }
 .toc-h { margin: 22px 0 4px; color: var(--gold); font-size: var(--t-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .toc-h:first-child { margin-top: 0; }
@@ -773,6 +773,8 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
 .tbl th code { text-transform: none; letter-spacing: 0; }
 .tbl td { color: var(--fg-2); }
 .tbl td:first-child { color: var(--fg); }
+/* a path is read whole: never broken mid-name */
+.tbl td[data-th="Where"] code { white-space: nowrap; overflow-wrap: normal; }
 .mk { font-weight: 700; font-size: 1.15em; color: var(--fg); }
 .mk.on { color: var(--green); } .mk.go { color: var(--gold); } .mk.er { color: var(--red); }
 .tbl.marks td:first-child { white-space: nowrap; }
@@ -819,7 +821,7 @@ html:not(.js) #ports-widget { display: none; }
 .legal a { min-height: 0; display: inline; }
 
 @media (max-width: 1068px) {
-  .docs-shell { grid-template-columns: minmax(0, 1fr); width: min(100% - 2 * var(--gutter), 760px); }
+  .docs-shell { grid-template-columns: minmax(0, 760px); }
   .js .toc { display: none; }
   html:not(.js) .toc { position: static; max-height: none; padding: 24px 0 0; }
   .js .docs-bar {
