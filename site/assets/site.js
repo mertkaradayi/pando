@@ -55,7 +55,7 @@
   P.storyNow = function () {
     if (!sm) storyMeasure();
     if (!sm) return { cur: 0, shown: 0 };
-    const near = sm.rest + Math.min(80, innerHeight * 0.08), far = sm.rest - Math.min(64, innerHeight * 0.07), last = storyTexts.length - 1;
+    const near = sm.rest + Math.min(80, innerHeight * 0.08), far = sm.rest - Math.min(150, innerHeight * 0.17), last = storyTexts.length - 1;
     let cur = 0, y = 0;
     for (let i = 1; i <= last; i++) {
       if (!storyTexts[i]) continue;
