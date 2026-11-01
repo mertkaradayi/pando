@@ -24,8 +24,10 @@
 <script>
 /* Old links into the reference, which now has a page of its own. */
 (function () {
-  var to = { '#reference': 'commands', '#ref-verbs': 'commands', '#ref-keys': 'tui', '#ref-logs': 'logs', '#ref-config': 'config', '#ref-machine': 'machine', '#ref-needs': 'needs', '#ref-faq': 'faq', '#status': 'status', '#contributing': 'contributing' }[location.hash];
-  if (to) location.replace('docs.html#' + to);
+  var map = { '#reference': 'commands', '#ref-verbs': 'commands', '#ref-keys': 'tui', '#ref-logs': 'logs', '#ref-config': 'config', '#ref-machine': 'machine', '#ref-needs': 'needs', '#ref-faq': 'faq', '#status': 'status', '#contributing': 'contributing' };
+  var go = function () { var to = map[location.hash]; if (to) location.replace('docs.html#' + to); };
+  go();
+  window.addEventListener('hashchange', go);
   document.documentElement.classList.add('js');
 })();
 </script>
@@ -67,7 +69,6 @@
       <div class="co ask"><span class="who">teammate</span>can you push it to staging<br>so I can see?</div>
     </div>
     <div class="seed-hud" aria-hidden="true"></div>
-    <button class="stage-pause" type="button" aria-pressed="false" aria-label="Pause the grove's motion"><span class="ico" aria-hidden="true"></span><span class="lbl">pause</span></button>
   </div>
 
   <div class="beats">
@@ -121,6 +122,7 @@
       </div>
     </div>
   </div>
+  <div class="stage-ctl"><button class="stage-pause" type="button" aria-pressed="false" title="Pause the grove's motion"><span class="ico" aria-hidden="true"></span><span class="lbl">pause</span></button></div>
 </section>
 
 <!-- ============ 04 · try it ============ -->
@@ -213,7 +215,7 @@
 <!-- ============ 05 · how it works ============ -->
 <section class="chapter" id="how" data-chapter="05" data-name="How it works" data-beat0="three commands">
   <div class="wrap">
-    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt">Three commands. A branch, running.</span><span class="cur" aria-hidden="true"></span></h2>
+    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt">Three commands.<br>A branch, running.</span><span class="cur" aria-hidden="true"></span></h2>
     <p class="sub">pando drives git worktree, the side-by-side checkouts git has had since 2.5, and adds everything that makes each one run</p>
 
     <ol class="steps">
@@ -480,7 +482,7 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
 <section class="chapter" id="first-run" data-chapter="08" data-name="First run" data-beat0="your agent sets it up">
   <span class="anchor" id="setup" aria-hidden="true"></span>
   <div class="wrap">
-    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt">Your coding agent sets it up. <span class="hi">pando</span> proves it works.</span><span class="cur" aria-hidden="true"></span></h2>
+    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt">Your coding agent sets it up.<br><span class="hi">pando</span> proves it works.</span><span class="cur" aria-hidden="true"></span></h2>
     <p class="sub">the first time you run pando in a project, it hands the setup to the agent you already use, then tests the result in a throwaway worktree</p>
 
     <div class="split wide-left">
@@ -583,7 +585,7 @@ pando: removed the test worktree; nothing left behind</span>
 <!-- ============ 10 · install ============ -->
 <section class="chapter" id="install" data-chapter="10" data-name="Install" data-beat0="one line">
   <div class="wrap">
-    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt">Install it. Run it.</span><span class="cur" aria-hidden="true"></span></h2>
+    <h2 class="headline" data-type><span class="chev" aria-hidden="true">›</span><span class="txt"><span class="nw">Install it.</span> <span class="nw">Run it.</span></span><span class="cur" aria-hidden="true"></span></h2>
     <p class="sub">a ready-made binary for macOS and Linux, Intel or ARM · on Windows, inside WSL 2 · no Rust needed</p>
 
     <ol class="install-steps">

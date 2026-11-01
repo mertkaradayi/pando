@@ -218,7 +218,7 @@
     const pad = 12;
     // git stash and pop: left of the trunk
     let x = narrow ? pad : sx - w_(co.stash) - Math.max(70, W * 0.07);
-    let y = narrow ? topY - h_(co.stash) * 2.4 - 8 : lerp(topY, gy, 0.3);
+    let y = narrow ? lerp(topY, gy, 0.22) : lerp(topY, gy, 0.3);
     on(co.stash, at(0.15), Math.max(pad, x), y);
     on(co.pop, at(1.1), Math.max(pad, x), y + h_(co.stash) * 1.2);
     // the port that is still taken: right of the trunk, at its middle
@@ -227,10 +227,11 @@
     on(co.err, at(0.6), Math.min(x, W - w_(co.err) - pad), y);
     on(co.port, at(0.6), narrow ? sx + 16 : sx + 18, gy - h_(co.port) - 10);
     // the teammate: further up and out
-    x = narrow ? pad : sx - w_(co.ask) - Math.max(90, W * 0.09);
-    y = narrow ? gy + 70 + h_(co.err) + 30 : lerp(topY, gy, 0.72);
-    if (!narrow && x < pad) x = sx + Math.max(70, W * 0.07);
-    on(co.ask, at(1.7), Math.max(pad, x), y);
+    // on a phone the teammate is in the words already, and there is no room for them
+    x = sx - w_(co.ask) - Math.max(90, W * 0.09);
+    y = lerp(topY, gy, 0.72);
+    if (x < pad) x = sx + Math.max(70, W * 0.07);
+    on(co.ask, narrow ? 0 : at(1.7), Math.max(pad, x), y);
   }
 
   /* ---------- pausing what moves by itself ---------- */
@@ -239,7 +240,6 @@
     pauseBtn.addEventListener('click', () => {
       paused = !paused;
       pauseBtn.setAttribute('aria-pressed', String(paused));
-      pauseBtn.querySelector('.lbl').textContent = paused ? 'play' : 'pause';
       document.documentElement.classList.toggle('still', paused);
       if (lp) { lp.pause(paused); lp.kick(0); }
     });

@@ -104,7 +104,7 @@ h1, h2, h3, h4 { text-wrap: balance; }
   transition: opacity .25s;
 }
 .js .hud.top::before { opacity: 0; }
-.chap { display: grid; gap: 6px; text-decoration: none; color: inherit; min-width: 0; padding: 8px 0; }
+.chap { display: grid; align-content: center; gap: 6px; text-decoration: none; color: inherit; min-width: 0; min-height: 44px; padding: 6px 0; }
 .chap:hover { color: inherit; }
 .chap-bar { display: flex; gap: 5px; height: 3px; }
 .chap-bar i { display: block; width: 20px; height: 3px; background: var(--gold-faint); position: relative; overflow: hidden; }
@@ -156,7 +156,7 @@ h1, h2, h3, h4 { text-wrap: balance; }
 
 .headline {
   font-size: var(--t-h2); line-height: 1.14; font-weight: 500; letter-spacing: -0.01em;
-  color: #f2f2f2; margin: 0 0 0.45em; max-width: 26ch;
+  color: #f2f2f2; margin: 0 0 0.45em; max-width: 30ch;
 }
 .headline .chev { color: var(--gold); margin-right: 0.35em; }
 .headline .hi { color: var(--gold); text-shadow: 0 0 16px rgba(242, 184, 75, 0.5); }
@@ -262,12 +262,18 @@ pre .s { color: #b9e6c9; }
 .stage::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 55%, rgba(0, 0, 0, 0) 45%, rgba(0, 0, 0, 0.55) 100%); }
 html:not(.js) .stage { display: none; }
 .seed-hud { position: absolute; right: var(--gutter); bottom: 18px; z-index: 3; font-size: var(--t-xs); color: var(--dim); background: rgba(5, 5, 5, 0.72); padding: 2px 8px; border-radius: 4px; pointer-events: none; }
+/* the pause sits at the bottom of the screen while the story is on it, above
+   the words scrolling past, and leaves with the story */
+.stage-ctl { position: sticky; bottom: 10px; z-index: 3; height: 44px; margin-top: -54px; padding: 0 var(--gutter); pointer-events: none; }
+html:not(.js) .stage-ctl { display: none; }
 .stage-pause {
-  position: absolute; left: var(--gutter); bottom: 10px; z-index: 4; display: inline-flex; align-items: center; gap: 9px;
+  pointer-events: auto; display: inline-flex; align-items: center; gap: 9px;
   min-height: 44px; padding: 0 14px; font: inherit; font-size: var(--t-xs); color: var(--fg-2);
   background: rgba(5, 5, 5, 0.72); border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
 }
 .stage-pause:hover { color: var(--fg-strong); border-color: var(--gold); }
+.stage-pause .lbl { display: inline; margin: 0; color: inherit; font-size: inherit; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.stage-pause[aria-pressed="true"] { color: var(--gold); border-color: rgba(242, 184, 75, 0.6); }
 .stage-pause .ico { width: 9px; height: 10px; border-left: 3px solid currentColor; border-right: 3px solid currentColor; }
 .stage-pause[aria-pressed="true"] .ico { border: 0; width: 0; height: 0; border-left: 9px solid currentColor; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
 
@@ -330,7 +336,7 @@ html:not(.js) .beat-text { position: static; }
   .hero-cmd { padding-left: 14px; }
   .hero-cmd code { font-size: 12.5px; flex: 1; }
   .hero-note .sep { display: none; }
-  .hero-note a { display: flex; justify-content: center; min-height: 40px; }
+  .hero-note a { display: flex; justify-content: center; align-items: center; min-height: 44px; }
 }
 @media (max-height: 700px) and (min-width: 641px) {
   .hero { padding-top: calc(var(--hud-h) + 24px); }
@@ -562,7 +568,8 @@ pre.tuiframe { color: var(--fg); }
 .flow li + li::before { content: "↓"; position: absolute; left: 22px; top: -22px; line-height: 22px; color: var(--gold); }
 
 /* ---------- 10 · install ---------- */
-.install-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 34px; max-width: 920px; }
+.install-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 34px; max-width: 920px; }
+.install-steps > li, .tabs { min-width: 0; }
 .is-h { display: flex; align-items: center; gap: 12px; font-weight: 700; color: var(--fg-strong); margin-bottom: 12px; font-size: 17px; }
 .install-steps p.d { margin: 10px 0 0; }
 .seg { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
@@ -612,8 +619,9 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
   .panel { padding: 18px 18px; }
   .step-t p { grid-column: 1 / -1; }
   .legend > div { grid-template-columns: 5.5em minmax(0, 1fr); }
+  .tree-ls .tn { display: none; }
   .seg { display: flex; width: 100%; }
-  .seg button { flex: 1 1 auto; padding: 0 10px; }
+  .seg button { flex: 1 1 auto; padding: 0 8px; font-size: 13px; }
   .cmdline.lg code { font-size: 13px; padding: 12px 14px; }
   .endcard { min-height: 480px; height: 78vh; }
   .foot { flex-direction: column; align-items: flex-start; }
@@ -656,6 +664,7 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
 .docs section { padding-top: 8px; }
 .docs h2 { font-size: clamp(26px, 2.8vw, 34px); line-height: 1.2; font-weight: 500; color: #f2f2f2; margin: 72px 0 18px; padding-top: 36px; border-top: 1px solid rgba(236, 236, 236, 0.08); }
 .docs h2::before { content: "›"; color: var(--gold); margin-right: 0.35em; }
+.docs > section:first-of-type h2 { margin-top: 44px; }
 .docs h3 { font-size: 19px; margin: 40px 0 12px; }
 .docs h3 kbd { font-size: 0.8em; }
 .docs h4 { margin: 24px 0 8px; }
@@ -678,8 +687,8 @@ pre.hang .l { display: block; white-space: pre-wrap; padding-left: 2ch; text-ind
 .code-h { margin: 0; padding: 9px 16px; border-bottom: 1px solid rgba(236, 236, 236, 0.08); color: var(--fg-2); font-size: var(--t-xs); }
 .code-h::before { content: "// "; color: var(--dim); }
 .docs .cmd { display: flex; align-items: stretch; margin: 16px 0; background: var(--term); border: 1px solid rgba(236, 236, 236, 0.16); border-radius: 10px; overflow: hidden; }
-.docs .cmd > .p { display: flex; align-items: center; padding-left: 16px; color: var(--gold); user-select: none; -webkit-user-select: none; font-size: var(--t-code); }
-.docs .cmd code { flex: 1; min-width: 0; padding: 11px 12px 11px 1ch; color: var(--fg-strong); font-size: var(--t-code); white-space: pre-wrap; overflow-wrap: anywhere; }
+.docs .cmd > .p { display: flex; align-items: flex-start; padding: 11px 0 0 16px; line-height: 1.7; color: var(--gold); user-select: none; -webkit-user-select: none; font-size: var(--t-code); }
+.docs .cmd code { flex: 1; min-width: 0; padding: 11px 12px 11px 1ch; line-height: 1.7; color: var(--fg-strong); font-size: var(--t-code); white-space: pre-wrap; overflow-wrap: anywhere; }
 .note { margin: 20px 0; padding: 14px 18px; background: var(--panel); border: 1px solid var(--line); border-left: 2px solid var(--gold); border-radius: 0 10px 10px 0; }
 .note.warn { border-left-color: var(--red); }
 .note.warn .lbl { color: var(--red); }
