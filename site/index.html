@@ -359,7 +359,7 @@ feat/checkout   <span class="gr">running</span>  http://localhost:22809</pre>
         </div>
       </article>
     </div>
-    <p class="lede">Press <kbd>⏎</kbd> on any worktree to pick its mode, or to switch one that is running. pando remembers the choice: a plain start keeps the mode it last ran in.</p>
+    <p class="lede">Press <kbd>⏎</kbd> on a worktree to pick its mode, or to switch one that is running. pando remembers the choice: a plain start keeps the mode it last ran in.</p>
 
     <h3 data-beat="how the app finds it">How does the app find its database?</h3>
     <div class="split">
@@ -602,7 +602,7 @@ pando: removed the test worktree; nothing left behind</span>
           </div>
           <div class="pane" id="pane-script" role="tabpanel" aria-labelledby="tab-script">
             <div class="cmdline lg wrapping"><code><span class="p" aria-hidden="true">$ </span>curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mertkaradayi/pando/releases/latest/download/pando-cli-installer.sh | sh</code><button class="copy" type="button" data-copy="curl --proto '=https' --tlsv1.2 -LsSf https://github.com/mertkaradayi/pando/releases/latest/download/pando-cli-installer.sh | sh" aria-label="Copy the install script command">copy</button></div>
-            <p class="d">It puts <code>pando</code> in <code>~/.local/bin</code> and adds that to your PATH. <code>PANDO_CLI_NO_MODIFY_PATH=1</code> leaves your shell files alone.</p>
+            <p class="d">It puts <code>pando</code> in <code>$XDG_BIN_HOME</code> when that is set, otherwise usually in <code>~/.local/bin</code>, and adds it to your PATH. <code>PANDO_CLI_NO_MODIFY_PATH=1</code> leaves your shell files alone.</p>
           </div>
           <div class="pane" id="pane-src" role="tabpanel" aria-labelledby="tab-src">
             <div class="cmdline lg wrapping"><code><span class="p" aria-hidden="true">$ </span>cargo install --locked --git https://github.com/mertkaradayi/pando pando-cli</code><button class="copy" type="button" data-copy="cargo install --locked --git https://github.com/mertkaradayi/pando pando-cli" aria-label="Copy the cargo command">copy</button></div>
