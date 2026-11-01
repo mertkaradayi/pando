@@ -339,6 +339,24 @@ html:not(.js) .beat-text { position: static; }
   .hero-note .sep { display: none; }
   .hero-note a { display: flex; justify-content: center; align-items: center; min-height: 44px; }
 }
+/* short screens: the beats' words take less height, so the grove stays clear of them */
+@media (max-height: 720px) {
+  .beat-text { top: calc(var(--hud-h) + 12px); padding-top: 4px; }
+  .beat-text .headline { font-size: clamp(24px, 3vw, 36px); margin-bottom: 0.35em; }
+  .beat-text p { font-size: 14.5px; line-height: 1.6; margin-bottom: 0.8em; }
+  .beat-text .kicker { font-size: 13px; margin-bottom: 6px; }
+  .beat:last-child .beat-text { padding-top: calc(var(--hud-h) + 16px); }
+  .beat-cta { margin-top: 8px; }
+}
+@media (max-height: 720px) and (max-width: 640px) {
+  .hero { padding-top: calc(var(--hud-h) + 18px); }
+  .wordmark { font-size: 56px; }
+  .tagline { font-size: 18px; }
+  .hero-what { font-size: 14px; line-height: 1.6; margin-bottom: 16px; }
+  .hero-note { margin-top: 8px; }
+  .hero-note a { min-height: 44px; }
+  .hero-fine { display: none; }
+}
 @media (max-height: 700px) and (min-width: 641px) {
   .hero { padding-top: calc(var(--hud-h) + 24px); }
   .wordmark { font-size: clamp(56px, 7vw, 104px); }

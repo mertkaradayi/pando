@@ -91,8 +91,10 @@
   function camera() {
     const w = view.w, h = view.h, portrait = h > w * 1.05;
     const base = Math.max(Math.min(w / 1920, h / 1080), portrait ? w / 1250 : 0);
-    const zH = base * (portrait ? 0.95 : 0.62), gyH = portrait ? 0.9 : 0.975;
-    const zS = base * (portrait ? 1.05 : 0.9), gyS = portrait ? 0.74 : h < 820 ? 0.8 : 0.75;
+    // on a short screen the grove keeps lower and smaller, under the words
+    const short = h < 720;
+    const zH = base * (portrait ? 0.95 : 0.62), gyH = portrait ? (short ? 0.97 : 0.9) : 0.975;
+    const zS = base * (portrait ? (short ? 0.92 : 1.05) : short ? 0.72 : 0.9), gyS = short ? 0.87 : portrait ? 0.74 : h < 820 ? 0.8 : 0.75;
     const k = E.ioSine(clamp(v.cam));
     const z = lerp(zH, zS, k) * (1 + 0.1 * v.lone);
     const gy = lerp(gyH, gyS, k);
