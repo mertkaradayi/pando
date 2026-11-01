@@ -482,19 +482,22 @@
   // stops; kick(ms) then draws for that long only, so a change still lands.
   function loop(el, frame, o) {
     o = o || {};
-    let visible = false, raf = 0, timer = 0, last = 0, until = 0, paused = !!o.still;
+    let visible = false, raf = 0, timer = 0, last = 0, until = 0, paused = !!o.still, inTick = false;
     const run = () => { timer = 0; raf = requestAnimationFrame(tick); };
     function tick(ts) {
       raf = 0;
       if (!visible || document.hidden) { last = 0; return; }
       const now = ts / 1000;
-      frame(reduced ? 0 : now, last ? Math.min(0.1, now - last) : 0.033);
+      // a kick() from inside the frame only moves `until`: one chain of frames, never two
+      inTick = true;
+      try { frame(reduced ? 0 : now, last ? Math.min(0.1, now - last) : 0.033); } finally { inTick = false; }
       last = now;
       if ((paused || reduced) && ts >= until) return;
       timer = setTimeout(run, Math.max(0, 33 - (performance.now() - ts)));
     }
-    const start = () => { if (!raf && !timer && visible && !document.hidden) raf = requestAnimationFrame(tick); };
-    new IntersectionObserver(es => { visible = es[es.length - 1].isIntersecting; if (visible) start(); }, { rootMargin: '0px' }).observe(el);
+    const start = () => { if (!raf && !timer && !inTick && visible && !document.hidden) raf = requestAnimationFrame(tick); };
+    // the strip under the chapter bar does not count as on screen: the bar hides it
+    new IntersectionObserver(es => { visible = es[es.length - 1].isIntersecting; if (visible) start(); }, { rootMargin: '-80px 0px 0px 0px' }).observe(el);
     document.addEventListener('visibilitychange', start);
     return {
       kick(ms) { until = performance.now() + (ms == null ? 1500 : ms); start(); },

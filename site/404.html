@@ -16,13 +16,15 @@
   .n { color: #F2B84B; font-weight: 700; text-shadow: 0 0 14px rgba(242,184,75,.5); }
   h1 { font-size: clamp(28px, 5vw, 52px); font-weight: 500; margin: 14px 0 6px; }
   h1 .chev { color: #F2B84B; margin-right: .35em; }
-  h1 .cur { display: inline-block; width: .5em; height: .9em; background: #F2B84B; vertical-align: -.08em; margin-left: .1em; animation: b 1.1s steps(1) infinite; }
+  h1 .cur { display: inline-block; width: .5em; height: .9em; background: #F2B84B; vertical-align: -.08em; margin-left: .1em; animation: b 1.1s steps(1) 3; }
   @keyframes b { 50% { opacity: 0; } }
   p { color: rgba(236,236,236,.62); margin: 0 0 28px; }
   pre { font-size: clamp(5px, 1.05vw, 11px); line-height: 1.12; margin: 0 0 34px; color: rgba(236,236,236,.28); }
   pre .rt { color: rgba(242,184,75,.75); }
-  a { display: inline-block; color: #050505; background: #F2B84B; padding: 11px 18px; border-radius: 8px; font-weight: 700; text-decoration: none; }
+  a { display: inline-flex; align-items: center; min-height: 44px; box-sizing: border-box; color: #050505; background: #F2B84B; padding: 0 18px; border-radius: 8px; font-weight: 700; text-decoration: none; }
   a:hover { background: #FCE4A5; }
+  a.ghost { color: rgba(236,236,236,.94); background: transparent; border: 1.5px solid rgba(236,236,236,.3); margin-left: 8px; }
+  a.ghost:hover { border-color: #F2B84B; background: transparent; }
   a:focus-visible { outline: 2px solid #F2B84B; outline-offset: 3px; }
   @media (prefers-reduced-motion: reduce) { h1 .cur { animation: none; } }
 </style>
@@ -43,12 +45,14 @@
 ░░▒█▒░░░░█░░░░█░▒░▒░▒░█░░░░░▒░█░░░▒░▒░█░░░▒░█░░░▒░░░█░░░░░▒█░░▒░█░░░░░░░█░░░▒█░░░░▒█░░▒░▒░█░░░░░▒░▒░
 <span class="rt">   ┃     ┃    ┃       ┃       ┃       ┃     ┃       ┃      ┃    ┃       ┃    ┃     ┃      ┃
 ╺━━┻━━━━━┻━━━━┻━━━━━━━┻━━━━━━━┻━━━━━━━┻━━━━━┻━━━━━━━┻━━━━━━┻━━━━┻━━━━━━━┻━━━━┻━━━━━┻━━━━━━┻━━━━━━━━╸</span></pre>
-  <a id="home" href="/pando/">back to the grove</a>
+  <div><a id="home" href="/pando/">back to the grove</a><a id="docs" class="ghost" href="/pando/docs.html">the docs</a></div>
 </main>
 <script>
   // the site lives at /pando/ on GitHub Pages; anywhere else, its root
   var p = location.pathname, i = p.indexOf('/pando/');
-  document.getElementById('home').href = i >= 0 ? p.slice(0, i + 7) : '/';
+  var home = i >= 0 ? p.slice(0, i + 7) : '/';
+  document.getElementById('home').href = home;
+  document.getElementById('docs').href = home + 'docs.html';
 </script>
 </body>
 </html>
