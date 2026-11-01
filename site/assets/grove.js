@@ -287,7 +287,12 @@
   Grove.prototype.drawGround = function (view, alpha) {
     const ctx = view.ctx, G = this.G;
     ctx.save();
-    ctx.strokeStyle = `rgba(236,236,236,${0.16 * alpha})`; ctx.lineWidth = 1 / view.cam.z;
+    if (this.fade) {
+      const f = this.fade / (this.RX1 - this.RX0), lg = ctx.createLinearGradient(this.RX0, 0, this.RX1, 0), c = `rgba(236,236,236,${0.16 * alpha})`;
+      lg.addColorStop(0, 'rgba(236,236,236,0)'); lg.addColorStop(f, c); lg.addColorStop(1 - f, c); lg.addColorStop(1, 'rgba(236,236,236,0)');
+      ctx.strokeStyle = lg;
+    } else ctx.strokeStyle = `rgba(236,236,236,${0.16 * alpha})`;
+    ctx.lineWidth = 1 / view.cam.z;
     ctx.beginPath(); ctx.moveTo(this.RX0, G); ctx.lineTo(this.RX1, G); ctx.stroke();
     ctx.restore();
   };

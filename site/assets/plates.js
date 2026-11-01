@@ -180,6 +180,8 @@
   const crown = g => Math.max(...g.trees.map(t => t.H));
 
   /* ---------- the plates ---------- */
+  // Every grove's root fades out at its ends (fade), so a screen wider than
+  // the grove, a phone on its side, sees it trail off rather than stop.
   const SPECS = {};
 
   // 05 · three commands: a trunk grows, lights, and answers beside the others
@@ -189,7 +191,7 @@
       if (S.key !== key) {
         S.key = key;
         S.X = nar ? [660, 960, 1260] : [560, 960, 1360];
-        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 10, x0: S.X[0] - (nar ? 300 : 560), x1: S.X[2] + (nar ? 300 : 560), seed: 21 });
+        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 10, x0: S.X[0] - (nar ? 300 : 560), x1: S.X[2] + (nar ? 300 : 560), seed: 21, fade: 360 });
       }
       const G = S.g.G, sp = nar ? 175 : 330;
       frameOn(view, [S.X[0] - sp, G - crown(S.g) - 8, S.X[2] + sp, G + 205], [52, 0, 4, 0]);
@@ -229,7 +231,7 @@
         S.key = key;
         S.nar = nar;
         S.X = nar ? [600, 1020] : [560, 1260];
-        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 8, x0: S.X[0] - 380, x1: S.X[1] + 380, seed: 31 });
+        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 8, x0: S.X[0] - 380, x1: S.X[1] + 380, seed: 31, fade: 360 });
         // a pad of files under each trunk; below or beside it, node_modules
         S.pad = nar ? { cols: 6, rows: 4, sq: 20, gap: 6 } : { cols: 10, rows: 4, sq: 18, gap: 6 };
       }
@@ -315,7 +317,7 @@
       if (S.key !== key) {
         S.key = key; S.nar = nar;
         S.X = nar ? [640, 1160] : [600, 1300];
-        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 8, x0: S.X[0] - 420, x1: S.X[1] + 420, seed: 41 });
+        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 8, x0: S.X[0] - 420, x1: S.X[1] + 420, seed: 41, fade: 360 });
       }
       const G = S.g.G, sp = nar ? 190 : 330;
       frameOn(view, [S.X[0] - sp, G - crown(S.g) - 8, S.X[1] + sp, G + 262 + 70], [12, 0, 44, 0]);
@@ -443,7 +445,7 @@
         S.key = key; S.nar = nar;
         S.X = nar ? [560, 760, 960, 1160] : [420, 690, 960, 1230, 1500];
         S.names = nar ? ['main ⌂', 'feat/a', 'feat/b', 'fix/c'] : ['main ⌂', 'feat/a', 'feat/b', 'fix/c', 'feat/d'];
-        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 3 : 6, x0: S.X[0] - 260, x1: S.X[S.X.length - 1] + 260, seed: 61 });
+        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 3 : 6, x0: S.X[0] - 260, x1: S.X[S.X.length - 1] + 260, seed: 61, fade: 360 });
       }
       const G = S.g.G, sp = S.nar ? 120 : 170;
       frameOn(view, [S.X[0] - sp, G - crown(S.g) - 8, S.X[S.X.length - 1] + sp, G + 200], [12, 0, 4, 0]);
@@ -483,7 +485,7 @@
       if (S.key !== key) {
         S.key = key; S.nar = nar;
         S.X = [700, 1080];
-        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 3 : 5, x0: 400, x1: 1400, seed: 71 });
+        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 3 : 5, x0: 400, x1: 1400, seed: 71, fade: 360 });
       }
       const G = S.g.G;
       frameOn(view, [S.nar ? 520 : 470, G - crown(S.g) - 8, S.nar ? 1300 : 1360, G + 195], [64, 0, 4, 0]);
@@ -521,7 +523,7 @@
       if (S.key !== key) {
         S.key = key; S.nar = nar;
         S.X = [660, 1080];
-        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 3 : 5, x0: 380, x1: 1380, seed: 81 });
+        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 3 : 5, x0: 380, x1: 1380, seed: 81, fade: 360 });
       }
       const G = S.g.G;
       frameOn(view, [S.nar ? 500 : 440, G - crown(S.g) - 8, S.nar ? 1290 : 1360, G + 195], [12, 0, 4, 0]);
@@ -567,7 +569,7 @@
       if (S.key !== key) {
         S.key = key; S.nar = nar;
         S.X = [700, 1120];
-        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 7, x0: 360, x1: 1460, seed: 91 });
+        S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 7, x0: 360, x1: 1460, seed: 91, fade: 360 });
       }
       const G = S.g.G;
       frameOn(view, [S.nar ? 520 : 430, G - crown(S.g) - 8, S.nar ? 1330 : 1390, G + 200], [40, 0, 4, 0]);

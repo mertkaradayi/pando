@@ -769,6 +769,10 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
   pre.hang.env .l.m, pre.hang.ls .l.r { --hang: 2ch; }
   pre.hang.env { font-size: 12px; }
 }
+/* a phone on its side: a plate's grove and its steps fit the screen together */
+@media (orientation: landscape) and (max-height: 520px) {
+  .plate-art, .plate.side .plate-art { aspect-ratio: auto; height: calc(100vh - var(--hud-h) - 76px); height: calc(100svh - var(--hud-h) - 76px); min-height: 200px; }
+}
 /* the narrowest phones: the promise's tree keeps its longest path on one line */
 @media (max-width: 360px) {
   .promise-grid .panel { padding: 16px 14px; }
