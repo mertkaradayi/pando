@@ -238,14 +238,7 @@
         </div>
         <div class="say">
           <div class="say-t"><h3>Its own URL, beside the others.</h3><p>It opens in your browser, and every branch you started is there beside it, each on its own address. Every branch alive, at once.</p></div>
-<pre class="code fit"><span class="p">$</span> pando open feat/checkout
-http://localhost:22809
-
-<span class="p">$</span> pando ls
-<span class="d">NAME            STATUS   URL</span>
-main            <span class="gr">running</span>  http://localhost:20177
-fix/login-loop  <span class="gr">running</span>  http://localhost:22553
-feat/checkout   <span class="gr">running</span>  http://localhost:22809</pre>
+<pre class="code hang ls"><span class="l"><span class="p">$</span> pando open feat/checkout</span><span class="l">http://localhost:22809</span><span class="l">&nbsp;</span><span class="l"><span class="p">$</span> pando ls</span><span class="l r d">NAME            STATUS   URL</span><span class="l r">main            <span class="gr">running</span>  http://localhost:20177</span><span class="l r">fix/login-loop  <span class="gr">running</span>  http://localhost:22553</span><span class="l r">feat/checkout   <span class="gr">running</span>  http://localhost:22809</span></pre>
         </div>
       </figcaption>
     </figure>
@@ -336,13 +329,7 @@ feat/checkout   <span class="gr">running</span>  http://localhost:22809</pre>
         <p>Through its environment. pando reads the address your <code>.env</code> already has and changes only what the mode needs: the port, the database name or the slot. Your app needs no code for pando, and no file is written to tell it.</p>
         <p class="d">Namespaced mode works inside a server you own, so it is careful. It is opt-in. Every name it makes begins with your main database’s name, so it can never be your main database. It takes a Redis slot only while the slot is empty, and <code>pando rm</code> drops only what pando’s own records say it made.</p>
       </div>
-<pre class="code fit"><span class="c"># your .env, on main</span>
-DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
-
-<span class="c"># what feat/login’s processes get</span>
-<span class="d">shared     </span> …@localhost:5432/shop
-<span class="d">namespaced </span> …@localhost:5432/<span class="g">shop__feat_login</span>
-<span class="d">isolated   </span> …@localhost:<span class="g">30010</span>/shop</pre>
+<pre class="code hang env"><span class="l c">#&nbsp;your .env, on main</span><span class="l">DATABASE_URL=postgres://app@<wbr>localhost:5432/<span class="d">shop</span></span><span class="l">&nbsp;</span><span class="l c">#&nbsp;what feat/login’s processes get</span><span class="l m"><span class="d">shared     </span> <span class="nw">…@localhost:5432/shop</span></span><span class="l m"><span class="d">namespaced </span> <span class="nw">…@localhost:5432/<span class="g">shop__feat_login</span></span></span><span class="l m"><span class="d">isolated   </span> <span class="nw">…@localhost:<span class="g">30010</span>/shop</span></span></pre>
     </div>
     <p class="more"><a href="docs.html#data">The three modes in full →</a> <a href="docs.html#namespaced">Namespaced, logins and grants →</a></p>
   </div>
@@ -368,9 +355,9 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
       <figcaption class="plate-says">
         <div class="say on">
           <div class="say-t"><p><code>product/</code> is a plain folder that holds two git repositories, each with its own root and its own main checkout. Run <code>pando</code> there, not in either of them.</p></div>
-<pre class="code fit"><span class="w">product/</span>          <span class="d">a plain folder</span>
-<span class="d">├──</span> backend/      <span class="d">a git repository</span>
-<span class="d">└──</span> frontend/     <span class="d">a git repository</span></pre>
+<pre class="code fit"><span class="w">product/</span>        <span class="d">a plain folder</span>
+<span class="d">├──</span> backend/    <span class="d">a repository</span>
+<span class="d">└──</span> frontend/   <span class="d">a repository</span></pre>
         </div>
         <div class="say">
           <div class="say-t"><p>One branch, a trunk on every root: a worktree of each repository on <code>feat/x</code>, kept together as one set, one row on the screen. A repository that has the branch uses it; one that does not makes it from its own base.</p></div>
@@ -467,10 +454,12 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p class="d">The log viewer has a tab per process and one for all of them, search, a filter by level, and a jump from error to error. Fifteen colour themes follow your system’s light and dark.</p>
       </div>
 <pre class="code fit"><span class="d">⏎</span>      pick its mode and start it
-<span class="d">l</span>      its logs   <span class="d">/</span> search   <span class="d">e</span> next error
+<span class="d">l</span>      its logs
+<span class="d">/ e</span>    search · next error
 <span class="d">x r</span>    stop · restart
-<span class="d">o c t</span>  open · copy its URL · share it
+<span class="d">o c t</span>  open · copy its URL · share
 <span class="d">n d</span>    new worktree · remove one
+<span class="d">+</span>      mark rows, then act on all
 <span class="d">p</span>      open pull requests</pre>
     </div>
 
@@ -564,12 +553,12 @@ DATABASE_URL=postgres://app@localhost:5432/<span class="d">shop</span>
         <p>No config file, no gitignore line, no lockfile change. Everything pando learns and runs lives in <code>~/.pando</code>, and its tests run every command and then check that <code>git status</code> has nothing to report.</p>
 <pre class="code tree-ls fit"><span class="dir">~/.pando/</span>
 <span class="br">└── </span><span class="dir">projects/acme-shop-2bdf70d7/</span>
-<span class="br">    ├── </span>pando.toml             <span class="tn">the project’s config</span>
-<span class="br">    ├── </span><span class="dir">worktrees/feat+login/</span>  <span class="tn">the branch’s checkout</span>
+<span class="br">    ├── </span>pando.toml<span class="tn">             the project’s config</span>
+<span class="br">    ├── </span><span class="dir">worktrees/feat+login/</span><span class="tn">  the branch’s checkout</span>
 <span class="br">    ├── </span><span class="dir">logs/feat+login/</span>
 <span class="br">    └── </span><span class="dir">data/feat+login/</span>
 
-<span class="dir">~/code/acme-shop/</span>             <span class="gr">untouched</span></pre>
+<span class="dir">~/code/acme-shop/</span><span class="tn">           </span>  <span class="gr">untouched</span></pre>
       </div>
       <div class="panel">
         <p class="lbl">invariant 2</p>

@@ -225,6 +225,9 @@ pre.hang { white-space: normal !important; overflow-wrap: break-word; }
 pre.hang .l { display: block; white-space: pre-wrap; padding-left: var(--hang, 2ch); text-indent: calc(-1 * var(--hang, 2ch)); }
 pre.hang.h7 { --hang: 7ch; }
 pre.hang .l.h2 { --hang: 2ch; }
+pre.hang.env { --hang: 2ch; }
+pre.hang.env .l.m { --hang: 12ch; }
+pre.hang.ls .l.r { --hang: 16ch; }
 pre .p { color: var(--gold); user-select: none; -webkit-user-select: none; }
 /* code that scrolls sideways: a gold edge on the side where more of it is
    (the covers scroll with the text, the edges stay with the box) */
@@ -242,7 +245,7 @@ pre .s { color: #b9e6c9; }
 
 .kbd, kbd {
   display: inline-flex; align-items: center; justify-content: center; min-width: 1.9em; height: 1.75em; padding: 0 0.45em;
-  font-family: var(--mono); font-size: 0.86em; font-weight: 500; color: #f4f4f4; line-height: 1;
+  font-family: var(--mono); font-size: max(12px, 0.86em); font-weight: 500; color: #f4f4f4; line-height: 1;
   background: #110e0a; border: 1.5px solid rgba(236, 236, 236, 0.55); border-radius: 6px;
   box-shadow: 0 2px 0 rgba(236, 236, 236, 0.18); vertical-align: 0.05em; white-space: nowrap;
 }
@@ -371,7 +374,7 @@ html:not(.js) .beat-text { position: static; }
 .hero-copy { flex: none; align-self: stretch; min-width: 64px; font: inherit; font-size: var(--t-xs); color: var(--fg-2); background: transparent; border: 0; border-left: 1px solid var(--line); padding: 0 14px; cursor: pointer; }
 .hero-copy:hover, .hero-copy.done { color: var(--gold); }
 .hero-note { max-width: none; margin: 14px 0 0; font-size: var(--t-xs); color: var(--fg-2); text-shadow: 0 0 10px #050505; }
-.hero-note code { color: var(--fg-strong); }
+.hero-note code { color: var(--fg-strong); font-size: 1em; }
 .hero-note a { display: inline-flex; align-items: center; min-height: 32px; color: var(--fg-2); }
 .hero-note a:hover { color: var(--gold); }
 .hero-fine { margin: 6px 0 0; font-size: var(--t-xs); color: var(--dim); text-shadow: 0 0 10px #050505; }
@@ -732,6 +735,7 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
   .sub { font-size: 15.5px; margin-bottom: 1.8rem; }
   .lede { font-size: 17px; }
   .cards4, .extras { grid-template-columns: minmax(0, 1fr); }
+  p.d, .note-line, .m-what-b { font-size: 15px; }
   .plate-art { aspect-ratio: var(--ar-m, 1); }
   .plate-says { padding: 16px 16px 18px; }
   .plate-meter { padding: 12px 16px 0; }
@@ -751,7 +755,7 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
 @container plate (max-width: 600px) {
   .plate-ctl { padding: 5px 6px; gap: 6px; }
   .plate-steps { flex-wrap: nowrap; gap: 3px; }
-  .ps { flex: 1 1 0; max-width: 128px; flex-direction: column; justify-content: center; gap: 4px; min-height: 54px; padding: 4px 4px 7px; font-size: 12.5px; line-height: 1.1; }
+  .ps { flex: 1 1 auto; max-width: 128px; flex-direction: column; justify-content: center; gap: 4px; min-height: 54px; padding: 4px 4px 7px; font-size: 12.5px; line-height: 1.1; }
   .ps-n { min-width: 1.75em; height: 1.75em; font-size: 12px; }
   .ps::after { left: 6px; right: 6px; bottom: 3px; }
   .plate-play { width: 44px; padding: 0; justify-content: center; }
@@ -759,6 +763,16 @@ pre.run-cmd { display: inline-block; padding: 12px 22px; font-size: 15px; }
   .plate-meter { grid-template-columns: auto minmax(0, 1fr); }
   .plate-meter .pm-l { grid-column: 1 / -1; grid-row: 2; }
   .plate-meter .pm-v { text-align: right; }
+}
+/* a phone: a row too long for the line goes on under it, a little in, whole */
+@media (max-width: 480px) {
+  pre.hang.env .l.m, pre.hang.ls .l.r { --hang: 2ch; }
+  pre.hang.env { font-size: 12px; }
+}
+/* the narrowest phones: the promise's tree keeps its longest path on one line */
+@media (max-width: 360px) {
+  .promise-grid .panel { padding: 16px 14px; }
+  .promise-grid pre.code { padding-left: 12px; padding-right: 12px; }
 }
 
 /* ---------- motion ---------- */

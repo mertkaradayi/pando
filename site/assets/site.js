@@ -261,7 +261,7 @@
   /* ---------- output with columns fits its box; what still scrolls says so ---------- */
   // A table or a frame (pre.fit) cannot wrap without losing its columns, so
   // on a narrow screen its type steps down until its longest line fits,
-  // never under 10px. Whatever still scrolls sideways can be reached by
+  // never under 12px. Whatever still scrolls sideways can be reached by
   // keyboard and shows a gold edge where more of it is (.sideways).
   const fits = Array.from(document.querySelectorAll('pre.fit'));
   const fitCode = () => fits.forEach(el => {
@@ -270,7 +270,7 @@
     const cs = getComputedStyle(el), base = parseFloat(cs.fontSize);
     const cols = Math.max(...el.innerText.split('\n').map(l => l.replace(/\s+$/, '').length));
     const room = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-    el.style.fontSize = Math.max(10, Math.min(base, Math.floor((room / (cols * 0.6)) * 10) / 10)) + 'px';
+    el.style.fontSize = Math.max(12, Math.min(base, Math.floor((room / (cols * 0.6)) * 10) / 10)) + 'px';
   });
   const sideways = el => {
     const over = el.scrollWidth > el.clientWidth + 1;

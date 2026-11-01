@@ -318,7 +318,7 @@
         S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 4 : 8, x0: S.X[0] - 420, x1: S.X[1] + 420, seed: 41 });
       }
       const G = S.g.G, sp = nar ? 190 : 330;
-      frameOn(view, [S.X[0] - sp, G - crown(S.g) - 8, S.X[1] + sp, G + 262 + 70], [6, 0, 44, 0]);
+      frameOn(view, [S.X[0] - sp, G - crown(S.g) - 8, S.X[1] + sp, G + 262 + 70], [12, 0, 44, 0]);
     },
     draw(S, view, st) {
       const g = S.g, G = g.G, X = S.X, t = st.now, z = view.cam.z, D = 262;
@@ -446,7 +446,7 @@
         S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 3 : 6, x0: S.X[0] - 260, x1: S.X[S.X.length - 1] + 260, seed: 61 });
       }
       const G = S.g.G, sp = S.nar ? 120 : 170;
-      frameOn(view, [S.X[0] - sp, G - crown(S.g) - 8, S.X[S.X.length - 1] + sp, G + 200], [6, 0, 4, 0]);
+      frameOn(view, [S.X[0] - sp, G - crown(S.g) - 8, S.X[S.X.length - 1] + sp, G + 200], [12, 0, 4, 0]);
     },
     draw(S, view, st) {
       const g = S.g, G = g.G, X = S.X, t = st.now, marked = [1, 2, 3];
@@ -506,8 +506,9 @@
       const box = chip(view, cx, ly, 'quiet-aspen-grove.trycloudflare.com', { tone: 'gold', size: 12, alpha: clamp(up * 2 - 1) * on });
       // a teammate's phone, wherever the link reaches
       if (box) {
-        const right = box.x + box.w + 36 < view.w;
-        phoneGlyph(view, right ? box.x + box.w + 20 : box.x - 20, ly + 6, clamp(up * 2 - 1) * on, clamp(up * 2 - 1.2));
+        // beside the link where there is room; a phone-wide plate has none
+        const right = box.x + box.w + 36 < view.w, left = box.x - 36 > 0;
+        if (right || left) phoneGlyph(view, right ? box.x + box.w + 20 : box.x - 20, ly + 6, clamp(up * 2 - 1) * on, clamp(up * 2 - 1.2));
       }
       if (st.ph === 1) chip(view, cx, ly, 'unshared · the link is gone', { tone: 'dim', size: 12, alpha: clamp(st.raw * 2 - 0.6) });
     },
@@ -523,7 +524,7 @@
         S.g = new P.Grove({ trunks: S.X, ghosts: nar ? 3 : 5, x0: 380, x1: 1380, seed: 81 });
       }
       const G = S.g.G;
-      frameOn(view, [S.nar ? 500 : 440, G - crown(S.g) - 8, S.nar ? 1290 : 1360, G + 195], [8, 0, 4, 0]);
+      frameOn(view, [S.nar ? 500 : 440, G - crown(S.g) - 8, S.nar ? 1290 : 1360, G + 195], [12, 0, 4, 0]);
     },
     draw(S, view, st) {
       const g = S.g, G = g.G, X = S.X, t = st.now;
