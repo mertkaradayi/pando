@@ -132,11 +132,13 @@ pub(super) fn setup_hint_line(app: &App, width: usize) -> Option<Line<'static>> 
     Some(truncate_line(Line::from(spans), width))
 }
 
-pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
+/// `screen_height` is the height of the whole area the TUI is drawn in,
+/// which `header_height` was given too.
+pub(super) fn render_header(f: &mut Frame, area: Rect, screen_height: u16, app: &App) {
     // The setup line keeps the header's last row whatever else it says.
     let area = match setup_hint_line(app, area.width as usize) {
         // As `header_height` counted it.
-        Some(line) if f.area().height >= SETUP_LINE_MIN_HEIGHT && area.height >= 2 => {
+        Some(line) if screen_height >= SETUP_LINE_MIN_HEIGHT && area.height >= 2 => {
             let [top, bottom] =
                 Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
             f.render_widget(
@@ -188,11 +190,23 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
     // A folder whose repositories are on different branches says each
     // where the bar has room for them beside the count, and that they
     // differ where it does not: a cut list names some and not others.
-    let essentials = text_width(" pando ")
-        + build_label_spans(crate::version::label())
-            .iter()
-            .map(|span| text_width(&span.content))
-            .sum::<usize>()
+    // The grove's column carries pando's own name and build while it is
+    // up, so the bar starts at the project.
+    let lead = match app.grove_chrome {
+        true => vec![Span::raw(" ")],
+        false => {
+            let mut lead = vec![Span::styled(
+                " pando ",
+                Style::new().fg(blue()).add_modifier(Modifier::BOLD),
+            )];
+            lead.extend(build_label_spans(crate::version::label()));
+            lead
+        }
+    };
+    let essentials = lead
+        .iter()
+        .map(|span| text_width(&span.content))
+        .sum::<usize>()
         + text_width(project)
         + text_width(" · ")
         + text_width(&branch)
@@ -209,11 +223,7 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
             None => {}
         }
     }
-    let mut spans = vec![Span::styled(
-        " pando ",
-        Style::new().fg(blue()).add_modifier(Modifier::BOLD),
-    )];
-    spans.extend(build_label_spans(crate::version::label()));
+    let mut spans = lead;
     spans.extend([
         Span::styled(project.clone(), Style::new().fg(text())),
         Span::styled(" · ", Style::new().fg(text_muted())),

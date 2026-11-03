@@ -736,11 +736,21 @@ fn stem_names(stems: &[usize], left: usize, width: usize) -> Line<'static> {
 
 /// One row of a picture as spans, a run of one colour at a time.
 fn art_line(row: &[crate::art::Cell], left: usize, alive: bool) -> Line<'static> {
+    art_line_with(row, left, |_, cell| art_style(cell, alive))
+}
+
+/// One row of a picture as spans, each cell in the style `style_of` gives
+/// it from its column and itself, a run of one style at a time.
+pub(super) fn art_line_with(
+    row: &[crate::art::Cell],
+    left: usize,
+    style_of: impl Fn(usize, &crate::art::Cell) -> Style,
+) -> Line<'static> {
     let mut spans = vec![Span::raw(" ".repeat(left))];
     let mut run = String::new();
     let mut style = Style::new();
-    for cell in row {
-        let next = art_style(cell, alive);
+    for (x, cell) in row.iter().enumerate() {
+        let next = style_of(x, cell);
         if next != style && !run.is_empty() {
             spans.push(Span::styled(std::mem::take(&mut run), style));
         }
@@ -755,7 +765,7 @@ fn art_line(row: &[crate::art::Cell], left: usize, alive: bool) -> Line<'static>
 
 /// A picture cell's colour: gold letters and leaves, white stems, and
 /// roots dark while pando is being set up and lit once it is ready.
-fn art_style(cell: &crate::art::Cell, alive: bool) -> Style {
+pub(super) fn art_style(cell: &crate::art::Cell, alive: bool) -> Style {
     use crate::art::Material;
     let fg = match (cell.material, alive) {
         (Material::Sky, _) => return Style::new(),

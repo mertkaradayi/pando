@@ -2,6 +2,7 @@
 //! that feed it. Like `cli`, a thin wrapper — behaviour lives in `actions`.
 
 pub mod app;
+mod grove;
 mod handoff;
 mod modal;
 mod render;
@@ -22,6 +23,7 @@ use std::time::Duration;
 use crate::config::Config;
 use crate::paths::PandoPaths;
 use app::AppEvent;
+use grove::{Grove, GroveEvent};
 use handoff::InputGate;
 
 const TICK_INTERVAL: Duration = Duration::from_millis(250);
@@ -60,16 +62,46 @@ pub fn run(paths: PandoPaths, config: Config) -> Result<()> {
     // enrichment cache both `create_dir_all` their way down, and a home made
     // by one of those would carry the umask instead of 0700.
     paths.ensure_home()?;
-    let worktrees_dir = config.worktrees_dir(&paths);
     // Before the first frame, so the screen never flashes another theme.
     let themes_dir = paths.themes_dir();
     let resolved = crate::theme::resolve(&config.ui.theme_settings(), Some(&themes_dir));
-    let mut app = app::App::new(paths, config)?;
-    let watched = (resolved.name.clone(), resolved.appearance);
-    app.adopt_theme(resolved);
+    let home = paths.home.clone();
+    let ui = config.ui.clone();
+    let app = app::App::new(paths, config)?;
+    // Every project the column lists, read once so the first frame has
+    // them; a worker reads them again from then on.
+    let mut grove = Grove::new(home.clone(), ui, crate::actions::summaries(&home));
+    let watched = grove.take_theme(resolved);
+    grove.adopt(app, true);
+    run_grove(grove, themes_dir, watched)
+}
+
+/// `pando` outside any repository: the grove with no project in front,
+/// its home pane naming every project pando knows. Nothing is written to
+/// the home until a project is opened. `why` is what finding a project
+/// here said, for the pane to show.
+pub fn run_home(home: std::path::PathBuf, why: Option<String>) -> Result<()> {
+    crate::hooks::detach_from_terminal();
+    let ui = crate::config::user_ui(&home);
+    let themes_dir = home.join("themes");
+    let resolved = crate::theme::resolve(&ui.theme_settings(), Some(&themes_dir));
+    let summaries = crate::actions::summaries(&home);
+    let mut grove = Grove::new(home, ui, summaries);
+    let watched = grove.take_theme(resolved);
+    if let Some(why) = why {
+        grove.say(why, false);
+    }
+    run_grove(grove, themes_dir, watched)
+}
+
+fn run_grove(
+    mut grove: Grove,
+    themes_dir: std::path::PathBuf,
+    watched: (String, crate::theme::Appearance),
+) -> Result<()> {
     spawn_theme_watcher(
-        app.event_tx.clone(),
-        Arc::clone(&app.theme.settings),
+        grove.tx.clone(),
+        Arc::clone(&grove.theme_settings),
         themes_dir,
         watched,
     );
@@ -96,7 +128,7 @@ pub fn run(paths: PandoPaths, config: Config) -> Result<()> {
     // request merged in a browser or another pane shows then. A terminal
     // that sends none still has the periodic one.
     let _ = execute!(stdout(), EnableFocusChange);
-    let result = main_loop(&mut terminal, &mut app, &worktrees_dir);
+    let result = main_loop(&mut terminal, &mut grove);
     // Whatever the loop last told the terminal: one that ended in an
     // error never said.
     set_mouse(false);
@@ -108,45 +140,42 @@ pub fn run(paths: PandoPaths, config: Config) -> Result<()> {
     result
 }
 
-fn main_loop(
-    terminal: &mut ratatui::DefaultTerminal,
-    app: &mut app::App,
-    worktrees_dir: &Path,
-) -> Result<()> {
-    let event_rx = app
-        .event_rx
+fn main_loop(terminal: &mut ratatui::DefaultTerminal, grove: &mut Grove) -> Result<()> {
+    let event_rx = grove
+        .rx
         .take()
-        .expect("event_rx is present until the loop takes it");
+        .expect("the grove's receiver is present until the loop takes it");
 
     let gate = Arc::new(InputGate::default());
-    spawn_input_thread(app.event_tx.clone(), Arc::clone(&gate));
+    spawn_input_thread(grove.tx.clone(), Arc::clone(&gate));
     let tick_waiting = Arc::new(AtomicBool::new(false));
-    spawn_tick_thread(app.event_tx.clone(), Arc::clone(&tick_waiting));
-    // The watcher is an optimisation for pando's own worktrees; the slow
-    // tick's porcelain refresh is the source of truth, and it sees adopted
-    // worktrees anywhere on disk.
-    let _watcher = spawn_fs_watcher(worktrees_dir, app.event_tx.clone());
+    spawn_tick_thread(grove.tx.clone(), Arc::clone(&tick_waiting));
+    grove.poke = Some(grove::spawn_summaries(grove.home.clone(), grove.tx.clone()));
 
-    terminal.draw(|f| render::render(f, app))?;
-    let mut mouse = follow_mouse(false, app.wants_mouse());
+    terminal.draw(|f| render::render_grove(f, grove))?;
+    let mut mouse = follow_mouse(false, grove.wants_mouse());
     loop {
         let Ok(ev) = event_rx.recv() else {
             return Ok(());
         };
-        let mut redraw = deliver(app, ev, &tick_waiting);
+        let mut redraw = deliver(grove, ev, &tick_waiting);
         // Coalesce whatever piled up while drawing, so a burst (typing, a
         // resize, an enrichment flood) costs one redraw.
         loop {
             match event_rx.try_recv() {
-                Ok(more) => redraw |= deliver(app, more, &tick_waiting),
+                Ok(more) => redraw |= deliver(grove, more, &tick_waiting),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
             }
         }
         // A shell or editor `!` or `e` asked for. Run here because this is
         // where the terminal is.
-        if let Some(request) = app.launch.take() {
-            match handoff::carry_out(request, terminal, &gate, &app.event_tx, mouse) {
+        if let Some((id, request)) = grove.take_launch()
+            && let Some(opened) = grove.open.get_mut(&id)
+        {
+            let app = &mut opened.app;
+            let tx = app.event_tx.clone();
+            match handoff::carry_out(request, terminal, &gate, &tx, mouse) {
                 Ok(Some(done)) => app.set_success(done),
                 Ok(None) => {}
                 Err(e) => app.set_error(e),
@@ -158,12 +187,12 @@ fn main_loop(
             redraw = true;
         }
         if redraw {
-            terminal.draw(|f| render::render(f, app))?;
+            terminal.draw(|f| render::render_grove(f, grove))?;
         }
         // The setup screen opening or closing is a frame like any other,
         // so this is the one place the mouse is taken or given back.
-        mouse = follow_mouse(mouse, app.wants_mouse());
-        if app.should_quit {
+        mouse = follow_mouse(mouse, grove.wants_mouse());
+        if grove.should_quit {
             return Ok(());
         }
     }
@@ -194,7 +223,7 @@ fn set_mouse(on: bool) {
 /// name to the file `[ui] theme_from` names, a choice saved from the
 /// picker, the system going dark or light. Only a change is sent.
 fn spawn_theme_watcher(
-    tx: Sender<AppEvent>,
+    tx: Sender<GroveEvent>,
     settings: Arc<std::sync::Mutex<crate::theme::Settings>>,
     themes_dir: std::path::PathBuf,
     mut last: (String, crate::theme::Appearance),
@@ -212,14 +241,14 @@ fn spawn_theme_watcher(
                 continue;
             }
             last = now;
-            if tx.send(AppEvent::Theme(Box::new(resolved))).is_err() {
+            if tx.send(GroveEvent::Theme(Box::new(resolved))).is_err() {
                 return;
             }
         }
     });
 }
 
-fn spawn_input_thread(tx: Sender<AppEvent>, gate: Arc<InputGate>) {
+fn spawn_input_thread(tx: Sender<GroveEvent>, gate: Arc<InputGate>) {
     thread::spawn(move || {
         loop {
             // Polled rather than a bare `read`, so the thread comes back
@@ -232,7 +261,7 @@ fn spawn_input_thread(tx: Sender<AppEvent>, gate: Arc<InputGate>) {
             }
             match event::read() {
                 Ok(ev) => {
-                    if tx.send(AppEvent::Input(ev)).is_err() {
+                    if tx.send(GroveEvent::Input(ev)).is_err() {
                         return;
                     }
                 }
@@ -242,13 +271,13 @@ fn spawn_input_thread(tx: Sender<AppEvent>, gate: Arc<InputGate>) {
     });
 }
 
-/// Hands an event to the app. A tick taken lets the tick thread send the
-/// next one.
-fn deliver(app: &mut app::App, ev: AppEvent, tick_waiting: &AtomicBool) -> bool {
-    if matches!(ev, AppEvent::Tick) {
+/// Hands an event to the grove. A tick taken lets the tick thread send
+/// the next one.
+fn deliver(grove: &mut Grove, ev: GroveEvent, tick_waiting: &AtomicBool) -> bool {
+    if matches!(ev, GroveEvent::Tick) {
         tick_waiting.store(false, Ordering::Release);
     }
-    app.handle_event(ev)
+    grove.handle_event(ev)
 }
 
 /// A tick every `TICK_INTERVAL`, and never a second one while the last is
@@ -256,27 +285,28 @@ fn deliver(app: &mut app::App, ev: AppEvent, tick_waiting: &AtomicBool) -> bool 
 /// while a shell or editor has the terminal the loop takes nothing, and
 /// every tick queued meanwhile would be replayed on the way back, with a
 /// discovery for every twentieth of them.
-fn spawn_tick_thread(tx: Sender<AppEvent>, waiting: Arc<AtomicBool>) {
+fn spawn_tick_thread(tx: Sender<GroveEvent>, waiting: Arc<AtomicBool>) {
     thread::spawn(move || {
         loop {
             thread::sleep(TICK_INTERVAL);
             if waiting.swap(true, Ordering::AcqRel) {
                 continue;
             }
-            if tx.send(AppEvent::Tick).is_err() {
+            if tx.send(GroveEvent::Tick).is_err() {
                 return;
             }
         }
     });
 }
 
+/// What watches a project's worktrees directory, for as long as it is
+/// kept.
+type FsWatcher = Debouncer<RecommendedWatcher, RecommendedCache>;
+
 /// Watches the worktrees directory non-recursively. The returned debouncer
 /// owns the watcher; dropping it stops the thread. `None` when the watcher
 /// cannot start — the slow tick still refreshes.
-fn spawn_fs_watcher(
-    dir: &Path,
-    app_tx: Sender<AppEvent>,
-) -> Option<Debouncer<RecommendedWatcher, RecommendedCache>> {
+fn spawn_fs_watcher(dir: &Path, app_tx: Sender<AppEvent>) -> Option<FsWatcher> {
     // notify fails on a path that does not exist, and this one does not
     // until the first `new`.
     std::fs::create_dir_all(dir).ok()?;
@@ -389,13 +419,13 @@ mod tests {
         let waiting = Arc::new(AtomicBool::new(false));
         spawn_tick_thread(tx, Arc::clone(&waiting));
         let first = rx.recv_timeout(Duration::from_secs(10));
-        assert!(matches!(first, Ok(AppEvent::Tick)), "no first tick");
+        assert!(matches!(first, Ok(GroveEvent::Tick)), "no first tick");
         thread::sleep(TICK_INTERVAL * 4);
         assert!(rx.try_recv().is_err(), "a second tick queued behind it");
         waiting.store(false, Ordering::Release);
         let next = rx.recv_timeout(Duration::from_secs(10));
         assert!(
-            matches!(next, Ok(AppEvent::Tick)),
+            matches!(next, Ok(GroveEvent::Tick)),
             "and none once it was taken"
         );
         // Closed, so the thread's next send fails and it ends.

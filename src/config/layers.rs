@@ -58,6 +58,19 @@ pub fn load_without_home(paths: &PandoPaths) -> Loaded {
     load_layers(paths, false).unwrap_or_default()
 }
 
+/// The user layer's `[ui]` alone, for the TUI outside any repository,
+/// where there is no project to load the rest for: how it looks and
+/// whether it takes the mouse. A file that cannot be read, or a `[ui]`
+/// that does not build, is the default, as the user layer is dropped
+/// everywhere else.
+pub fn user_ui(home: &Path) -> super::UiSection {
+    let mut warnings = Vec::new();
+    read_table(&home.join("config.toml"), &mut warnings)
+        .and_then(|mut table| table.remove("ui"))
+        .and_then(|ui| ui.try_into().ok())
+        .unwrap_or_default()
+}
+
 fn load_layers(paths: &PandoPaths, use_home: bool) -> Result<Loaded> {
     let mut warnings = Vec::new();
     let committed_path = paths.root().join("pando.toml");

@@ -40,8 +40,8 @@ pub use dialogs::{
 };
 pub use git_menu::{BY_HAND_KEY, GitStage};
 pub use keymap::{
-    INSPECT_LEGEND, KeyHelp, LEADER_KEYS, LIST_KEYS, LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE,
-    MOUSE_NOTE, MouseHelp, OVERLAY_KEYS, SETUP_KEYS, SETUP_LEGEND,
+    COLUMN_KEYS, GROVE_KEYS, INSPECT_LEGEND, KeyHelp, LEADER_KEYS, LIST_KEYS, LIST_LEGEND,
+    LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE, MouseHelp, OVERLAY_KEYS, SETUP_KEYS, SETUP_LEGEND,
 };
 pub use launch::{
     Launch, LaunchEnv, LaunchRequest, is_terminal_editor, plan_editor, plan_shell, said_after,
@@ -387,6 +387,14 @@ pub struct App {
     pub setup_row: SetupRow,
     /// The four files both of those follow, polled on the tick.
     pub setup_watch: SetupWatch,
+    /// It runs inside the grove, beside every other project pando knows:
+    /// help lists the grove's keys too. Set by the grove, never by the
+    /// app itself.
+    pub in_grove: bool,
+    /// The grove's column is drawn beside it and carries pando's name and
+    /// build, so the header starts at the project. Set by the grove
+    /// before each frame.
+    pub grove_chrome: bool,
     /// The checks `v` asked for, counted instead of started when tests
     /// drive the app.
     #[cfg(test)]
@@ -480,6 +488,8 @@ impl App {
             setup_screen: None,
             setup_row: SetupRow::default(),
             setup_watch: SetupWatch::default(),
+            in_grove: false,
+            grove_chrome: false,
             #[cfg(test)]
             checks_started: 0,
             #[cfg(test)]
@@ -726,6 +736,43 @@ impl App {
                 true
             }
         }
+    }
+
+    /// Whether the list is all there is to it right now: no modal, no
+    /// setup screen, no log viewer, no filter being typed, no leader or
+    /// second press waiting. The grove takes its own keys only then, so a
+    /// key meant for any of those still reaches it.
+    pub fn idle_on_list(&self) -> bool {
+        self.modal.is_none()
+            && self.setup_screen.is_none()
+            && matches!(self.view, View::List)
+            && self.inspect.is_none()
+            && self.mode == Mode::Normal
+            && !self.leader
+            && self.armed.is_none()
+            && self.queued_questions.is_empty()
+    }
+
+    /// A tick for a project the grove holds open behind the one in front:
+    /// what is in flight in it lands, and its state is read again now and
+    /// then, but nothing on screen is kept up, since none of it is. Returns
+    /// whether something landed, which the column may show.
+    pub fn background_tick(&mut self) -> bool {
+        self.tick = self.tick.wrapping_add(1);
+        let before = self.pending.len();
+        self.poll_pending();
+        if self.tick.is_multiple_of(SLOW_TICK_EVERY) {
+            self.spawn_refresh();
+        }
+        self.expire_status();
+        before != self.pending.len()
+    }
+
+    /// The grove brought this project to the front: what changed while it
+    /// was behind is read again, as when the terminal's focus comes back.
+    pub fn brought_to_front(&mut self) {
+        self.spawn_refresh();
+        self.focus_gained();
     }
 
     /// Replaces the session's config: a worker resolved something, or the
@@ -1855,6 +1902,8 @@ impl App {
             setup_screen: None,
             setup_row: SetupRow::default(),
             setup_watch: SetupWatch::default(),
+            in_grove: false,
+            grove_chrome: false,
             checks_started: 0,
             clipboard: None,
             opened: None,

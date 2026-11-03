@@ -125,7 +125,15 @@ fn run(cli: Cli) -> Result<()> {
     {
         return pando::cli::ls_machine(&home, json, long, &mut pando::cli::Stdout);
     }
-    let project = project::discover(&cwd, &home)?;
+    // `pando` alone outside any repository opens the grove: every project
+    // this machine's pando knows, with none in front.
+    let project = match project::discover(&cwd, &home) {
+        Ok(project) => project,
+        Err(e) if cli.command.is_none() && std::io::stdout().is_terminal() => {
+            return tui::run_home(home, Some(format!("{e:#}")));
+        }
+        Err(e) => return Err(e),
+    };
     let mut paths = PandoPaths::new(home, project);
     // `new`, `start`, `restart` and the TUI act on `pando.toml`; nothing
     // else needs it. A home layer pando cannot use stops those and only

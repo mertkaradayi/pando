@@ -179,6 +179,80 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     key("ctrl-c", &[], "quit from anywhere"),
 ];
 
+/// The grove's keys from the list, taken only while nothing else is open
+/// on it: every project pando knows is a key away from any of them.
+pub const GROVE_KEYS: &[KeyHelp] = &[
+    key(
+        "w",
+        &[KeyCode::Char('w')],
+        "show or hide the column of every project pando knows",
+    ),
+    key(
+        "[ ]",
+        &[KeyCode::Char('['), KeyCode::Char(']')],
+        "the previous / next project",
+    ),
+    key(
+        "{ }",
+        &[KeyCode::Char('{'), KeyCode::Char('}')],
+        "narrow / widen the column",
+    ),
+    key("←", &[KeyCode::Left], "to the column"),
+];
+
+/// Every key the project column answers to while it has the focus.
+pub const COLUMN_KEYS: &[KeyHelp] = &[
+    key(
+        "j k ↓ ↑",
+        &[
+            KeyCode::Char('j'),
+            KeyCode::Char('k'),
+            KeyCode::Down,
+            KeyCode::Up,
+        ],
+        "move down / up",
+    ),
+    key(
+        "g G",
+        &[
+            KeyCode::Char('g'),
+            KeyCode::Char('G'),
+            KeyCode::Home,
+            KeyCode::End,
+        ],
+        "first / last",
+    ),
+    key(
+        "⏎ →",
+        &[KeyCode::Enter, KeyCode::Right],
+        "open the project: its worktrees, with the keys",
+    ),
+    key(
+        "tab esc",
+        &[KeyCode::Tab, KeyCode::Esc],
+        "back to the list of the project in front",
+    ),
+    key(
+        "X",
+        &[KeyCode::Char('X')],
+        "stop everything up in the project (asks first, naming each worktree)",
+    ),
+    key("w", &[KeyCode::Char('w')], "hide the column"),
+    key(
+        "[ ]",
+        &[KeyCode::Char('['), KeyCode::Char(']')],
+        "open the previous / next project",
+    ),
+    key(
+        "{ }",
+        &[KeyCode::Char('{'), KeyCode::Char('}')],
+        "narrow / widen the column",
+    ),
+    key("?", &[KeyCode::Char('?')], "this help"),
+    key("q", &[KeyCode::Char('q')], "quit"),
+    key("ctrl-c", &[], "quit from anywhere"),
+];
+
 /// What may follow `space`, the list's leader, as in neovim: the footer
 /// lists them while it waits, and a test holds them to the handler.
 pub const LEADER_KEYS: &[KeyHelp] = &[

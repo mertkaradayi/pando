@@ -31,7 +31,7 @@ pub use edit::{
     Layer, Note, declared_below, install_origin, patch, prelude_origin, remove_keys,
     services_origin, set_detected, set_detected_array_entry, set_detected_table, write,
 };
-pub use layers::{Loaded, load, load_without_home};
+pub use layers::{Loaded, load, load_without_home, user_ui};
 pub use redact::{HIDDEN, hide_passwords, is_password};
 pub use schema::{
     BranchRule, BranchesSection, Config, HookConfig, HookPoint, HookScope, ISOLATION_KINDS,

@@ -10,6 +10,7 @@
 
 mod chrome;
 mod detail;
+mod grove;
 mod hints;
 mod list;
 mod log_viewer;
@@ -24,6 +25,7 @@ use super::app::{App, Hits};
 
 use chrome::{header_height, render_footer, render_header};
 use detail::render_detail;
+pub(super) use grove::render_grove;
 use list::render_list;
 pub(super) use list::run_marker;
 use log_viewer::{render_inspect, render_log_viewer};
@@ -59,41 +61,50 @@ pub fn body_layout(body: Rect) -> [Rect; 2] {
     Layout::vertical([Constraint::Length(list_height), Constraint::Fill(1)]).areas(body)
 }
 
+/// One project's TUI on the whole screen, as the tests draw it.
+#[cfg(test)]
 pub fn render(f: &mut Frame, app: &mut App) {
+    render_in(f, f.area(), app);
+}
+
+/// The whole of one project's TUI, drawn into `area`: the screen when it
+/// is the only one, the part right of the grove's column when there is
+/// one. What the mouse acts on is recorded where it was drawn.
+pub fn render_in(f: &mut Frame, area: Rect, app: &mut App) {
     // Each part records where it put what the mouse acts on, so nothing
     // this frame does not draw can be clicked.
     app.hits = Hits::default();
     // The viewer takes the whole screen: the header and footer it would
     // share with the list are the two rows a long stack trace needs most.
     if app.log_view().is_some() {
-        render_log_viewer(f, f.area(), app);
+        render_log_viewer(f, area, app);
         if app.inspect.is_some() {
             // The overlay answers every key, so the viewer's hints under
             // it are not what a press would reach.
             app.hits.keys.clear();
-            render_inspect(f, f.area(), app);
+            render_inspect(f, area, app);
         }
-        paint_modal(f, app);
+        paint_modal(f, area, app);
         return;
     }
     // So does the setup screen, which has a header and a footer of its
     // own, and is up whatever git lists.
     if app.setup_screen.is_some() {
-        render_setup(f, f.area(), app);
-        paint_modal(f, app);
+        render_setup(f, area, app);
+        paint_modal(f, area, app);
         return;
     }
 
     // The header grows for an error that does not fit on one row: the end
     // of an error is usually the part that says what to do.
     let [header, body, footer] = Layout::vertical([
-        Constraint::Length(header_height(app, f.area().width, f.area().height)),
+        Constraint::Length(header_height(app, area.width, area.height)),
         Constraint::Fill(1),
         Constraint::Length(1),
     ])
-    .areas(f.area());
+    .areas(area);
 
-    render_header(f, header, app);
+    render_header(f, header, area.height, app);
     // No worktrees at all is the first run, and a welcome says more than
     // an empty box beside a pane about nothing. A main checkout pando has
     // never run is no row of its own yet: see `App::main_row_shown`.
@@ -107,17 +118,17 @@ pub fn render(f: &mut Frame, app: &mut App) {
     render_footer(f, footer, app);
     app.hits.keys = hints::key_hints(f.buffer_mut(), footer);
 
-    paint_modal(f, app);
+    paint_modal(f, area, app);
 }
 
 /// The open modal, on top of whatever is under it, keeping how far help
 /// or messages can scroll for the keys that scroll them. Only its own
 /// hints take a click: what is under it is not what the keys answer.
-fn paint_modal(f: &mut Frame, app: &mut App) {
+fn paint_modal(f: &mut Frame, area: Rect, app: &mut App) {
     let Some(modal) = &app.modal else {
         return;
     };
-    let painted = super::modal::render_modal(f, f.area(), modal, app);
+    let painted = super::modal::render_modal(f, area, modal, app);
     if let Some(bottom) = painted.scroll_bottom {
         app.help_scroll_max = bottom;
     }

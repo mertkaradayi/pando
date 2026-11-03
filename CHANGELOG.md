@@ -16,6 +16,20 @@ may change behaviour.
   marked. `--json` is a published shape, documented in `agent/json.md`.
   It reads each project's state the way `status` does and saves
   nothing.
+- The TUI's grove: a column left of the worktrees lists every project
+  pando knows, the ones with something up first, each a stem in the
+  list's glyphs, all standing on one root line that lights while
+  anything is up. `[` `]` bring the previous and next project to the
+  front, `←` moves to the column, where `⏎` opens a project and `X`
+  stops everything up in it after naming each worktree; `w` hides the
+  column and `{` `}` resize it. A project opened stays open while
+  another is in front, so what is in flight in it finishes, and `q`
+  asks first when it would abandon work in another project. Under 72
+  columns the column folds to one line above the list. With one project
+  known it stays hidden until `w`.
+- `pando` outside any repository opens the grove instead of failing:
+  every project pando knows, drawn as the brand's grove with a stem for
+  each, in leaf when something of it is up.
 - Each project's directory under pando's home records where its
   repository is, in `project.json`, written when pando runs there. A
   project pando ran in before is recovered from the checkouts its state

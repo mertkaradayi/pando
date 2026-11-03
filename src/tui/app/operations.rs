@@ -660,7 +660,7 @@ impl App {
 
     /// The confirmation's `y`: stops what it showed, `listed`, and leaves
     /// up anything that came up after it was shown.
-    pub(super) fn stop_everything(&mut self, listed: Vec<String>) {
+    pub fn stop_everything(&mut self, listed: Vec<String>) {
         let paths = self.paths.clone();
         let (ptx, prx) = mpsc::channel::<String>();
         // No worktree's name: the rows it covers are the ones it listed,

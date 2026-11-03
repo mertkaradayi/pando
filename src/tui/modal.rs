@@ -13,10 +13,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 use super::app::{
-    App, BY_HAND_KEY, BranchLoadState, CreateRow, GitStage, INSPECT_LEGEND, KeyHelp, LIST_KEYS,
-    LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE, MarkedRemoval, Modal, MouseHelp,
-    RemoveBlocker, SETUP_KEYS, SETUP_LEGEND, SPINNER_FRAMES, StatusKind, compact_age, create_rows,
-    pr_rows,
+    App, BY_HAND_KEY, BranchLoadState, COLUMN_KEYS, CreateRow, GROVE_KEYS, GitStage,
+    INSPECT_LEGEND, KeyHelp, LIST_KEYS, LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE,
+    MarkedRemoval, Modal, MouseHelp, RemoveBlocker, SETUP_KEYS, SETUP_LEGEND, SPINNER_FRAMES,
+    StatusKind, compact_age, create_rows, pr_rows,
 };
 use super::render::{centered_box, chunk_cells, text_width, truncate, truncate_middle, wrap_text};
 use crate::actions;
@@ -138,7 +138,25 @@ pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Pain
                 (true, true) => LOG_MOUSE,
                 (true, false) => LIST_MOUSE,
             };
-            let bottom = render_help(f, area, app.help_scroll, keys, mouse, legend_title, legend);
+            // Inside the grove, from the list: its keys too, which reach
+            // every project from this one.
+            let grove: &[(&str, &[KeyHelp])] =
+                match app.in_grove && app.setup_screen.is_none() && app.log_view().is_none() {
+                    true => &[
+                        ("across projects", GROVE_KEYS),
+                        ("in the project column", COLUMN_KEYS),
+                    ],
+                    false => &[],
+                };
+            let bottom = render_help(
+                f,
+                area,
+                app.help_scroll,
+                keys,
+                grove,
+                mouse,
+                (legend_title, legend),
+            );
             return Painted {
                 content: None,
                 options: Vec::new(),
@@ -1282,6 +1300,63 @@ fn render_stop_all(f: &mut Frame, area: Rect, names: &[String], app: &App) -> Op
     Some(inner)
 }
 
+/// The grove's `X` on a project: every worktree of it that it would
+/// stop, by name and in its glyph, before `y` stops them. Returns where
+/// its content went.
+pub(super) fn render_stop_project(
+    f: &mut Frame,
+    area: Rect,
+    project: &str,
+    worktrees: &[(String, Option<crate::state::Aggregate>)],
+) -> Option<Rect> {
+    let cap = max_content_width(area);
+    const MAX_ROWS: usize = 12;
+    let asked = match worktrees.len() {
+        1 => format!("stop the one worktree up in {project}?"),
+        n => format!("stop all {n} worktrees up in {project}?"),
+    };
+    let title = Line::styled(
+        truncate(&asked, cap),
+        Style::new().fg(text()).add_modifier(Modifier::BOLD),
+    );
+    let warning: Vec<Line> = wrap_text("their services and public URLs go down too", cap)
+        .into_iter()
+        .map(|row| Line::styled(row, Style::new().fg(yellow())))
+        .collect();
+    let keys = key_rows(
+        vec![
+            (key_span("y"), hint_span(" stop them")),
+            (key_span("esc"), hint_span(" cancel")),
+        ],
+        cap,
+    );
+    let room = (area.height as usize).saturating_sub(2 + 1 + warning.len() + 1 + keys.len());
+    let shown = match worktrees.len() <= room.min(MAX_ROWS) {
+        true => worktrees.len(),
+        false => room.saturating_sub(1).min(MAX_ROWS),
+    };
+    let mut lines = vec![title];
+    for (name, phase) in worktrees.iter().take(shown) {
+        let (glyph, color) = super::render::run_marker(phase.as_ref());
+        lines.push(Line::from(vec![
+            Span::styled(glyph, Style::new().fg(color)),
+            Span::styled(
+                truncate_middle(name, cap.saturating_sub(2)),
+                Style::new().fg(text_dim()),
+            ),
+        ]));
+    }
+    if worktrees.len() > shown {
+        lines.push(hint_span(&format!("… and {} more", worktrees.len() - shown)).into());
+    }
+    lines.extend(warning);
+    let width = widest(&lines).max(widest(&keys)).min(cap);
+    let height = lines.len() + 1 + keys.len();
+    let inner = popup(f, area, "stop a project", None, width, height)?;
+    paint_over_keys(f, inner, lines, keys);
+    Some(inner)
+}
+
 /// What removing takes with it and what would stop it, all of it before
 /// the key is pressed: running, uncommitted changes, not pando's, locked.
 /// A pane too short for all of it keeps what refuses the removal, what it
@@ -1594,14 +1669,15 @@ fn render_help(
     area: Rect,
     scroll: usize,
     keys: &[KeyHelp],
+    sections: &[(&str, &[KeyHelp])],
     mouse: &[MouseHelp],
-    legend_title: &str,
-    legend: &[(&str, &str)],
+    (legend_title, legend): (&str, &[(&str, &str)]),
 ) -> usize {
     // The key column is as wide as its widest entry, so `PgUp PgDn` never
     // runs into what it does.
     let key_width = keys
         .iter()
+        .chain(sections.iter().flat_map(|(_, keys)| keys.iter()))
         .map(|k| text_width(k.keys))
         .chain(mouse.iter().map(|m| text_width(m.gesture)))
         .chain(legend.iter().map(|(mark, _)| text_width(mark)))
@@ -1620,6 +1696,11 @@ fn render_help(
         .map(|k| row(k.keys, k.action, key_style))
         .collect();
     let title = Style::new().fg(text_muted()).add_modifier(Modifier::BOLD);
+    for (heading, keys) in sections {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(heading.to_string(), title));
+        lines.extend(keys.iter().map(|k| row(k.keys, k.action, key_style)));
+    }
     // Only while pando has the mouse: `mouse` is empty otherwise.
     if !mouse.is_empty() {
         lines.push(Line::raw(""));
