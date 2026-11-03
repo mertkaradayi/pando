@@ -140,13 +140,18 @@ where
     F: FnOnce(&mut DocumentMut) -> Result<()>,
 {
     paths.ensure_home()?;
-    patch_file(&layer.file(paths), Some(paths.root()), layer.header(), edit)
+    let root = [paths.root().to_path_buf()];
+    patch_file(&layer.file(paths), &root, layer.header(), edit)
 }
 
 /// [`patch`] for the user layer, where there may be no project: the TUI
 /// outside any repository saves how it is laid out here. Never makes the
 /// home — a home pando never ran in has nothing to lay out — and refuses
 /// one that is not there.
+///
+/// With no project to hold a link against, a link is held against every
+/// project the home registers: one that leads into any of their
+/// repositories is refused, as [`patch`] refuses one into its own.
 pub fn patch_user<F>(home: &Path, edit: F) -> Result<()>
 where
     F: FnOnce(&mut DocumentMut) -> Result<()>,
@@ -154,22 +159,27 @@ where
     if !home.is_dir() {
         anyhow::bail!("there is no pando home at {} yet", home.display());
     }
+    let roots: Vec<PathBuf> = crate::project::project_dirs(home)
+        .into_iter()
+        .filter_map(|(_, dir)| crate::project::registered(&dir))
+        .map(|registered| registered.root)
+        .collect();
     patch_file(
         &home.join(crate::paths::USER_CONFIG_FILE),
-        None,
+        &roots,
         Layer::User.header(),
         edit,
     )
 }
 
 /// The patch itself, on `file`; a link it is written through is refused
-/// when it leads into `root`, the repository, when there is one.
-fn patch_file<F>(file: &Path, root: Option<&Path>, header: &str, edit: F) -> Result<()>
+/// when it leads into any of `roots`, the repositories it must stay out of.
+fn patch_file<F>(file: &Path, roots: &[PathBuf], header: &str, edit: F) -> Result<()>
 where
     F: FnOnce(&mut DocumentMut) -> Result<()>,
 {
     let _lock = crate::state::lock(&file.with_extension("toml.lock"))?;
-    let path = written_through(file, root)?;
+    let path = written_through(file, roots)?;
     let existing = match std::fs::read_to_string(&path) {
         Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -646,7 +656,7 @@ fn comment_lines(space: Option<&RawString>, out: &mut String) {
 /// pando never writes there, whoever made the link. So is one that leads
 /// nowhere, because a file created wherever a dangling link points is not
 /// one anybody asked for.
-fn written_through(path: &Path, root: Option<&Path>) -> Result<PathBuf> {
+fn written_through(path: &Path, roots: &[PathBuf]) -> Result<PathBuf> {
     let linked = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
     if !linked {
         return Ok(path.to_path_buf());
@@ -661,7 +671,7 @@ fn written_through(path: &Path, root: Option<&Path>) -> Result<PathBuf> {
             path.display()
         )
     })?;
-    if let Some(root) = root {
+    for root in roots {
         crate::paths::ensure_outside_repository("the config", &target, root, &[])
             .with_context(|| format!("{} is a link to {}", path.display(), target.display()))?;
     }

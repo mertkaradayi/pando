@@ -2513,3 +2513,40 @@ fn a_base_for_a_repository_members_leaves_out_says_so() {
         "{err:#}"
     );
 }
+
+// The layout is saved with no project to hold a link against, so a link
+// into any repository the home registers is refused, as a project's own
+// patch refuses one into its own: a dotfiles repository pando knows is
+// never written through the user layer's link.
+#[test]
+fn a_user_patch_never_follows_a_link_into_a_known_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("pando-home");
+    let dotfiles = dir.path().join("dotfiles");
+    std::fs::create_dir_all(dotfiles.join("pando")).unwrap();
+    let tracked = dotfiles.join("pando").join("config.toml");
+    let committed = "[ui]\ntheme = \"nord\"\n";
+    std::fs::write(&tracked, committed).unwrap();
+    let project_dir = home.join("projects").join("dotfiles-0000abcd");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let entry = crate::project::Registered {
+        root: dotfiles.clone(),
+        name: "dotfiles".into(),
+        repos: Vec::new(),
+    };
+    crate::project::remember_as(&project_dir, &entry).unwrap();
+    let link = home.join("config.toml");
+    std::os::unix::fs::symlink(&tracked, &link).unwrap();
+    let set = |doc: &mut toml_edit::DocumentMut| {
+        doc["ui"]["grove_width"] = toml_edit::value(30);
+        Ok(())
+    };
+    let refused = format!("{:#}", super::patch_user(&home, set).unwrap_err());
+    assert!(refused.contains("is inside the repository"), "{refused}");
+    assert_eq!(std::fs::read_to_string(&tracked).unwrap(), committed);
+    // A link anywhere no project is stays written through.
+    std::fs::remove_file(project_dir.join(crate::project::PROJECT_FILE)).unwrap();
+    super::patch_user(&home, set).unwrap();
+    let written = std::fs::read_to_string(&tracked).unwrap();
+    assert!(written.contains("grove_width = 30"), "{written}");
+}
