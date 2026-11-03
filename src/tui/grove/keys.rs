@@ -193,7 +193,14 @@ impl Grove {
             );
             return;
         }
-        let worktrees: Vec<String> = summary.worktrees.iter().map(|w| w.name.clone()).collect();
+        // What is up or coming up, as the project's own `X` stops: a
+        // failed worktree is not up, and its ✗ says so.
+        let worktrees: Vec<String> = summary
+            .worktrees
+            .iter()
+            .filter(|w| w.is_up())
+            .map(|w| w.name.clone())
+            .collect();
         if worktrees.is_empty() {
             let name = summary.name.clone();
             self.say(format!("nothing is up in {name}"), false);

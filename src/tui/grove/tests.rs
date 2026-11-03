@@ -430,15 +430,22 @@ fn in_the_column_jk_move_and_enter_opens() {
 // project not open yet is opened to stop them.
 #[test]
 fn x_in_the_column_asks_naming_each_worktree_then_stops_them() {
-    let mut grove = a_grove();
+    let mut summaries = a_grove().summaries;
+    // api: one up beside the one that failed.
+    summaries[1]
+        .worktrees
+        .insert(0, live("feat+up0", running()));
+    summaries[1].up = 1;
+    let mut grove = Grove::new_for_test(summaries);
+    grove.adopt(app_for("shop"), true);
     grove.focus = Focus::Column;
     press(&mut grove, KeyCode::Char('j'));
     press(&mut grove, KeyCode::Char('X'));
     let confirm = grove.confirm.clone().expect("asks first");
-    assert_eq!(confirm.worktrees, vec!["feat+broken0".to_string()]);
+    assert_eq!(confirm.worktrees, vec!["feat+up0".to_string()]);
     let all = text_of(&draw(&mut grove, 120, 30));
     assert!(all.contains("stop the one worktree up in api?"), "{all}");
-    assert!(all.contains("✗ feat+broken0"), "{all}");
+    assert!(all.contains("feat+up0"), "{all}");
     // Any other key leaves it asking; esc takes it back.
     press(&mut grove, KeyCode::Char('j'));
     assert!(grove.confirm.is_some());
@@ -448,7 +455,7 @@ fn x_in_the_column_asks_naming_each_worktree_then_stops_them() {
     press(&mut grove, KeyCode::Char('y'));
     assert_eq!(
         grove.stop_after_open,
-        Some((id_of("api"), vec!["feat+broken0".to_string()]))
+        Some((id_of("api"), vec!["feat+up0".to_string()]))
     );
     assert_eq!(grove.open_requests, vec![id_of("api")]);
     // Nothing up, nothing to ask.
@@ -465,6 +472,20 @@ fn x_in_the_column_asks_naming_each_worktree_then_stops_them() {
         all.contains("feat+up0") && all.contains("feat+up1"),
         "{all}"
     );
+}
+
+// A project whose only worktree failed has nothing up: `X` says so, as
+// the project's own `X` does, rather than asking to stop a ✗ as "up".
+#[test]
+fn x_on_a_project_with_only_failures_has_nothing_to_stop() {
+    let mut grove = a_grove();
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('j'));
+    assert_eq!(grove.selected().unwrap().name, "api");
+    press(&mut grove, KeyCode::Char('X'));
+    assert!(grove.confirm.is_none(), "{:?}", grove.confirm);
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert_eq!(status.message, "nothing is up in api");
 }
 
 /// `name`'s app, open behind, with `pending` in flight.
@@ -676,6 +697,10 @@ fn help_lists_exactly_the_keys_the_column_answers() {
         let mut grove = a_grove();
         grove.focus = Focus::Column;
         grove.cursor = 1;
+        // Something up in it, which `X` stops.
+        grove.summaries[1]
+            .worktrees
+            .push(live("feat+up0", running()));
         let before = grove_fingerprint(&grove);
         press(&mut grove, code);
         if grove_fingerprint(&grove) != before {
