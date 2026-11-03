@@ -24,9 +24,10 @@ may change behaviour.
   stops everything up in it after naming each worktree; `w` hides the
   column and `{` `}` resize it. A project opened stays open while
   another is in front, so what is in flight in it finishes, and `q`
-  asks first when it would abandon work in another project. Under 72
-  columns the column folds to one line above the list. With one project
-  known it stays hidden until `w`.
+  asks first when it would abandon work in another project. Where the
+  whole column would leave the project in front under 92 columns, it
+  folds to one line above the list (`grove = "on"` keeps it down to 72).
+  With one project known it stays hidden until `w`.
 - The grove's layout is the developer's, saved in `~/.pando/config.toml`
   by the key that changes it, as `,` saves the list's order: `[ui] grove`
   (`auto`, `on`, `off`) by `w`, `grove_width` by `{` `}`, and the detail

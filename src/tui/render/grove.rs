@@ -19,7 +19,7 @@ use crate::theme::{
     blue, border, green, highlight_bg, hint_key, orange, red, surface, text, text_dim, text_muted,
     yellow,
 };
-use crate::tui::grove::{COLUMN_HINTS, COLUMN_MIN_WIDTH, Focus, Grove, GroveHits};
+use crate::tui::grove::{COLUMN_HINTS, COLUMN_MIN_WIDTH, Focus, Grove, GroveHits, Shown};
 
 use super::chrome::build_label_spans;
 use super::setup::{art_line_with, art_style};
@@ -33,6 +33,11 @@ const ROW_LEAD: usize = 5;
 const STEM_AT: u16 = 2;
 
 /// The tallest and widest the home pane's grove is drawn.
+/// The width the project in front keeps beside the whole column under
+/// `[ui] grove = "auto"`: its list and its detail pane side by side,
+/// the detail's status line whole. Narrower, the column is the strip.
+pub const PROJECT_ROOMY_WIDTH: u16 = 92;
+
 const HOME_GROVE_ROWS: usize = 11;
 const HOME_GROVE_WIDTH: usize = 100;
 
@@ -43,14 +48,21 @@ pub fn render_grove(f: &mut Frame, grove: &mut Grove) {
     let area = f.area();
     grove.hits = GroveHits::default();
     let shown = grove.column_shown();
-    let wide = area.width >= SIDE_BY_SIDE_MIN_WIDTH;
+    let width = grove
+        .width
+        .min(area.width / 2)
+        .max(COLUMN_MIN_WIDTH.min(area.width));
+    // The project in front comes first. `auto` gives the whole column
+    // only where the project keeps the width its list and detail read
+    // at side by side, and folds it to the strip, one row, below that;
+    // `on` keeps the column down to the side-by-side width itself.
+    let roomy = grove.shown == Shown::On
+        || grove.front.is_none()
+        || area.width.saturating_sub(width) >= PROJECT_ROOMY_WIDTH;
+    let wide = area.width >= SIDE_BY_SIDE_MIN_WIDTH && roomy;
     let rest = match (shown, wide) {
         (false, _) => area,
         (true, true) => {
-            let width = grove
-                .width
-                .min(area.width / 2)
-                .max(COLUMN_MIN_WIDTH.min(area.width));
             let [column, rest] =
                 Layout::horizontal([Constraint::Length(width), Constraint::Fill(1)]).areas(area);
             render_column(f, column, grove);

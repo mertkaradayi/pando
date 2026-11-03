@@ -430,7 +430,7 @@ fn braces_narrow_and_widen_the_column_within_bounds() {
         press(&mut grove, KeyCode::Char('}'));
     }
     assert_eq!(grove.width, COLUMN_MAX_WIDTH);
-    let buf = draw(&mut grove, 120, 30);
+    let buf = draw(&mut grove, 160, 30);
     assert_eq!(buf[(COLUMN_MAX_WIDTH - 1, 0)].symbol(), "╮");
 }
 
@@ -1154,10 +1154,12 @@ fn the_column_is_as_wide_as_it_was_set() {
     let mut grove = a_grove();
     for width in [COLUMN_MIN_WIDTH, COLUMN_WIDTH, COLUMN_MAX_WIDTH] {
         grove.width = width;
-        let buf = draw(&mut grove, 120, 30);
+        let buf = draw(&mut grove, 160, 30);
         assert_eq!(buf[(width - 1, 0)].symbol(), "╮", "width {width}");
         assert_eq!(grove.hits.column.width, width);
     }
+    // `on` keeps the whole column on a screen `auto` gives the strip.
+    grove.shown = Shown::On;
     grove.width = COLUMN_MAX_WIDTH;
     draw(&mut grove, 76, 24);
     assert_eq!(grove.hits.column.width, 38, "half of a narrow screen");
@@ -1182,7 +1184,7 @@ fn every_row_state_reads_apart_in_every_theme() {
             let mut grove = a_grove();
             grove.focus = Focus::Column;
             grove.cursor = 2; // docs, idle
-            let buf = draw(&mut grove, 100, 20);
+            let buf = draw(&mut grove, 140, 20);
             let at = |name: &str| {
                 let y = (1..6)
                     .find(|&y| cells(&buf, y, 0, COLUMN_WIDTH).contains(name))
@@ -1218,7 +1220,7 @@ fn every_row_state_reads_apart_in_every_theme() {
             assert_eq!(buf[(0, 0)].fg, palette.blue, "{says}");
             assert_eq!(buf[(1, docs_y)].fg, palette.blue, "{says}");
             grove.focus = Focus::List;
-            let buf = draw(&mut grove, 100, 20);
+            let buf = draw(&mut grove, 140, 20);
             assert_eq!(buf[(0, 0)].fg, palette.border, "{says}");
             assert_ne!(buf[(1, docs_y)].fg, palette.blue, "{says}");
             assert_eq!(buf[(docs_x, docs_y)].bg, palette.highlight_bg, "{says}");
@@ -1345,4 +1347,37 @@ fn the_column_offers_tab_only_with_a_project_in_front() {
     let home = text_of(&draw(&mut grove, 140, 40));
     assert!(!home.contains("tab list"), "{home}");
     assert!(home.contains("⏎ open"), "{home}");
+}
+
+// Found comparing the branch with the release in a real terminal: at 110
+// columns the whole column left the project 84, and its detail pane cut
+// the status line. `auto` puts the project first: the strip until the
+// project keeps PROJECT_ROOMY_WIDTH beside the column.
+#[test]
+fn auto_gives_the_project_its_width_before_the_column() {
+    use crate::tui::render::PROJECT_ROOMY_WIDTH;
+    let mut grove = a_grove();
+    let roomy = COLUMN_WIDTH + PROJECT_ROOMY_WIDTH;
+    let column = |buf: &Buffer| buf[(COLUMN_WIDTH - 1, 0)].symbol() == "╮";
+    let strip = |buf: &Buffer| row_of(buf, 0).contains('◀');
+    let buf = draw(&mut grove, roomy, 30);
+    assert!(
+        column(&buf) && !strip(&buf),
+        "room for both:\n{}",
+        text_of(&buf)
+    );
+    let buf = draw(&mut grove, roomy - 1, 30);
+    assert!(
+        strip(&buf) && !column(&buf),
+        "one cell short:\n{}",
+        text_of(&buf)
+    );
+    // `on` is the developer's word over the project's width.
+    grove.shown = Shown::On;
+    assert!(column(&draw(&mut grove, roomy - 1, 30)));
+    // With no project in front the column has nothing to crowd.
+    grove.shown = Shown::Auto;
+    grove.open.clear();
+    grove.front = None;
+    assert!(column(&draw(&mut grove, 80, 24)));
 }

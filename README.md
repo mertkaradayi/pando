@@ -511,9 +511,11 @@ detail = "right"      # "bottom", or "off"; "right" stacks under the list when n
 detail_size = 40      # the detail pane's share, 20 to 80 percent
 ```
 
-Under 72 columns the column folds to one line above the list,
-`[ ◀ ● shop · 2 up · 1/4 ▶ ]`, and a click on `[` or `]` steps through
-the projects.
+The project in front comes first: where the whole column would leave
+it under 92 columns for its list and detail, `auto` folds the column to
+one line above the list, `[ ◀ ● shop · 2 up · 1/4 ▶ ]`, and a click on
+`[` or `]` steps through the projects. `grove = "on"` keeps the whole
+column down to 72 columns, under which it is always the line.
 
 ### Several repositories
 

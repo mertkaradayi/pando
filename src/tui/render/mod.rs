@@ -26,6 +26,8 @@ use super::app::{App, DetailLayout, DetailPlacement, Hits};
 use chrome::{header_height, render_footer, render_header};
 use detail::render_detail;
 #[cfg(test)]
+pub(super) use grove::PROJECT_ROOMY_WIDTH;
+#[cfg(test)]
 pub(crate) use grove::column_title;
 pub(super) use grove::render_grove;
 use list::render_list;
