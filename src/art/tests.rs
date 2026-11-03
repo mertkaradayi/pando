@@ -230,3 +230,65 @@ fn names_go_under_stems_without_touching() {
     }
     assert!(label_stems(&stems, &labels, 3).is_empty());
 }
+
+// One stem per project, in leaf where something of it is up: the home
+// pane's grove names each one, so the count and the places are its.
+#[test]
+fn a_grove_of_projects_has_a_stem_each_and_crowns_only_where_leafed() {
+    let seed = seed_of("pando");
+    let leafed = [true, false, true, false];
+    let picture = grove_of(60, 10, 2, seed, &leafed);
+    assert_eq!(picture, grove_of(60, 10, 2, seed, &leafed));
+    assert_eq!(picture.stems, vec![7, 22, 37, 52]);
+    assert!(picture.cells.iter().all(|row| row.len() == 60));
+    // Leaves only within reach of a leafed stem.
+    for (x, _) in cells_where(&picture.cells, Material::Canopy) {
+        let nearest = picture
+            .stems
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, s)| s.abs_diff(x))
+            .map(|(i, _)| i)
+            .unwrap();
+        assert!(leafed[nearest], "a leaf at {x} by a bare stem");
+    }
+    // Every stem, bare or not, has its trunk and its tap root.
+    let roots = &picture.cells[picture.cells.len() - 1];
+    for &x in &picture.stems {
+        assert_eq!(roots[x].ch, '┻');
+        assert!(
+            picture
+                .cells
+                .iter()
+                .any(|row| row[x].material == Material::Trunk),
+            "no trunk at {x}"
+        );
+    }
+    assert!(grove_of(GROVE_MIN_WIDTH - 1, 10, 0, seed, &leafed).is_empty());
+    assert!(grove_of(60, 10, 0, seed, &[]).stems.is_empty());
+    assert_eq!(stems_that_fit(60), 60 / STEM_SPACING_MIN);
+}
+
+// Each name under its own stem, cut to fit rather than moved on: a name
+// under another project's stem would be a lie.
+#[test]
+fn each_stem_keeps_its_own_label_cut_to_the_room() {
+    let labels: Vec<String> = ["shop", "a-very-long-project-name", "api"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let placed = label_each_stem(&[2, 10, 20], &labels, 30);
+    assert_eq!(
+        placed,
+        vec![
+            (2, "shop".to_string()),
+            (10, "a-very-l…".to_string()),
+            (20, "api".to_string()),
+        ]
+    );
+    assert!(
+        label_each_stem(&[0, 1], &labels, 30)
+            .iter()
+            .all(|(x, _)| *x == 1)
+    );
+}

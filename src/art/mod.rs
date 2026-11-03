@@ -15,7 +15,9 @@
 mod grove;
 mod wordmark;
 
-pub use grove::{GROVE_MIN_HEIGHT, GROVE_MIN_WIDTH, Grove, grove};
+pub use grove::{
+    GROVE_MIN_HEIGHT, GROVE_MIN_WIDTH, Grove, STEM_SPACING_MIN, grove, grove_of, stems_that_fit,
+};
 pub use wordmark::{COMPACT_WIDTH, WORDMARK_HEIGHT, WORDMARK_WIDTH, WordmarkSize, wordmark};
 
 /// What a cell of a picture is, which decides its colour.
@@ -113,6 +115,35 @@ pub fn label_stems(stems: &[usize], labels: &[String], width: usize) -> Vec<(usi
         free_from = at + length + 2;
     }
     placed
+}
+
+/// One label under each stem, in order, left-aligned there and cut with
+/// `…` to the room before the next stem: label `i` is always stem `i`'s,
+/// unlike [`label_stems`], which moves a long label to a later stem. A
+/// stem with no room for one character and the `…` gets no label.
+pub fn label_each_stem(stems: &[usize], labels: &[String], width: usize) -> Vec<(usize, String)> {
+    stems
+        .iter()
+        .zip(labels)
+        .enumerate()
+        .filter_map(|(i, (&x, label))| {
+            let end = stems
+                .get(i + 1)
+                .map_or(width, |&next| next.saturating_sub(1));
+            let room = end.saturating_sub(x);
+            let length = label.chars().count();
+            let fitted = match () {
+                _ if length <= room => label.clone(),
+                _ if room >= 2 => {
+                    let mut cut: String = label.chars().take(room - 1).collect();
+                    cut.push('…');
+                    cut
+                }
+                _ => return None,
+            };
+            Some((x, fitted))
+        })
+        .collect()
 }
 
 /// The dithered shade of `value` (0 to 1) at a cell: an index into
