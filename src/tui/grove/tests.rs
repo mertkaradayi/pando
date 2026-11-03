@@ -536,6 +536,31 @@ fn stops_confirmed_for_two_projects_opening_each_land_in_their_own() {
     assert!(grove.stop_after_open.is_empty());
 }
 
+// A stop confirmed for a project open behind that its app refuses — an
+// action already covers the worktree — is said where it can be read, on
+// the front project's header, never only on the hidden app's.
+#[test]
+fn a_stop_refused_behind_says_so_in_front() {
+    let mut grove = a_grove();
+    let mut restart = in_flight();
+    restart.kind = PendingKind::Restart;
+    busy_behind(&mut grove, "api", restart);
+    grove.summaries[1].worktrees = vec![live("feat+one", running())];
+    grove.focus = Focus::Column;
+    grove.cursor = 1;
+    press(&mut grove, KeyCode::Char('X'));
+    press(&mut grove, KeyCode::Char('y'));
+    let api = &grove.open[&id_of("api")].app;
+    assert_eq!(api.pending.len(), 1, "the restart alone is in flight");
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert!(
+        status.message.contains("nothing was stopped in api")
+            && status.message.contains("already busy"),
+        "{}",
+        status.message
+    );
+}
+
 /// `name`'s app, open behind, with `pending` in flight.
 fn busy_behind(grove: &mut Grove, name: &str, pending: PendingAction) {
     grove.adopt(app_for(name), false);

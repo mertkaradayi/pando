@@ -659,8 +659,9 @@ impl App {
     }
 
     /// The confirmation's `y`: stops what it showed, `listed`, and leaves
-    /// up anything that came up after it was shown.
-    pub fn stop_everything(&mut self, listed: Vec<String>) {
+    /// up anything that came up after it was shown. Returns whether it
+    /// started; refused, the header says why.
+    pub fn stop_everything(&mut self, listed: Vec<String>) -> bool {
         let paths = self.paths.clone();
         let (ptx, prx) = mpsc::channel::<String>();
         // No worktree's name: the rows it covers are the ones it listed,
@@ -681,6 +682,7 @@ impl App {
             p.label = "everything".to_string();
             self.set_progress("stopping everything…");
         }
+        started
     }
 
     /// `o`: only while the worktree runs. A stop keeps its port

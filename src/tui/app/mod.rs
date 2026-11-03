@@ -926,7 +926,9 @@ impl App {
             }
             Some(Modal::StopAll { names }) => {
                 match key.code {
-                    KeyCode::Char('y') | KeyCode::Enter => self.stop_everything(names),
+                    KeyCode::Char('y') | KeyCode::Enter => {
+                        self.stop_everything(names);
+                    }
                     KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {}
                     _ => self.modal = Some(Modal::StopAll { names }),
                 }

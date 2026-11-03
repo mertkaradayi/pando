@@ -137,10 +137,8 @@ impl Grove {
             Ok(app) => {
                 self.adopt(app, wanted);
                 // Its own stop only: another project's waits for its own.
-                if let Some(names) = self.stop_after_open.remove(&id)
-                    && let Some(opened) = self.open.get_mut(&id)
-                {
-                    opened.app.stop_everything(names);
+                if let Some(names) = self.stop_after_open.remove(&id) {
+                    self.stop_in(&id, names);
                 }
             }
             Err(e) => {

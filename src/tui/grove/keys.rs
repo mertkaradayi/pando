@@ -216,8 +216,8 @@ impl Grove {
     /// The confirmation's `y`: the project's own app stops what it
     /// showed, opened for it first when it is not.
     fn stop_project(&mut self, confirm: StopConfirm) {
-        if let Some(opened) = self.open.get_mut(&confirm.id) {
-            opened.app.stop_everything(confirm.worktrees);
+        if self.open.contains_key(&confirm.id) {
+            self.stop_in(&confirm.id, confirm.worktrees);
             return;
         }
         let Some(summary) = self.summaries.iter().find(|s| s.id == confirm.id).cloned() else {
@@ -225,5 +225,27 @@ impl Grove {
         };
         self.stop_after_open.insert(confirm.id, confirm.worktrees);
         self.request_open(&summary);
+    }
+
+    /// Stops `names` in `id`'s open app. A stop the app refuses — an
+    /// action already covers one of them — says why on its own header,
+    /// which nobody sees while the project is behind; the grove says it
+    /// then, so a confirmed stop never does nothing in silence.
+    pub(super) fn stop_in(&mut self, id: &str, names: Vec<String>) {
+        let front = self.front.as_deref() == Some(id);
+        let Some(opened) = self.open.get_mut(id) else {
+            return;
+        };
+        if opened.app.stop_everything(names) || front {
+            return;
+        }
+        let app = &opened.app;
+        let why = app
+            .status
+            .as_ref()
+            .map(|s| s.message.clone())
+            .unwrap_or_default();
+        let name = app.paths.project.display_name.clone();
+        self.say(format!("nothing was stopped in {name}: {why}"), true);
     }
 }
