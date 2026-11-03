@@ -1258,3 +1258,53 @@ fn the_columns_title_keeps_the_tally_and_shortens_the_branch() {
         );
     }
 }
+
+// The public docs say what the grove is: the layout keys it saves, in the
+// machine config's sample on the website as in the README, `ls --all` in
+// the verb list, and the grove's own section with its keys.
+#[test]
+fn the_website_documents_the_grove_and_its_layout() {
+    let read = |file: &str| {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file))
+            .unwrap()
+    };
+    let (site, readme) = (read("site/docs.html"), read("README.md"));
+    let saved = [
+        Saved::Grove(Shown::Auto),
+        Saved::GroveWidth(COLUMN_WIDTH),
+        Saved::Detail(crate::tui::app::DetailPlacement::Right),
+        Saved::DetailSize(40),
+    ];
+    let sample = site
+        .split("<figcaption class=\"code-h\">~/.pando/config.toml</figcaption>")
+        .nth(1)
+        .and_then(|rest| rest.split("</figure>").next())
+        .expect("the machine config's sample");
+    for change in saved {
+        let key = change.key();
+        assert!(sample.contains(&format!("# {key} = ")), "{key} on the site");
+        assert!(readme.contains(&format!("{key} = ")), "{key} in the README");
+    }
+    let ls = site
+        .lines()
+        .find(|line| line.contains("<div class=\"k\">pando ls</div>"))
+        .expect("the ls row");
+    assert!(ls.contains("<code>--all</code>"), "{ls}");
+    let grove = site
+        .split("<h3 id=\"tui-grove\">")
+        .nth(1)
+        .and_then(|rest| rest.split("<h3").next())
+        .expect("a section on the grove");
+    // Every key the grove takes from the list, and the column's `X`.
+    let keys = GROVE_KEYS
+        .iter()
+        .flat_map(|k| k.keys.split(' '))
+        .chain(["X"]);
+    for key in keys {
+        let kbd = format!(
+            "<kbd>{}</kbd>",
+            key.replace('<', "&lt;").replace('>', "&gt;")
+        );
+        assert!(grove.contains(&kbd), "{key} in the grove's section");
+    }
+}
