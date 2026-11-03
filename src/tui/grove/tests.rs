@@ -230,6 +230,10 @@ fn under_the_side_by_side_width_the_column_is_a_strip() {
     let buf = draw(&mut grove, 60, 24);
     let strip = row_of(&buf, 0);
     assert!(strip.starts_with(" [ ◀ ● shop · 2 up · 1/4 ▶ ]"), "{strip}");
+    assert!(
+        !strip.contains("tab list"),
+        "the list has the keys: {strip}"
+    );
     assert!(row_of(&buf, 1).contains("shop"), "{}", row_of(&buf, 1));
     assert_eq!(grove.hits.column, Rect::new(0, 0, 60, 1));
     // With the keys, the strip follows the column's cursor.
@@ -237,6 +241,8 @@ fn under_the_side_by_side_width_the_column_is_a_strip() {
     press(&mut grove, KeyCode::Char('j'));
     let strip = row_of(&draw(&mut grove, 60, 24), 0);
     assert!(strip.contains("✗ api · ✗1 failed · 2/4"), "{strip}");
+    // And says what its keys do now, and how to give them back.
+    assert!(strip.trim_end().ends_with("⏎ open  tab list"), "{strip}");
     // `]` on the strip: the next project, opened.
     let next = grove.hits.next;
     click(&mut grove, next.x + 1, next.y);

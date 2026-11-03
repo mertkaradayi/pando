@@ -439,7 +439,20 @@ fn render_strip(f: &mut Frame, area: Rect, grove: &mut Grove) {
     if next_x < area.right() {
         grove.hits.next = Rect::new(next_x, area.y, 4.min(area.right() - next_x), 1);
     }
-    let spans: Vec<Span> = lead.into_iter().chain(middle).chain(tail).collect();
+    let mut spans: Vec<Span> = lead.into_iter().chain(middle).chain(tail).collect();
+    // With the keys taken from the list in front, the strip says what they
+    // do now and how to give them back, at its right end: the footer below
+    // it is the list's, and its keys are not the strip's.
+    if grove.focus == Focus::Column && grove.front.is_some() {
+        let used: usize = spans.iter().map(|s| text_width(&s.content)).sum();
+        let hints = strip_hints(area.width as usize - used.min(area.width as usize));
+        let hints_width: usize = hints.iter().map(|s| text_width(&s.content)).sum();
+        if hints_width > 0 {
+            let gap = area.width as usize - used - hints_width;
+            spans.push(Span::raw(" ".repeat(gap)));
+            spans.extend(hints);
+        }
+    }
     let background = match focused {
         true => highlight_bg(),
         false => surface(),
@@ -449,6 +462,36 @@ fn render_strip(f: &mut Frame, area: Rect, grove: &mut Grove) {
             .style(Style::new().bg(background)),
         area,
     );
+}
+
+/// The column's hints that fit in `room` cells, the way back to the list
+/// first, each a key of `COLUMN_HINTS`, and a cell to spare at the end.
+fn strip_hints(room: usize) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut used = 1;
+    for want in ["⏎", "tab", "X", "w"] {
+        let Some(&(key, label)) = COLUMN_HINTS.iter().find(|(k, _)| *k == want) else {
+            continue;
+        };
+        let needs = 2 + text_width(key) + 1 + text_width(label);
+        if used + needs > room {
+            break;
+        }
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            key,
+            Style::new().fg(hint_key()).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {label}"),
+            Style::new().fg(text_muted()),
+        ));
+        used += needs;
+    }
+    if !spans.is_empty() {
+        spans.push(Span::raw(" "));
+    }
+    spans
 }
 
 /// The home pane, with no project in front: the wordmark, then the grove
