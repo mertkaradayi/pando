@@ -30,6 +30,7 @@ have.
 ```bash
 pando status --json          # what is running, on which ports, with which URL
 pando ls --json              # the worktrees and their git state
+pando ls --all --json        # every project on this machine, from any directory
 pando logs <name> --json     # one JSON object per line
 pando new <branch>
 pando start <name> --wait    # blocks until ready; without it, exit 0 is only "spawned"

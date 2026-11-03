@@ -27,6 +27,12 @@ may change behaviour.
   asks first when it would abandon work in another project. Under 72
   columns the column folds to one line above the list. With one project
   known it stays hidden until `w`.
+- The grove's layout is the developer's, saved in `~/.pando/config.toml`
+  by the key that changes it, as `,` saves the list's order: `[ui] grove`
+  (`auto`, `on`, `off`) by `w`, `grove_width` by `{` `}`, and the detail
+  pane's placement, `detail` (`right`, `bottom`, `off`), by `|` and its
+  share, `detail_size` in percent, by `<` `>`. With nothing set the
+  screen is what it was.
 - `pando` outside any repository opens the grove instead of failing:
   every project pando knows, drawn as the brand's grove with a stem for
   each, in leaf when something of it is up.

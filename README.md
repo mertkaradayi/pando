@@ -318,14 +318,15 @@ isolation brings — which services to run private copies of.
 ## Commands
 
 ```
-pando                 open the TUI for the repo you are in
+pando                 open the TUI for the repo you are in; outside one, the
+                      grove of every project pando knows
 pando new <branch>    create a worktree and branch from the default base
 pando start <name>    start its dev server; --isolated for private services,
                       --namespaced (experimental) for its own database in yours
 pando stop [name]     stop one worktree, or the main checkout; --all for every one
 pando restart <name>  stop and start again, keeping the ports
 pando ls              list the main checkout and the worktrees: status, URL,
-                      ports, git; -l for paths
+                      ports, git; -l for paths, --all for every project
 pando rm <name>       stop everything, remove the worktree, wipe its data
 pando share <name>    expose it at a public URL
 pando unshare <name>  take the public URL down
@@ -460,6 +461,59 @@ process's when there are several. `1`–`9` switch tabs, `/` searches, `f`
 filters by level, and `e`/`E` jump between errors.
 
 </details>
+
+### Every project: the grove
+
+Pando is one aspen, many stems over one root. The grove carries that up a
+level: every project pando knows on this machine, in one TUI. Once it knows
+two, a column left of the worktrees lists them, the ones with something up
+first, each a stem standing on one root line that lights while anything
+runs:
+
+```text
+╭ pando ──────── ● 2 ✗ 1 ╮
+│▸ ┃● shop              2│   ● up, with how many    ✗ failed
+│  ┃✗ api              ✗1│   │ idle                 ╎ moved: its repository
+│  │  docs               │                            is not where it was
+│  ╎  old           moved│
+│╺━┻━━━━━━━━━━━━━━━━━━━━╸│
+╰────────────────────────╯
+```
+
+Right of it is the TUI of the project in front, exactly as it is when
+pando runs in that project alone. A project opened stays open while
+another is in front, so a start begun in one finishes while you look at
+the next, and `q` asks first when quitting would abandon it. `pando`
+outside any repository opens the grove with no project in front: the
+brand's grove, one stem per project, its name under it, the running ones
+in leaf. `pando ls --all` prints the same from any directory, and
+`--json` is a [published shape](agent/json.md).
+
+```
+[ ]      bring the previous / next project to the front
+←        to the column: j k move, ⏎ or → opens one, tab or esc goes back
+X        in the column: stop everything up in that project (asks first,
+         naming each worktree)
+w        show or hide the column
+{ }      narrow / widen the column
+|        the detail pane right of the list, under it, or hidden
+< >      a smaller / bigger detail pane
+```
+
+Each of these saves itself in `~/.pando/config.toml`, the way `,` saves
+the list's order, so the screen comes back as you left it:
+
+```toml
+[ui]
+grove = "auto"        # "on" or "off"; "auto" shows the column for two projects or more
+grove_width = 26      # 18 to 40 cells
+detail = "right"      # "bottom", or "off"; "right" stacks under the list when narrow
+detail_size = 40      # the detail pane's share, 20 to 80 percent
+```
+
+Under 72 columns the column folds to one line above the list,
+`[ ◀ ● shop · 2 up · 1/4 ▶ ]`, and a click on `[` or `]` steps through
+the projects.
 
 ### Several repositories
 
@@ -676,6 +730,7 @@ theme = "catppuccin"
 # theme_from = "~/.config/theme-switcher/current"
 # sort = "run"                   # the list's order: "pr", "newest", "run" or "name"
 # mouse = false                  # leave the mouse to the terminal
+# grove = "off"                  # the column of every project: "auto", "on" or "off"
 ```
 
 `theme_from` names a file whose first line is a theme's name, such as
