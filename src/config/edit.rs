@@ -18,7 +18,7 @@ use toml_edit::{DocumentMut, Item, RawString, Table as EditTable, Value};
 pub fn write(paths: &PandoPaths, config: &Config) -> Result<()> {
     paths.ensure_home()?;
     let text = toml::to_string_pretty(config).context("serialize pando.toml")?;
-    write_private_atomic(&paths.config_file(), &text)
+    crate::paths::write_private_atomic(&paths.config_file(), &text, CONFIG_MODE)
 }
 
 /// Which of the files pando may write an answer to.
@@ -194,7 +194,7 @@ where
     if existing.as_deref() == Some(rendered.as_str()) {
         return Ok(());
     }
-    write_private_atomic(&path, &rendered)
+    crate::paths::write_private_atomic(&path, &rendered, CONFIG_MODE)
 }
 
 /// Writes one key with the note explaining where it came from. The
@@ -637,37 +637,4 @@ fn written_through(path: &Path, root: &Path) -> Result<PathBuf> {
     crate::paths::ensure_outside_repository("the config", &target, root, &[])
         .with_context(|| format!("{} is a link to {}", path.display(), target.display()))?;
     Ok(target)
-}
-
-/// Atomic, and 0600: the temp file is created 0600, so there is never a
-/// moment where a world-readable config exists at the final path.
-///
-/// The temp file is this writer's own, named for the process and a
-/// counter. With one shared name, a second writer truncated the file the
-/// first was about to rename, or renamed it away before the first could,
-/// and a command failed on a config nothing was wrong with.
-fn write_private_atomic(path: &Path, text: &str) -> Result<()> {
-    use std::io::Write;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let tmp = path.with_file_name(format!(
-        ".{name}.{}.{}.tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let written = crate::platform::files::create_new(&tmp, CONFIG_MODE)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
-        .with_context(|| format!("write {}", tmp.display()))
-        .and_then(|()| {
-            std::fs::rename(&tmp, path)
-                .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))
-        });
-    if written.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    written
 }

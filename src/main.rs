@@ -147,6 +147,12 @@ fn run(cli: Cli) -> Result<()> {
     // Once, before dispatch: every command shares the same home, so a home
     // in the working tree is worth refusing even on a read-only command.
     actions::guard_write_locations(&paths, &loaded.config)?;
+    // Where this repository is, for `ls --all` and Grove: a project pando
+    // made a directory for before the registry existed is registered by
+    // whatever runs in it next, a read included. Never a directory made
+    // for it — that is the first write's, `ensure_home`'s, which registers
+    // it too.
+    let _ = project::remember(&paths.project_dir(), &paths.project);
     match cli.command {
         Some(command) => {
             // A command that waits for another pando's lock says so, once,

@@ -3368,6 +3368,9 @@ fn init_agent_after_a_failed_check_starts_with_the_failure() {
         "Error: Cannot find module 'dotenv'".to_string(),
     ];
     record.save(&paths).unwrap();
+    // Registered, as every run in a project makes it: what is held here is
+    // that reading the record writes nothing of its own.
+    pando::project::remember(&paths.project_dir(), &paths.project).unwrap();
     let before = contents(&e.home);
 
     let out = e.pando(&["init", "--agent"]);

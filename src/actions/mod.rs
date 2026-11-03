@@ -14,7 +14,8 @@
 //! trying pando's own guess for the setup screen, and the git menu's
 //! moves, which callers name as `actions::git::…` because `read` and
 //! `run` alone would say nothing, and `pando update`, which updates pando
-//! itself the way it was installed.
+//! itself the way it was installed, and every project on the machine,
+//! read from the home alone.
 
 mod app_config;
 mod check;
@@ -25,6 +26,7 @@ mod hooks;
 mod init;
 mod installed;
 mod lifecycle;
+mod machine;
 mod namespaced;
 mod opening;
 mod questions;
@@ -58,6 +60,7 @@ pub use lifecycle::{
     Mode, StartReport, StartedProcess, StopAllReport, StopOutcome, process_names,
     refuse_only_on_a_mode_change, restart, start, stop, stop_all, stop_all_listed, stop_all_with,
 };
+pub use machine::{checkout_root, recorded_roots, recover_registry, worktrees_in_project_dir};
 pub use namespaced::{
     Leftover, NamespacedAnswer, NamespacedService, PlanRow, Prefixed, login_question,
     namespace_leftovers, namespace_lines, namespace_login, namespace_plan_rows,
