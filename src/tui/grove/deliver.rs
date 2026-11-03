@@ -240,6 +240,12 @@ impl Grove {
     fn handle_mouse(&mut self, mouse: MouseEvent) -> bool {
         let at = Position::new(mouse.column, mouse.row);
         if !self.hits.column.contains(at) {
+            // A press on the project in front gives it the keys, as `tab`
+            // does: the row clicked is the one `s` then starts.
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && self.front.is_some()
+            {
+                self.focus = Focus::List;
+            }
             return self.send_front(AppEvent::Input(Event::Mouse(mouse)));
         }
         match mouse.kind {

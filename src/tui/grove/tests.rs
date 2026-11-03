@@ -341,6 +341,30 @@ fn a_click_right_of_the_column_lands_on_the_front_app() {
     assert_eq!(grove.open_requests, vec![id_of("docs")]);
 }
 
+// A click on the project in front gives its list the keys: `j` after
+// clicking a row moves the list, not the column's cursor.
+#[test]
+fn a_click_on_the_front_project_gives_it_the_keys() {
+    let mut grove = a_grove();
+    draw(&mut grove, 120, 30);
+    grove.focus = Focus::Column;
+    let (rect, _) = grove
+        .front_app()
+        .unwrap()
+        .hits
+        .list
+        .clone()
+        .expect("the list is drawn");
+    click(&mut grove, rect.x + 2, rect.y);
+    assert_eq!(grove.focus, Focus::List);
+    press(&mut grove, KeyCode::Char('j'));
+    assert_eq!(grove.cursor, 0, "the column's cursor stays");
+    // A press in the column keeps it there.
+    let (row, _) = grove.hits.rows[1];
+    click(&mut grove, row.x + 3, row.y);
+    assert_eq!(grove.focus, Focus::Column);
+}
+
 // ---- keys ------------------------------------------------------------
 
 #[test]
