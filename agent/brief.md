@@ -843,6 +843,7 @@ it changes.
 pando status --json              # what is running, on which ports, with which URL
 pando status <name> --json       # one worktree
 pando ls --json                  # the worktrees and their git state
+pando ls --all --json            # every project on this machine, from any directory
 pando logs <name> --json         # a log, one JSON object per line
 pando logs <name> --source <s> --json
 pando new <branch>               # create a worktree

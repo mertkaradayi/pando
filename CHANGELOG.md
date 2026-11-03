@@ -7,6 +7,20 @@ may change behaviour.
 
 ## Unreleased
 
+### Added
+
+- `pando ls --all` lists every project pando knows on this machine, from
+  any directory, inside a repository or not: the ones with something up
+  first, each with what it has up, starting, failed and stopped, its
+  live worktrees' processes and ports, and a port two projects claim
+  marked. `--json` is a published shape, documented in `agent/json.md`.
+  It reads each project's state the way `status` does and saves
+  nothing.
+- Each project's directory under pando's home records where its
+  repository is, in `project.json`, written when pando runs there. A
+  project pando ran in before is recovered from the checkouts its state
+  records, and one whose repository has moved is listed as moved.
+
 ## 0.11.2 — 2026-10-31
 
 ### Added

@@ -286,7 +286,7 @@ pub(super) fn phase_word(phase: &Phase) -> &'static str {
     }
 }
 
-fn phase_since(phase: &Phase) -> DateTime<Utc> {
+pub(super) fn phase_since(phase: &Phase) -> DateTime<Utc> {
     match phase {
         Phase::Starting { since } | Phase::Running { since } => *since,
         Phase::Failed { at, .. } => *at,

@@ -18,6 +18,7 @@ mod doctor;
 mod each;
 mod logs;
 mod ls;
+mod machine;
 mod names;
 mod open;
 mod prompt;
@@ -45,6 +46,7 @@ pub use answers::{
 pub use doctor::{adopt_project, doctor};
 pub use logs::logs;
 pub use ls::{Col, LsView, keep_columns, ls_json, ls_text, ls_text_at, ls_text_with};
+pub use machine::{ls_machine, ls_machine_json, ls_machine_text_with};
 pub use signals::signals_json;
 pub use status::{status_json, status_text, status_text_at};
 pub use update::update;
@@ -128,11 +130,16 @@ Examples:
     /// first, and the name, status and URL stay. MODE appears once a
     /// worktree runs isolated services, PUBLIC once one is shared, and
     /// BRANCH only for a worktree not named for its branch.
+    ///
+    /// With --all, every project pando knows on this machine instead,
+    /// from any directory: the live ones first, each with what it has up,
+    /// and a port two projects claim marked.
     #[command(after_help = "\
 Examples:
   pando ls           the table
   pando ls -l        with each worktree's commit and path
-  pando ls --json    the documented machine-readable shape")]
+  pando ls --json    the documented machine-readable shape
+  pando ls --all     every project on this machine, from anywhere")]
     #[command(display_order = 8)]
     Ls {
         /// The documented machine-readable shape, for scripts and agents.
@@ -141,10 +148,13 @@ Examples:
         /// Add each worktree's commit and its path.
         #[arg(short, long, conflicts_with = "json")]
         long: bool,
+        /// Every project pando knows on this machine, from any directory.
+        #[arg(short, long)]
+        all: bool,
         /// Worktree names, one per line, for shell completion.
         ///
         /// Not a documented shape.
-        #[arg(long, hide = true, conflicts_with_all = ["json", "long"])]
+        #[arg(long, hide = true, conflicts_with_all = ["json", "long", "all"])]
         names: bool,
     },
     /// Remove worktrees and wipe their pando data. The branches are kept.
@@ -712,7 +722,17 @@ pub fn dispatch(command: Command, paths: &PandoPaths, config: &Config) -> Result
             hint(&format!("`pando start {branch}` starts it"));
             Ok(())
         }
-        Command::Ls { json, long, names } => {
+        Command::Ls {
+            json,
+            long,
+            all,
+            names,
+        } => {
+            // `main` takes this before it looks for a repository; here
+            // for a caller that already found one.
+            if all {
+                return ls_machine(&paths.home, json, long, &mut out);
+            }
             if names {
                 return completion::names(paths, &mut out);
             }

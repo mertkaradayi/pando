@@ -114,6 +114,17 @@ fn run(cli: Cli) -> Result<()> {
     // `.pando` looks like it is outside the repository until the moment it
     // is created inside it.
     let home = cwd.join(default_home());
+    // Every project on the machine is about the home, not about any
+    // repository: from anywhere, and with nothing to load or guard.
+    if let Some(pando::cli::Command::Ls {
+        all: true,
+        json,
+        long,
+        ..
+    }) = cli.command
+    {
+        return pando::cli::ls_machine(&home, json, long, &mut pando::cli::Stdout);
+    }
     let project = project::discover(&cwd, &home)?;
     let mut paths = PandoPaths::new(home, project);
     // `new`, `start`, `restart` and the TUI act on `pando.toml`; nothing

@@ -475,6 +475,7 @@ fn every_machine_readable_shape_carries_its_version() {
 
     for args in [
         vec!["ls", "--json"],
+        vec!["ls", "--all", "--json"],
         vec!["status", "--json"],
         vec!["signals"],
         // Whose exit code is a verdict about the machine, not about the
