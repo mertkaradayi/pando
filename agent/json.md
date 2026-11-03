@@ -705,7 +705,10 @@ projects pando ports separately can be given the same one. pando shows
 a clash and never resolves it.
 
 The read is a reader's: phases are advanced on a copy as `status` would
-advance them, and nothing is saved, signalled, or locked. The one write
+advance them, and nothing is saved or signalled. No lock is waited for
+or made: a project's state lock that is already there is held for the
+moment of the read when it is free, as every reader holds it; while
+another pando holds it, nothing that died is called dead. The one write
 is a project's registry, when a project pando ran in before there were
 registries is listed for the first time: its root is worked out from the
 checkouts its state records, and written down.
