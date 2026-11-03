@@ -67,6 +67,7 @@ pub fn render_grove(f: &mut Frame, grove: &mut Grove) {
     match front.and_then(|id| grove.open.get_mut(&id)) {
         Some(opened) => {
             opened.app.grove_chrome = shown && wide;
+            opened.app.detail = grove.detail;
             render_in(f, rest, &mut opened.app);
         }
         None => render_home(f, rest, grove),
@@ -101,6 +102,9 @@ struct RowLook {
     stem: (char, Color),
     glyph: (&'static str, Color),
     name: Color,
+    /// A project with something up or failed is named in bold: a theme
+    /// whose dim text is its text still tells it from an idle one.
+    bold: bool,
     count: Vec<Span<'static>>,
 }
 
@@ -119,7 +123,9 @@ fn row_look(grove: &Grove, summary: &ProjectSummary) -> RowLook {
     };
     let stem = match () {
         _ if summary.moved => ('╎', text_muted()),
-        _ if live || summary.failed > 0 => ('┃', text()),
+        _ if live => ('┃', text()),
+        // As the home pane draws a failed project's trunk.
+        _ if summary.failed > 0 => ('┃', red()),
         _ => ('│', text_dim()),
     };
     let name = match () {
@@ -150,6 +156,7 @@ fn row_look(grove: &Grove, summary: &ProjectSummary) -> RowLook {
         stem,
         glyph,
         name,
+        bold: !summary.moved && (live || summary.failed > 0),
         count,
     }
 }
@@ -160,39 +167,15 @@ fn row_look(grove: &Grove, summary: &ProjectSummary) -> RowLook {
 fn render_column(f: &mut Frame, area: Rect, grove: &mut Grove) {
     grove.hits.column = area;
     let focused = grove.focus == Focus::Column || grove.front.is_none();
-    let mut title = vec![Span::styled(
-        " pando ",
-        Style::new().fg(blue()).add_modifier(Modifier::BOLD),
-    )];
-    // The build's branch, without the separator the header puts after it.
-    if let Some(label) = build_label_spans(crate::version::label())
-        .into_iter()
-        .next()
-    {
-        title.push(label);
-        title.push(Span::raw(" "));
-    }
     let (up, failed) = grove.summaries.iter().fold((0, 0), |(up, failed), s| {
         (up + s.up + s.starting, failed + s.failed)
     });
-    let mut tally = Vec::new();
-    if up > 0 {
-        tally.push(Span::styled(format!(" ● {up}"), Style::new().fg(green())));
-    }
-    if failed > 0 {
-        tally.push(Span::styled(
-            format!(" ✗ {failed}"),
-            Style::new().fg(red()).add_modifier(Modifier::BOLD),
-        ));
-    }
-    if !tally.is_empty() {
-        tally.push(Span::raw(" "));
-    }
+    let (title, tally) = column_title(area.width, crate::version::label(), up, failed);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(if focused { blue() } else { border() }))
-        .title_top(Line::from(title))
-        .title_top(Line::from(tally).right_aligned());
+        .title_top(title)
+        .title_top(tally);
     let inner = block.inner(area);
     f.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -245,6 +228,66 @@ fn render_column(f: &mut Frame, area: Rect, grove: &mut Grove) {
     f.render_widget(Paragraph::new(root_line(width, alive)), root_area);
 }
 
+/// The column's top border: pando's name, the build's branch when this
+/// is not a release, and what is up and failed on the whole machine at
+/// its right. The branch gives way to the tally, shortened with `…`, and
+/// goes when not even its first letter fits: the tally is the news.
+pub(crate) fn column_title(
+    width: u16,
+    label: Option<&str>,
+    up: usize,
+    failed: usize,
+) -> (Line<'static>, Line<'static>) {
+    let tally_of = |gap: &str| {
+        let mut tally = Vec::new();
+        if up > 0 {
+            tally.push(Span::styled(
+                format!(" ●{gap}{up}"),
+                Style::new().fg(green()),
+            ));
+        }
+        if failed > 0 {
+            tally.push(Span::styled(
+                format!(" ✗{gap}{failed}"),
+                Style::new().fg(red()).add_modifier(Modifier::BOLD),
+            ));
+        }
+        if !tally.is_empty() {
+            tally.push(Span::raw(" "));
+        }
+        let width: usize = tally.iter().map(|s| text_width(&s.content)).sum();
+        (tally, width)
+    };
+    let name = " pando ";
+    // Two corners, the name, a cell of border before the tally: spaced
+    // out where that fits, tight where it does not, and pando's name
+    // given up only when not even that does.
+    let fits = |tally: usize| text_width(name) + tally + 3 <= usize::from(width);
+    let (mut tally, mut tally_width) = tally_of(" ");
+    if !fits(tally_width) {
+        (tally, tally_width) = tally_of("");
+    }
+    if !fits(tally_width) {
+        return (Line::default(), Line::from(tally).right_aligned());
+    }
+    let mut title = vec![Span::styled(
+        name,
+        Style::new().fg(blue()).add_modifier(Modifier::BOLD),
+    )];
+    // Two corners, the name, a cell of border before the tally and
+    // after the branch.
+    let room = usize::from(width).saturating_sub(2 + text_width(name) + tally_width + 2);
+    // The build's branch, without the separator the header puts after it.
+    if let Some(label) = build_label_spans(label).into_iter().next()
+        && room >= 4
+    {
+        let short = truncate(&label.content, room - 1);
+        title.push(Span::styled(short, label.style));
+        title.push(Span::raw(" "));
+    }
+    (Line::from(title), Line::from(tally).right_aligned())
+}
+
 /// One project's row: ` ▸┃● name      2`, the cursor's on a band.
 fn column_row(
     grove: &Grove,
@@ -267,17 +310,27 @@ fn column_row(
         cursor,
         Span::styled(look.stem.0.to_string(), Style::new().fg(look.stem.1)),
         Span::styled(look.glyph.0, Style::new().fg(look.glyph.1)),
-        Span::styled(name, Style::new().fg(look.name)),
+        Span::styled(name, name_style(&look)),
         Span::raw(" ".repeat(gap)),
     ];
     spans.extend(look.count);
     let line = Line::from(spans);
-    let band = match (selected, focused) {
-        (true, true) => Style::new().bg(highlight_bg()).add_modifier(Modifier::BOLD),
-        (true, false) => Style::new().bg(highlight_bg()),
-        (false, _) => Style::new(),
+    // The band says where the cursor is, focused or not; the cursor's
+    // colour says whether the column has the keys. Bold stays the name's,
+    // so a selected idle project still reads as idle.
+    let band = match selected {
+        true => Style::new().bg(highlight_bg()),
+        false => Style::new(),
     };
     Paragraph::new(line).style(band)
+}
+
+fn name_style(look: &RowLook) -> Style {
+    let style = Style::new().fg(look.name);
+    match look.bold {
+        true => style.add_modifier(Modifier::BOLD),
+        false => style,
+    }
 }
 
 /// The column's keys while it has them, as many rows as they take.
@@ -533,10 +586,11 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
         _ if alive => "one root, every project alive",
         _ => "Pando: one aspen, 47,000 stems, one root. Every project, every branch alive.",
     };
+    let caption = truncate(caption, art_width.max(1));
     lines.push(Line::from(vec![
-        Span::raw(" ".repeat(left)),
+        Span::raw(" ".repeat(width.saturating_sub(text_width(&caption)) / 2)),
         Span::styled(
-            truncate(caption, art_width.max(1)),
+            caption,
             Style::new()
                 .fg(if alive { green() } else { text_muted() })
                 .add_modifier(Modifier::ITALIC),
@@ -547,7 +601,6 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
         |k: &'static str| Span::styled(k, Style::new().fg(orange()).add_modifier(Modifier::BOLD));
     let said = |s: &'static str| Span::styled(s, Style::new().fg(text_dim()));
     let keys = vec![
-        Span::raw(" ".repeat(left)),
         key("⏎"),
         said(" open  "),
         key("j k"),
@@ -557,11 +610,15 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
         key("q"),
         said(" quit"),
     ];
-    lines.push(super::truncate_line(Line::from(keys), width));
+    let keys_width: usize = keys.iter().map(|s| text_width(&s.content)).sum();
+    let mut centred = vec![Span::raw(" ".repeat(width.saturating_sub(keys_width) / 2))];
+    centred.extend(keys);
+    lines.push(super::truncate_line(Line::from(centred), width));
     if let Some(note) = grove.fresh_note() {
+        let note = truncate(note, art_width.max(1));
         lines.push(Line::from(vec![
-            Span::raw(" ".repeat(left)),
-            Span::styled(truncate(note, art_width.max(1)), Style::new().fg(yellow())),
+            Span::raw(" ".repeat(width.saturating_sub(text_width(&note)) / 2)),
+            Span::styled(note, Style::new().fg(yellow())),
         ]));
     }
     // Centred top to bottom in what is left.

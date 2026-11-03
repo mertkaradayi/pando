@@ -118,7 +118,8 @@ pub fn label_stems(stems: &[usize], labels: &[String], width: usize) -> Vec<(usi
 }
 
 /// One label under each stem, in order, left-aligned there and cut with
-/// `…` to the room before the next stem: label `i` is always stem `i`'s,
+/// `…` to the room before the next stem, two cells short of it so two
+/// names never read as one: label `i` is always stem `i`'s,
 /// unlike [`label_stems`], which moves a long label to a later stem. A
 /// stem with no room for one character and the `…` gets no label.
 pub fn label_each_stem(stems: &[usize], labels: &[String], width: usize) -> Vec<(usize, String)> {
@@ -129,7 +130,7 @@ pub fn label_each_stem(stems: &[usize], labels: &[String], width: usize) -> Vec<
         .filter_map(|(i, (&x, label))| {
             let end = stems
                 .get(i + 1)
-                .map_or(width, |&next| next.saturating_sub(1));
+                .map_or(width, |&next| next.saturating_sub(2));
             let room = end.saturating_sub(x);
             let length = label.chars().count();
             let fitted = match () {

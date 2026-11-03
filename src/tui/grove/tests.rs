@@ -943,3 +943,99 @@ fn the_column_is_as_wide_as_it_was_set() {
     draw(&mut grove, 76, 24);
     assert_eq!(grove.hits.column.width, 38, "half of a narrow screen");
 }
+
+// Every state of a row reads apart in every built-in theme, either half,
+// by more than a colour a theme may not keep apart: the cursor's band,
+// the stem's weight and glyph, and bold for a project that has something
+// to say. Tokyo Night's light half draws dim text in its text colour.
+/// Where a row's stem is drawn: inside the border, after the cursor.
+const STEM_X: u16 = 3;
+
+#[test]
+fn every_row_state_reads_apart_in_every_theme() {
+    use crate::theme::{Appearance, BUILT_IN, Source, Theme};
+    use ratatui::style::Modifier;
+    for (name, text) in BUILT_IN {
+        let theme = Theme::parse(name, text, Source::BuiltIn).unwrap();
+        for appearance in [Appearance::Dark, Appearance::Light] {
+            let palette = theme.palette(appearance);
+            crate::theme::set_palette(palette);
+            let mut grove = a_grove();
+            grove.focus = Focus::Column;
+            grove.cursor = 2; // docs, idle
+            let buf = draw(&mut grove, 100, 20);
+            let at = |name: &str| {
+                let y = (1..6)
+                    .find(|&y| cells(&buf, y, 0, COLUMN_WIDTH).contains(name))
+                    .unwrap();
+                let x = (0..COLUMN_WIDTH)
+                    .find(|&x| buf[(x, y)].symbol() == name.chars().next().unwrap().to_string())
+                    .unwrap();
+                (x, y)
+            };
+            let says = format!("{name} {appearance:?}");
+            // The cursor's band, and only its row.
+            let (docs_x, docs_y) = at("docs");
+            assert_eq!(buf[(docs_x, docs_y)].bg, palette.highlight_bg, "{says}");
+            let (shop_x, shop_y) = at("shop");
+            assert_ne!(buf[(shop_x, shop_y)].bg, palette.highlight_bg, "{says}");
+            // Something up or failed is bold; idle and moved are not.
+            let bold = |(x, y): (u16, u16)| buf[(x, y)].modifier.contains(Modifier::BOLD);
+            assert!(bold(at("shop")) && bold(at("api")), "{says}");
+            assert!(!bold(at("docs")) && !bold(at("old")), "{says}");
+            // Each state its own stem, and a failed one red, not the
+            // trunk's colour.
+            let stem = |y: u16| buf[(STEM_X, y)].clone();
+            let stems: Vec<String> = [shop_y, at("api").1, docs_y, at("old").1]
+                .iter()
+                .map(|&y| stem(y).symbol().to_string())
+                .collect();
+            assert_eq!(stems, ["┃", "┃", "│", "╎"], "{says}");
+            assert_eq!(stem(at("api").1).fg, palette.red, "{says}");
+            assert_ne!(palette.red, palette.text, "{says}");
+            assert_ne!(palette.red, palette.green, "{says}");
+            // The pane with the keys has the blue border and a blue
+            // cursor; without them, neither.
+            assert_eq!(buf[(0, 0)].fg, palette.blue, "{says}");
+            assert_eq!(buf[(1, docs_y)].fg, palette.blue, "{says}");
+            grove.focus = Focus::List;
+            let buf = draw(&mut grove, 100, 20);
+            assert_eq!(buf[(0, 0)].fg, palette.border, "{says}");
+            assert_ne!(buf[(1, docs_y)].fg, palette.blue, "{says}");
+            assert_eq!(buf[(docs_x, docs_y)].bg, palette.highlight_bg, "{says}");
+        }
+    }
+}
+
+// The column's border makes room for what is up before the build's
+// branch, which shortens and then goes.
+#[test]
+fn the_columns_title_keeps_the_tally_and_shortens_the_branch() {
+    let label = Some("feat/grove@abc1234");
+    let text = |line: &ratatui::text::Line| line.to_string();
+    let (title, tally) = crate::tui::render::column_title(40, label, 2, 1);
+    assert_eq!(text(&title), " pando ⎇ feat/grove@abc12… ");
+    assert_eq!(text(&tally), " ● 2 ✗ 1 ");
+    let (title, _) = crate::tui::render::column_title(26, label, 2, 1);
+    assert_eq!(text(&title), " pando ⎇ fe… ");
+    let (title, _) = crate::tui::render::column_title(COLUMN_MIN_WIDTH, label, 2, 1);
+    assert_eq!(text(&title), " pando ");
+    // Nothing up: the branch has the room, and no tally is drawn.
+    let (title, tally) = crate::tui::render::column_title(26, label, 0, 0);
+    assert_eq!(text(&title), " pando ⎇ feat/grove@… ");
+    assert_eq!(text(&tally), "");
+    // Tight when spaced out does not fit.
+    let (title, tally) = crate::tui::render::column_title(COLUMN_MIN_WIDTH, label, 12, 3);
+    assert_eq!(
+        (text(&title), text(&tally)),
+        (" pando ".into(), " ●12 ✗3 ".into())
+    );
+    // Every one fits its border: corners, title, a cell, tally.
+    for width in COLUMN_MIN_WIDTH..=COLUMN_MAX_WIDTH {
+        let (title, tally) = crate::tui::render::column_title(width, label, 12, 3);
+        assert!(
+            title.width() + tally.width() + 3 <= usize::from(width),
+            "{width}: {title} {tally}"
+        );
+    }
+}

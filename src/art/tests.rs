@@ -282,7 +282,7 @@ fn each_stem_keeps_its_own_label_cut_to_the_room() {
         placed,
         vec![
             (2, "shop".to_string()),
-            (10, "a-very-l…".to_string()),
+            (10, "a-very-…".to_string()),
             (20, "api".to_string()),
         ]
     );
