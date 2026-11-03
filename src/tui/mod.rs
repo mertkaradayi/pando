@@ -151,6 +151,10 @@ fn main_loop(terminal: &mut ratatui::DefaultTerminal, grove: &mut Grove) -> Resu
     let tick_waiting = Arc::new(AtomicBool::new(false));
     spawn_tick_thread(grove.tx.clone(), Arc::clone(&tick_waiting));
     grove.poke = Some(grove::spawn_summaries(grove.home.clone(), grove.tx.clone()));
+    grove.saver = Some(grove::spawn_layout_saver(
+        grove.home.clone(),
+        grove.tx.clone(),
+    ));
 
     terminal.draw(|f| render::render_grove(f, grove))?;
     let mut mouse = follow_mouse(false, grove.wants_mouse());

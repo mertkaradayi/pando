@@ -197,6 +197,16 @@ pub const GROVE_KEYS: &[KeyHelp] = &[
         &[KeyCode::Char('{'), KeyCode::Char('}')],
         "narrow / widen the column",
     ),
+    key(
+        "|",
+        &[KeyCode::Char('|')],
+        "the detail pane right of the list, under it, or hidden",
+    ),
+    key(
+        "< >",
+        &[KeyCode::Char('<'), KeyCode::Char('>')],
+        "a smaller / bigger detail pane",
+    ),
     key("←", &[KeyCode::Left], "to the column"),
 ];
 
@@ -247,6 +257,11 @@ pub const COLUMN_KEYS: &[KeyHelp] = &[
         "{ }",
         &[KeyCode::Char('{'), KeyCode::Char('}')],
         "narrow / widen the column",
+    ),
+    key(
+        "| < >",
+        &[KeyCode::Char('|'), KeyCode::Char('<'), KeyCode::Char('>')],
+        "place / resize the detail pane",
     ),
     key("?", &[KeyCode::Char('?')], "this help"),
     key("q", &[KeyCode::Char('q')], "quit"),

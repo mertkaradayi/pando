@@ -65,9 +65,10 @@ pub fn load_without_home(paths: &PandoPaths) -> Loaded {
 /// everywhere else.
 pub fn user_ui(home: &Path) -> super::UiSection {
     let mut warnings = Vec::new();
-    read_table(&home.join("config.toml"), &mut warnings)
+    read_table(&home.join(crate::paths::USER_CONFIG_FILE), &mut warnings)
         .and_then(|mut table| table.remove("ui"))
         .and_then(|ui| ui.try_into().ok())
+        .filter(|ui| super::validate::validate_layout(ui).is_ok())
         .unwrap_or_default()
 }
 

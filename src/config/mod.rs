@@ -28,16 +28,17 @@ mod suggest;
 mod validate;
 
 pub use edit::{
-    Layer, Note, declared_below, install_origin, patch, prelude_origin, remove_keys,
+    Layer, Note, declared_below, install_origin, patch, patch_user, prelude_origin, remove_keys,
     services_origin, set_detected, set_detected_array_entry, set_detected_table, write,
 };
 pub use layers::{Loaded, load, load_without_home, user_ui};
 pub use redact::{HIDDEN, hide_passwords, is_password};
 pub use schema::{
-    BranchRule, BranchesSection, Config, HookConfig, HookPoint, HookScope, ISOLATION_KINDS,
-    IsolationSection, LIST_SORTS, LoginConfig, PortsSpec, ProbeConfig, ProcessConfig,
-    ProjectSection, ProvisionMode, ReadySpec, ReposSection, RuntimeSection, ServiceConfig,
-    ShareSection, UiSection,
+    BranchRule, BranchesSection, Config, DETAIL_PLACEMENTS, DETAIL_SIZE_MAX, DETAIL_SIZE_MIN,
+    GROVE_MODES, GROVE_WIDTH_MAX, GROVE_WIDTH_MIN, HookConfig, HookPoint, HookScope,
+    ISOLATION_KINDS, IsolationSection, LIST_SORTS, LoginConfig, PortsSpec, ProbeConfig,
+    ProcessConfig, ProjectSection, ProvisionMode, ReadySpec, ReposSection, RuntimeSection,
+    ServiceConfig, ShareSection, UiSection,
 };
 pub use suggest::{KeyError, closest, edit_distance};
 pub use validate::validate;

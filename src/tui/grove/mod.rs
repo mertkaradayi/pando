@@ -22,11 +22,13 @@
 
 mod deliver;
 mod keys;
+mod layout;
 mod open;
 #[cfg(test)]
 mod tests;
 
 pub use keys::COLUMN_HINTS;
+pub use layout::{Saved, spawn_layout_saver};
 pub use open::spawn_summaries;
 
 use ratatui::crossterm::event::Event;
@@ -41,14 +43,14 @@ use crate::actions::ProjectSummary;
 use crate::config::UiSection;
 use crate::theme::{Resolved, Settings};
 
-use super::app::{App, AppEvent};
+use super::app::{App, AppEvent, DetailLayout};
 
 /// The column's width when nothing has changed it, and the narrowest and
 /// widest `{` and `}` take it: a name of sixteen cells beside its marks,
 /// and never so wide the project's own list is squeezed.
 pub const COLUMN_WIDTH: u16 = 26;
-pub const COLUMN_MIN_WIDTH: u16 = 18;
-pub const COLUMN_MAX_WIDTH: u16 = 40;
+pub const COLUMN_MIN_WIDTH: u16 = crate::config::GROVE_WIDTH_MIN;
+pub const COLUMN_MAX_WIDTH: u16 = crate::config::GROVE_WIDTH_MAX;
 
 /// How far one `{` or `}` moves the column's edge.
 pub const COLUMN_STEP: u16 = 2;
@@ -65,6 +67,8 @@ pub enum GroveEvent {
     Opened(String, Box<Result<App, String>>),
     /// One of an open app's own events, for that app.
     Project(String, AppEvent),
+    /// The layout could not be saved, and why.
+    NotSaved(String),
 }
 
 /// Where the keys go: the column, or the list of the project in front.
@@ -134,6 +138,10 @@ pub struct Grove {
     pub focus: Focus,
     pub shown: Shown,
     pub width: u16,
+    /// The detail pane of every project, as `|` and `<` `>` leave it.
+    pub detail: DetailLayout,
+    /// Saves each change of the layout, in order, on a worker.
+    pub saver: Option<Sender<Saved>>,
     pub confirm: Option<StopConfirm>,
     /// What the grove itself has to say: a project that could not be
     /// opened, a moved one. Shown on the home pane or the front app's
@@ -159,6 +167,9 @@ pub struct Grove {
     /// The projects a test asked to open, instead of opening them.
     #[cfg(test)]
     pub open_requests: Vec<String>,
+    /// What was saved, in order, when a test has no worker to save it.
+    #[cfg(test)]
+    pub saves: Vec<Saved>,
 }
 
 impl Grove {
@@ -166,6 +177,18 @@ impl Grove {
     pub fn new(home: PathBuf, ui: UiSection, summaries: Vec<ProjectSummary>) -> Self {
         let (tx, rx) = mpsc::channel();
         let theme_settings = Arc::new(Mutex::new(ui.theme_settings()));
+        // As the developer last left it; validation refused what it cannot
+        // draw, and a width is held to the range all the same.
+        let shown = ui
+            .grove
+            .as_deref()
+            .and_then(Shown::from_word)
+            .unwrap_or(Shown::Auto);
+        let width = ui
+            .grove_width
+            .unwrap_or(COLUMN_WIDTH)
+            .clamp(COLUMN_MIN_WIDTH, COLUMN_MAX_WIDTH);
+        let detail = DetailLayout::from_ui(&ui);
         Grove {
             home,
             ui,
@@ -176,8 +199,10 @@ impl Grove {
             opening: Vec::new(),
             stop_after_open: None,
             focus: Focus::Column,
-            shown: Shown::Auto,
-            width: COLUMN_WIDTH,
+            shown,
+            width,
+            detail,
+            saver: None,
             confirm: None,
             note: None,
             quit_armed: None,
@@ -192,6 +217,8 @@ impl Grove {
             rx: Some(rx),
             #[cfg(test)]
             open_requests: Vec::new(),
+            #[cfg(test)]
+            saves: Vec::new(),
         }
     }
 
@@ -200,6 +227,7 @@ impl Grove {
     pub fn adopt(&mut self, mut app: App, front: bool) {
         let id = app.paths.project.id.clone();
         app.in_grove = true;
+        app.detail = self.detail;
         app.theme.settings = Arc::clone(&self.theme_settings);
         if let Some(resolved) = &mut self.theme {
             app.adopt_theme(resolved.clone());

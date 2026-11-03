@@ -5,9 +5,9 @@
 
 use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
-use crate::tui::app::{AppEvent, Modal};
+use crate::tui::app::{AppEvent, DETAIL_STEP, Modal};
 
-use super::{COLUMN_MAX_WIDTH, COLUMN_MIN_WIDTH, COLUMN_STEP, Focus, Grove, Shown, StopConfirm};
+use super::{COLUMN_STEP, Focus, Grove, Shown, StopConfirm};
 
 /// The column's hints while it has the focus, most useful first: each a
 /// key `keymap::COLUMN_KEYS` documents, which a test holds it to.
@@ -57,6 +57,9 @@ impl Grove {
             KeyCode::Char(']') => self.step_project(1),
             KeyCode::Char('{') => self.resize_column(-(COLUMN_STEP as i32)),
             KeyCode::Char('}') => self.resize_column(COLUMN_STEP as i32),
+            KeyCode::Char('|') => self.cycle_detail(),
+            KeyCode::Char('<') => self.resize_detail(-(DETAIL_STEP as i32)),
+            KeyCode::Char('>') => self.resize_detail(DETAIL_STEP as i32),
             KeyCode::Left => {
                 if !self.column_shown() {
                     self.shown = Shown::On;
@@ -104,24 +107,6 @@ impl Grove {
     pub(super) fn move_cursor(&mut self, delta: isize) {
         let last = self.summaries.len().saturating_sub(1);
         self.cursor = self.cursor.saturating_add_signed(delta).min(last);
-    }
-
-    /// `w`: the column hidden, or shown again. Hidden, the keys go back
-    /// to the list.
-    fn toggle_column(&mut self) {
-        self.shown = match self.column_shown() {
-            true => Shown::Off,
-            false => Shown::On,
-        };
-        if !self.column_shown() && self.front.is_some() {
-            self.focus = Focus::List;
-        }
-    }
-
-    fn resize_column(&mut self, delta: i32) {
-        let width = (i32::from(self.width) + delta)
-            .clamp(i32::from(COLUMN_MIN_WIDTH), i32::from(COLUMN_MAX_WIDTH));
-        self.width = width as u16;
     }
 
     /// `[` and `]`: the previous or the next project that can be opened,

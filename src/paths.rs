@@ -228,7 +228,7 @@ impl PandoPaths {
     /// what it holds is a property of the machine — which version manager
     /// this shell needs initialised — and not of any one repository.
     pub fn user_config_file(&self) -> PathBuf {
-        self.home.join("config.toml")
+        self.home.join(USER_CONFIG_FILE)
     }
 
     /// The developer's own service and language recipes, merged over the
@@ -264,6 +264,10 @@ impl PandoPaths {
         Ok(())
     }
 }
+
+/// The user layer's file, under the home: how this machine runs every
+/// project, and how its developer likes the TUI.
+pub const USER_CONFIG_FILE: &str = "config.toml";
 
 /// The longest name an engine is assumed to give a socket inside its
 /// socket directory. Postgres's is `.s.PGSQL.65535.lock`, nineteen

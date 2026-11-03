@@ -21,7 +21,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 
-use super::app::{App, Hits};
+use super::app::{App, DetailLayout, DetailPlacement, Hits};
 
 use chrome::{header_height, render_footer, render_header};
 use detail::render_detail;
@@ -43,22 +43,40 @@ const STACK_MIN_LIST_HEIGHT: u16 = 5;
 
 const STACK_MIN_DETAIL_HEIGHT: u16 = 6;
 
-/// List and detail rects for the body: side by side when there is width for
-/// both, stacked when there is not. pando is used in a tmux split, so the
-/// narrow case is the normal one.
-pub fn body_layout(body: Rect) -> [Rect; 2] {
-    let stack = body.width < SIDE_BY_SIDE_MIN_WIDTH
-        && body.height >= STACK_MIN_LIST_HEIGHT + STACK_MIN_DETAIL_HEIGHT;
+/// The list's rect and the detail pane's for the body, and whether they
+/// are stacked: side by side when there is width for both, stacked when
+/// there is not or `[ui] detail` says so, and the list alone when it says
+/// `off`. pando is used in a tmux split, so the narrow case is the normal
+/// one.
+pub fn body_layout(body: Rect, detail: DetailLayout) -> (Rect, Option<Rect>, bool) {
+    let tall_enough = body.height >= STACK_MIN_LIST_HEIGHT + STACK_MIN_DETAIL_HEIGHT;
+    let stack = match detail.placement {
+        DetailPlacement::Off => return (body, None, false),
+        DetailPlacement::Right => body.width < SIDE_BY_SIDE_MIN_WIDTH && tall_enough,
+        // Too short to stack, a cramped side-by-side is the lesser evil.
+        DetailPlacement::Bottom => tall_enough,
+    };
     // The list is a table and the thing the screen is for; the detail
     // pane is read a row at a time, and the full log has its own screen.
     if !stack {
-        return Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .areas(body);
+        let share = detail.share(false);
+        let [list, detail] = Layout::horizontal([
+            Constraint::Percentage(100 - share),
+            Constraint::Percentage(share),
+        ])
+        .areas(body);
+        return (list, Some(detail), false);
     }
-    let list_height = (body.height * 2 / 5)
+    let list_share = match detail.size {
+        Some(size) => body.height * (100 - size) / 100,
+        None => body.height * 2 / 5,
+    };
+    let list_height = list_share
         .max(STACK_MIN_LIST_HEIGHT)
         .min(body.height.saturating_sub(STACK_MIN_DETAIL_HEIGHT));
-    Layout::vertical([Constraint::Length(list_height), Constraint::Fill(1)]).areas(body)
+    let [list, detail] =
+        Layout::vertical([Constraint::Length(list_height), Constraint::Fill(1)]).areas(body);
+    (list, Some(detail), true)
 }
 
 /// One project's TUI on the whole screen, as the tests draw it.
@@ -111,9 +129,12 @@ pub fn render_in(f: &mut Frame, area: Rect, app: &mut App) {
     if !app.main_row_shown() {
         render_welcome(f, body, app);
     } else {
-        let [list_area, detail_area] = body_layout(body);
+        let (list_area, detail_area, stacked) = body_layout(body, app.detail);
+        app.detail_stacked = stacked;
         render_list(f, list_area, app);
-        render_detail(f, detail_area, app);
+        if let Some(detail_area) = detail_area {
+            render_detail(f, detail_area, app);
+        }
     }
     render_footer(f, footer, app);
     app.hits.keys = hints::key_hints(f.buffer_mut(), footer);

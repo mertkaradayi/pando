@@ -37,6 +37,10 @@ impl Grove {
                 true
             }
             GroveEvent::Opened(id, result) => self.opened(id, *result),
+            GroveEvent::NotSaved(why) => {
+                self.say(why, true);
+                true
+            }
             GroveEvent::Project(id, ev) => {
                 let front = self.front.as_deref() == Some(id.as_str());
                 match self.open.get_mut(&id) {

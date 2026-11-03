@@ -18,6 +18,7 @@ mod dialogs;
 mod git_menu;
 mod keymap;
 mod launch;
+mod layout;
 mod log_keys;
 mod log_view;
 mod marks;
@@ -45,6 +46,9 @@ pub use keymap::{
 };
 pub use launch::{
     Launch, LaunchEnv, LaunchRequest, is_terminal_editor, plan_editor, plan_shell, said_after,
+};
+pub use layout::{
+    DETAIL_SIDE_DEFAULT, DETAIL_STACKED_DEFAULT, DETAIL_STEP, DetailLayout, DetailPlacement,
 };
 pub use log_view::{LOG_VIEWER_CAPACITY, LineInspect, LogFilter, LogView, SearchMode, SearchState};
 pub use marks::MarkedRemoval;
@@ -395,6 +399,12 @@ pub struct App {
     /// build, so the header starts at the project. Set by the grove
     /// before each frame.
     pub grove_chrome: bool,
+    /// Where the detail pane sits and how much it takes: `[ui] detail`
+    /// and `detail_size`, which the grove changes for every project.
+    pub detail: DetailLayout,
+    /// Whether the last frame stacked the detail pane under the list, so
+    /// `<` and `>` start from the share it had there.
+    pub detail_stacked: bool,
     /// The checks `v` asked for, counted instead of started when tests
     /// drive the app.
     #[cfg(test)]
@@ -416,6 +426,7 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel();
         let theme_settings = config.ui.theme_settings();
         let sort = ListSort::from_config(&config);
+        let detail = DetailLayout::from_config(&config);
         let themes_dir = paths.themes_dir();
         let mut app = Self {
             paths,
@@ -490,6 +501,8 @@ impl App {
             setup_watch: SetupWatch::default(),
             in_grove: false,
             grove_chrome: false,
+            detail,
+            detail_stacked: false,
             #[cfg(test)]
             checks_started: 0,
             #[cfg(test)]
@@ -1830,6 +1843,7 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel();
         let theme_settings = config.ui.theme_settings();
         let sort = ListSort::from_config(&config);
+        let detail = DetailLayout::from_config(&config);
         let themes_dir = paths.themes_dir();
         let mut app = Self {
             paths,
@@ -1904,6 +1918,8 @@ impl App {
             setup_watch: SetupWatch::default(),
             in_grove: false,
             grove_chrome: false,
+            detail,
+            detail_stacked: false,
             checks_started: 0,
             clipboard: None,
             opened: None,

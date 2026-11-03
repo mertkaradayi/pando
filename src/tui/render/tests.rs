@@ -979,7 +979,8 @@ fn centered_rect_honours_the_minimum_width_and_never_escapes_the_area() {
 #[test]
 fn a_wide_body_puts_the_panes_side_by_side() {
     let body = Rect::new(0, 0, 120, 30);
-    let [list, detail] = body_layout(body);
+    let (list, detail, _) = body_layout(body, DetailLayout::default());
+    let detail = detail.unwrap();
     assert_eq!(list.y, detail.y, "same row means side by side");
     assert!(list.width > 20 && detail.width > 20);
     assert_eq!(list.width + detail.width, 120);
@@ -989,7 +990,8 @@ fn a_wide_body_puts_the_panes_side_by_side() {
 #[test]
 fn a_narrow_body_stacks_the_panes() {
     let body = Rect::new(0, 0, 50, 30);
-    let [list, detail] = body_layout(body);
+    let (list, detail, _) = body_layout(body, DetailLayout::default());
+    let detail = detail.unwrap();
     assert_eq!(list.x, detail.x);
     assert_eq!(list.width, detail.width, "stacked panes are full width");
     assert!(detail.y >= list.y + list.height);
@@ -1001,8 +1003,41 @@ fn a_narrow_body_stacks_the_panes() {
 // cramped side-by-side wins.
 #[test]
 fn a_narrow_and_short_body_stays_side_by_side() {
-    let [list, detail] = body_layout(Rect::new(0, 0, 50, 8));
+    let (list, detail, _) = body_layout(Rect::new(0, 0, 50, 8), DetailLayout::default());
+    let detail = detail.unwrap();
     assert_eq!(list.y, detail.y);
+}
+
+// `[ui] detail`: under the list at any width when there is height for
+// it, a cramped side-by-side when there is not, and the whole body to the
+// list when it is off. `detail_size` is its share either way.
+#[test]
+fn the_body_follows_where_the_detail_pane_was_put() {
+    let at = |placement, size| DetailLayout { placement, size };
+    let wide = Rect::new(0, 0, 120, 30);
+    let (list, detail, stacked) = body_layout(wide, at(DetailPlacement::Bottom, None));
+    let detail = detail.unwrap();
+    assert!(stacked);
+    assert_eq!((list.width, detail.width), (120, 120));
+    assert_eq!(detail.height, 30 - 12, "three fifths by default");
+    let (_, detail, _) = body_layout(wide, at(DetailPlacement::Bottom, Some(20)));
+    assert_eq!(detail.unwrap().height, 30 - 24);
+    let (_, detail, stacked) = body_layout(wide, at(DetailPlacement::Right, Some(70)));
+    assert!(!stacked);
+    assert_eq!(detail.unwrap().width, 84);
+    // Too short to stack: beside the list after all.
+    let short = Rect::new(0, 0, 120, 8);
+    let (list, detail, stacked) = body_layout(short, at(DetailPlacement::Bottom, None));
+    assert!(!stacked);
+    assert_eq!(list.y, detail.unwrap().y);
+    let (list, detail, _) = body_layout(wide, at(DetailPlacement::Off, Some(70)));
+    assert_eq!((list, detail), (wide, None));
+    // Nothing set is today's screen.
+    assert_eq!(
+        body_layout(wide, DetailLayout::default()).0.width,
+        72,
+        "three fifths of the width to the list"
+    );
 }
 
 #[test]

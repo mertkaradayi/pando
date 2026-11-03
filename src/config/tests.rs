@@ -2244,6 +2244,92 @@ fn an_order_pando_does_not_know_drops_the_layer_with_the_spellings() {
     );
 }
 
+// How the TUI is laid out is the developer's, like the list's order: the
+// project column and the detail pane, each saved by the key that changes it.
+#[test]
+fn the_user_layer_carries_the_tuis_layout() {
+    let f = fixture();
+    write_user(
+        &f,
+        "[ui]\ngrove = \"off\"\ngrove_width = 30\ndetail = \"bottom\"\ndetail_size = 55\n",
+    );
+    let loaded = load(&f.paths).unwrap();
+    assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    let ui = &loaded.config.ui;
+    assert_eq!(ui.grove.as_deref(), Some("off"));
+    assert_eq!(ui.grove_width, Some(30));
+    assert_eq!(ui.detail.as_deref(), Some("bottom"));
+    assert_eq!(ui.detail_size, Some(55));
+    // Outside any repository the grove reads the same `[ui]` alone.
+    assert_eq!(&super::user_ui(&f.paths.home), ui);
+}
+
+#[test]
+fn a_layout_pando_cannot_draw_drops_the_layer_with_what_it_takes() {
+    for (text, says) in [
+        ("grove = \"left\"", "auto, on, off"),
+        ("detail = \"top\"", "right, bottom, off"),
+        ("grove_width = 12", "18 to 40 cells"),
+        ("grove_width = 41", "18 to 40 cells"),
+        ("detail_size = 19", "20 to 80 percent"),
+        ("detail_size = 90", "20 to 80 percent"),
+    ] {
+        let f = fixture();
+        write_user(&f, &format!("[ui]\ntheme = \"gruvbox\"\n{text}\n"));
+        let loaded = load(&f.paths).unwrap();
+        assert_eq!(loaded.config.ui, super::UiSection::default(), "{text}");
+        assert!(
+            loaded.warnings.iter().any(|w| w.contains(says)),
+            "{text}: {:?}",
+            loaded.warnings
+        );
+        // And the grove outside a repository draws the default, as the
+        // loader does.
+        assert_eq!(super::user_ui(&f.paths.home), super::UiSection::default());
+    }
+    // The edges are sizes it draws.
+    let f = fixture();
+    write_user(&f, "[ui]\ngrove_width = 18\ndetail_size = 80\n");
+    assert!(load(&f.paths).unwrap().warnings.is_empty());
+    write_user(&f, "[ui]\ngrove_width = 40\ndetail_size = 20\n");
+    assert!(load(&f.paths).unwrap().warnings.is_empty());
+}
+
+// The layout is saved where there may be no project: into the home's own
+// file, the rest of it as it was, and never into a home not made yet.
+#[test]
+fn a_user_patch_needs_no_project_and_makes_no_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("pando-home");
+    let set = |doc: &mut toml_edit::DocumentMut| {
+        doc["ui"]["grove_width"] = toml_edit::value(30);
+        Ok(())
+    };
+    let refused = super::patch_user(&home, set).unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("no pando home"),
+        "{refused:#}"
+    );
+    assert!(!home.exists(), "a refused save made the home");
+    std::fs::create_dir_all(&home).unwrap();
+    let file = home.join("config.toml");
+    std::fs::write(&file, "# mine\n[ui]\ntheme = \"gruvbox\"\n").unwrap();
+    super::patch_user(&home, set).unwrap();
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        text.starts_with("# mine\n[ui]\ntheme = \"gruvbox\"\ngrove_width = 30"),
+        "{text}"
+    );
+    // A file it makes is the user layer's, header and all.
+    std::fs::remove_file(&file).unwrap();
+    super::patch_user(&home, set).unwrap();
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        text.starts_with("# pando's config for this machine"),
+        "{text}"
+    );
+}
+
 // A login is a password. A file the team shares must not carry one, and a
 // machine-wide one is not where a project's login belongs; pando's own
 // file for the project is.

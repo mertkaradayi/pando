@@ -511,12 +511,13 @@ fn a_modal_on_the_front_app_keeps_the_keys() {
 /// What a grove key can change.
 fn grove_fingerprint(grove: &Grove) -> String {
     format!(
-        "{:?}|{}|{:?}|{:?}|{}|{:?}|{:?}|{}|{}",
+        "{:?}|{}|{:?}|{:?}|{}|{:?}|{:?}|{:?}|{}|{}",
         grove.focus,
         grove.column_shown(),
         grove.front,
         grove.open_requests,
         grove.width,
+        grove.detail,
         grove.confirm,
         grove.front_app().map(|a| a.modal.is_some()),
         grove.should_quit,
@@ -691,4 +692,254 @@ fn a_project_opens_from_where_it_is_registered() {
         format!("{refused:#}").contains("another project"),
         "{refused:#}"
     );
+}
+
+// ---- the layout ------------------------------------------------------
+
+/// The detail pane's top-left corner in `buf`, right of `x0`: where its
+/// rounded border starts, below the list or beside it.
+fn panes(buf: &Buffer, x0: u16) -> Vec<(u16, u16)> {
+    let mut corners = Vec::new();
+    for y in 1..buf.area().height {
+        for x in x0..buf.area().width {
+            if buf[(x, y)].symbol() == "╭" {
+                corners.push((x, y));
+            }
+        }
+    }
+    corners
+}
+
+// `[ui]` is where the grove starts: the column as it was left, its width,
+// and the detail pane, for every project it opens.
+#[test]
+fn the_grove_starts_as_the_user_layer_left_it() {
+    let ui = UiSection {
+        grove: Some("off".into()),
+        grove_width: Some(30),
+        detail: Some("bottom".into()),
+        detail_size: Some(55),
+        ..Default::default()
+    };
+    let mut grove = Grove::new(
+        std::path::PathBuf::from("/pando-test-does-not-exist/home"),
+        ui,
+        a_grove().summaries,
+    );
+    assert!(!grove.column_shown());
+    assert_eq!(grove.width, 30);
+    grove.adopt(app_for("shop"), true);
+    let app = grove.front_app().unwrap();
+    assert_eq!(
+        app.detail.placement,
+        crate::tui::app::DetailPlacement::Bottom
+    );
+    assert_eq!(app.detail.size, Some(55));
+    // A width the loader would have refused is still one it draws.
+    let wide = UiSection {
+        grove_width: Some(400),
+        ..Default::default()
+    };
+    let grove = Grove::new(std::path::PathBuf::from("/x"), wide, Vec::new());
+    assert_eq!(grove.width, COLUMN_MAX_WIDTH);
+}
+
+// Every key that changes the layout saves exactly what it changed, and a
+// key that changes nothing saves nothing.
+#[test]
+fn each_layout_key_saves_what_it_changed() {
+    use crate::tui::app::DetailPlacement;
+    let mut grove = a_grove();
+    draw(&mut grove, 120, 30);
+    for code in ['w', 'w', '}', '{', '|', '>', '<', '|', '|'] {
+        press(&mut grove, KeyCode::Char(code));
+    }
+    assert_eq!(
+        grove.saves,
+        vec![
+            Saved::Grove(Shown::Off),
+            Saved::Grove(Shown::On),
+            Saved::GroveWidth(COLUMN_WIDTH + COLUMN_STEP),
+            Saved::GroveWidth(COLUMN_WIDTH),
+            Saved::Detail(DetailPlacement::Bottom),
+            // Stacked by `|` on the last frame drawn: wide, side by side,
+            // so from its share there.
+            Saved::DetailSize(45),
+            Saved::DetailSize(40),
+            Saved::Detail(DetailPlacement::Off),
+            Saved::Detail(DetailPlacement::Right),
+        ]
+    );
+    // At the edges nothing moves and nothing is saved.
+    grove.saves.clear();
+    grove.width = COLUMN_MIN_WIDTH;
+    press(&mut grove, KeyCode::Char('{'));
+    grove.detail.size = Some(crate::config::DETAIL_SIZE_MAX);
+    press(&mut grove, KeyCode::Char('>'));
+    grove.detail.placement = DetailPlacement::Off;
+    press(&mut grove, KeyCode::Char('<'));
+    assert_eq!(grove.saves, vec![]);
+    // Every open project lays its detail pane out the same.
+    grove.adopt(app_for("api"), false);
+    press(&mut grove, KeyCode::Char('|'));
+    assert_eq!(
+        grove.open[&id_of("api")].app.detail,
+        grove.front_app().unwrap().detail
+    );
+}
+
+// The spellings `[ui]` takes are the ones the keys save.
+#[test]
+fn the_layouts_words_are_the_ones_config_takes() {
+    use crate::tui::app::DetailPlacement;
+    let modes: Vec<&str> = Shown::ALL.iter().map(|s| s.word()).collect();
+    assert_eq!(modes, crate::config::GROVE_MODES);
+    let placements: Vec<&str> = DetailPlacement::ALL.iter().map(|p| p.word()).collect();
+    assert_eq!(placements, crate::config::DETAIL_PLACEMENTS);
+    for word in modes {
+        assert_eq!(Shown::from_word(word).unwrap().word(), word);
+    }
+    assert_eq!(COLUMN_MIN_WIDTH, crate::config::GROVE_WIDTH_MIN);
+    assert_eq!(COLUMN_MAX_WIDTH, crate::config::GROVE_WIDTH_MAX);
+}
+
+// Written into `[ui]` beside what is there, whatever its form.
+#[test]
+fn a_saved_layout_keeps_the_rest_of_the_file() {
+    use crate::tui::app::DetailPlacement;
+    let mut doc: toml_edit::DocumentMut = "# mine\n[ui]\ntheme = \"gruvbox\"\n".parse().unwrap();
+    layout::set_layout(
+        &mut doc,
+        &[
+            Saved::Grove(Shown::Off),
+            Saved::GroveWidth(30),
+            Saved::Detail(DetailPlacement::Bottom),
+            Saved::DetailSize(55),
+        ],
+    );
+    assert_eq!(
+        doc.to_string(),
+        "# mine\n[ui]\ntheme = \"gruvbox\"\ngrove = \"off\"\ngrove_width = 30\ndetail = \"bottom\"\ndetail_size = 55\n"
+    );
+    let mut inline: toml_edit::DocumentMut = "ui = { sort = \"name\" }\n".parse().unwrap();
+    layout::set_layout(&mut inline, &[Saved::GroveWidth(20)]);
+    assert!(inline.to_string().contains("grove_width = 20"), "{inline}");
+    // What it writes, the loader reads back.
+    let ui: UiSection = toml::from_str::<toml::Table>(&doc.to_string()).unwrap()["ui"]
+        .clone()
+        .try_into()
+        .unwrap();
+    assert_eq!(ui.grove_width, Some(30));
+}
+
+// The worker writes in the order the keys came, so the last press wins;
+// into a home of the test's own.
+#[test]
+fn the_saver_writes_the_last_of_each_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("pando-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let saver = spawn_layout_saver(home.clone(), tx);
+    for width in [28, 30, 32, 22] {
+        saver.send(Saved::GroveWidth(width)).unwrap();
+    }
+    saver.send(Saved::Grove(Shown::On)).unwrap();
+    drop(saver);
+    let file = home.join("config.toml");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        if text.contains("grove_width = 22") && text.contains("grove = \"on\"") {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "never saved: {text}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(rx.try_recv().is_err(), "a save that worked said it failed");
+    // A home that is not there is said, not made.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let saver = spawn_layout_saver(dir.path().join("gone"), tx);
+    saver.send(Saved::GroveWidth(20)).unwrap();
+    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(GroveEvent::NotSaved(why)) => assert!(why.contains("no pando home"), "{why}"),
+        _ => panic!("a failed save said nothing"),
+    }
+    assert!(!dir.path().join("gone").exists());
+}
+
+// Each placement of the detail pane, drawn: right of the list, under it,
+// or not at all, the list then the whole body; and `<` `>` move its edge.
+#[test]
+fn the_detail_pane_sits_where_it_was_put() {
+    use crate::tui::app::{DetailLayout, DetailPlacement};
+    let mut grove = a_grove();
+    let x0 = COLUMN_WIDTH;
+    let at = |grove: &mut Grove, detail: DetailLayout| {
+        grove.detail = detail;
+        grove.share_detail();
+        let buf = draw(grove, 120, 30);
+        (panes(&buf, x0), buf)
+    };
+    let right = |size| DetailLayout {
+        placement: DetailPlacement::Right,
+        size,
+    };
+    // Right, by default two fifths of what is right of the column.
+    let (corners, _) = at(&mut grove, right(None));
+    assert_eq!(corners.len(), 2, "{corners:?}");
+    assert_eq!(corners[0].1, corners[1].1, "side by side");
+    let body = 120 - x0;
+    let edge = x0 + body - body * 40 / 100;
+    assert!(corners[1].0.abs_diff(edge) <= 1, "{corners:?}, {edge}");
+    // Bigger by `>`: the edge moves left.
+    let (wider, _) = at(&mut grove, right(Some(60)));
+    assert!(wider[1].0 < corners[1].0, "{wider:?} {corners:?}");
+    // Bottom: under the list, the same left edge.
+    let (stacked, _) = at(
+        &mut grove,
+        DetailLayout {
+            placement: DetailPlacement::Bottom,
+            size: None,
+        },
+    );
+    assert_eq!(stacked.len(), 2, "{stacked:?}");
+    assert_eq!(stacked[0].0, stacked[1].0, "stacked");
+    assert!(stacked[1].1 > stacked[0].1);
+    assert!(grove.front_app().unwrap().detail_stacked);
+    let (bigger, _) = at(
+        &mut grove,
+        DetailLayout {
+            placement: DetailPlacement::Bottom,
+            size: Some(80),
+        },
+    );
+    assert!(bigger[1].1 < stacked[1].1, "{bigger:?} {stacked:?}");
+    // Off: the list alone, as wide as the body.
+    let (alone, buf) = at(
+        &mut grove,
+        DetailLayout {
+            placement: DetailPlacement::Off,
+            size: Some(80),
+        },
+    );
+    assert_eq!(alone.len(), 1, "{alone:?}");
+    assert_eq!(buf[(119, alone[0].1)].symbol(), "╮", "the list to the edge");
+    assert!(grove.front_app().unwrap().hits.preview.is_none());
+}
+
+// `{` and `}` widen the column as drawn, within what the screen leaves the
+// project: never more than half of it.
+#[test]
+fn the_column_is_as_wide_as_it_was_set() {
+    let mut grove = a_grove();
+    for width in [COLUMN_MIN_WIDTH, COLUMN_WIDTH, COLUMN_MAX_WIDTH] {
+        grove.width = width;
+        let buf = draw(&mut grove, 120, 30);
+        assert_eq!(buf[(width - 1, 0)].symbol(), "╮", "width {width}");
+        assert_eq!(grove.hits.column.width, width);
+    }
+    grove.width = COLUMN_MAX_WIDTH;
+    draw(&mut grove, 76, 24);
+    assert_eq!(grove.hits.column.width, 38, "half of a narrow screen");
 }
