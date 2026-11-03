@@ -60,7 +60,10 @@ pub use lifecycle::{
     Mode, StartReport, StartedProcess, StopAllReport, StopOutcome, process_names,
     refuse_only_on_a_mode_change, restart, start, stop, stop_all, stop_all_listed, stop_all_with,
 };
-pub use machine::{checkout_root, recorded_roots, recover_registry, worktrees_in_project_dir};
+pub use machine::{
+    KnownProject, LiveProcess, LiveWorktree, ProjectSummary, checkout_root, known, port_clashes,
+    recorded_roots, recover_registry, summaries, worktrees_in_project_dir,
+};
 pub use namespaced::{
     Leftover, NamespacedAnswer, NamespacedService, PlanRow, Prefixed, login_question,
     namespace_leftovers, namespace_lines, namespace_login, namespace_plan_rows,
@@ -78,7 +81,9 @@ pub use readiness::{
     NO_PORT_WATCH, NO_PORT_WATCH_MAX, ReadyVerdict, no_port_watch, ready_limit, ready_line,
     ready_verdict, still_watched, watched_processes,
 };
-pub use refresh::{FAILURE_SHOWN_LINES, Refreshed, failure_tail, inspect, refresh};
+pub use refresh::{
+    FAILURE_SHOWN_LINES, Refreshed, Scans, failure_tail, inspect, observe, refresh, scan_all,
+};
 pub use runtime::{
     MACHINE_WIDE, Machine, Offer, prelude_needed, prelude_offers, runs_through_runner,
     runtime_shell, user_home, with_prelude,

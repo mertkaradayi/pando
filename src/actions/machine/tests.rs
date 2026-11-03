@@ -153,3 +153,295 @@ fn a_repository_moved_away_is_recovered_where_it_was() {
     assert_eq!(recovered.root, project.root);
     assert!(recovered.moved_from(&project.id));
 }
+
+// ---- known and summaries --------------------------------------------------
+
+use crate::state::{Phase, ProcessRecord};
+use chrono::Utc;
+
+/// A pid nothing has: a child that has exited and been waited for.
+fn dead_pid() -> u32 {
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    pid
+}
+
+/// A process record for `pid`, in `phase`, its log under `dir`.
+fn process(pid: u32, phase: Phase, dir: &Path) -> ProcessRecord {
+    ProcessRecord {
+        pid,
+        pgid: crate::process::Group::from_raw(pid as i32),
+        started_at: Utc::now(),
+        log_path: dir.join("dev.log"),
+        ready_port: None,
+        ready_timeout_s: None,
+        observed_ports: Vec::new(),
+        swept: false,
+        phase,
+    }
+}
+
+fn running() -> Phase {
+    Phase::Running { since: Utc::now() }
+}
+
+/// A worktree's record: its name, its processes, its ports by role.
+type Recorded<'a> = (&'a str, Vec<(&'a str, ProcessRecord)>, Vec<(&'a str, u16)>);
+
+/// A registered project called `name` under `home`, its repository under
+/// `code`, with `records` as its state: `(worktree, processes, ports)`.
+fn project_with(home: &Path, code: &Path, name: &str, records: Vec<Recorded<'_>>) -> ProjectRef {
+    let repo = code.join(name);
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let project = ProjectRef::from_root(&repo).unwrap();
+    let dir = unregistered_dir(home, &project);
+    project::remember(&dir, &project).unwrap();
+    let mut store = state::State::new();
+    for (worktree, processes, ports) in records {
+        let mut record = WorktreeRecord::new(code.join("trees").join(worktree), true);
+        for (process, p) in processes {
+            record.processes.insert(process.to_string(), p);
+        }
+        for (role, port) in ports {
+            record.ports.insert(role.to_string(), port);
+        }
+        store.worktrees.insert(worktree.to_string(), record);
+    }
+    state::save(&dir.join("state.json"), &store).unwrap();
+    project
+}
+
+/// Every file under `dir`, with its bytes and its modification time.
+fn snapshot(dir: &Path) -> Vec<(PathBuf, Vec<u8>, std::time::SystemTime)> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(at) = stack.pop() {
+        for entry in std::fs::read_dir(&at).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                let meta = std::fs::metadata(&path).unwrap();
+                out.push((
+                    path.clone(),
+                    std::fs::read(&path).unwrap(),
+                    meta.modified().unwrap(),
+                ));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+#[test]
+fn summaries_list_every_project_live_first_and_write_nothing() {
+    let dir = tempdir().unwrap();
+    let home = dir.path().join("home");
+    let code = dir.path().join("code");
+    let logs = dir.path().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let live = crate::testutil::spawn_guarded("sleep 30", dir.path(), &logs.join("live.log"));
+
+    // Idle, used last of all: one worktree recorded, nothing running.
+    let idle = project_with(&home, &code, "idle", vec![("feat+old", vec![], vec![])]);
+    // Up: one worktree with a live process, one stopped.
+    let up = project_with(
+        &home,
+        &code,
+        "shop",
+        vec![
+            (
+                "feat+one",
+                vec![(
+                    "dev",
+                    ProcessRecord {
+                        pgid: live.pgid,
+                        ..process(live.pid, running(), &logs)
+                    },
+                )],
+                vec![("web", 17_001)],
+            ),
+            ("feat+two", vec![], vec![]),
+        ],
+    );
+    // Failed: recorded running, its process long gone.
+    let crashed = project_with(
+        &home,
+        &code,
+        "crashed",
+        vec![(
+            "feat+x",
+            vec![("dev", process(dead_pid(), running(), &logs))],
+            vec![],
+        )],
+    );
+    // Moved: its repository is not where it was.
+    let moved = project_with(&home, &code, "gone", vec![]);
+    std::fs::remove_dir_all(&moved.root).unwrap();
+    // Nothing in it at all: not a project to list.
+    std::fs::create_dir_all(home.join("projects").join("empty-00000000")).unwrap();
+
+    let before = snapshot(&home);
+    let all = summaries(&home);
+    assert_eq!(snapshot(&home), before, "a summary wrote into the home");
+
+    let ids: Vec<&str> = all.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            up.id.as_str(),
+            crashed.id.as_str(),
+            idle.id.as_str(),
+            moved.id.as_str()
+        ]
+    );
+    let shop = &all[0];
+    assert_eq!(
+        (shop.up, shop.starting, shop.failed, shop.stopped),
+        (1, 0, 0, 1)
+    );
+    assert_eq!(shop.name, "shop");
+    assert_eq!(shop.root, up.root);
+    assert!(shop.is_live() && !shop.moved);
+    assert!(shop.last_used.is_some());
+    assert_eq!(shop.worktrees.len(), 1);
+    let one = &shop.worktrees[0];
+    assert_eq!(one.name, "feat+one");
+    assert_eq!(one.ports["web"], 17_001);
+    assert!(one.claimed.contains(&17_001));
+    assert_eq!(one.processes["dev"].pid, live.pid);
+    assert!(matches!(one.phase, state::Aggregate::Running { .. }));
+
+    let crashed = &all[1];
+    assert_eq!((crashed.up, crashed.failed), (0, 1));
+    assert!(matches!(
+        crashed.worktrees[0].phase,
+        state::Aggregate::Failed { .. }
+    ));
+    let idle = &all[2];
+    assert_eq!((idle.up, idle.stopped), (0, 1));
+    assert!(idle.worktrees.is_empty());
+    assert!(all[3].moved);
+    // No lock was made in any project to find out.
+    for summary in &all {
+        let lock = home.join("projects").join(&summary.id).join("state.lock");
+        assert!(!lock.exists(), "{}", lock.display());
+    }
+}
+
+// While another pando holds a project's lock, a process seen dead keeps
+// the phase it was recorded in: that pando may be stopping it.
+#[test]
+fn a_death_under_a_held_lock_keeps_its_recorded_phase() {
+    let dir = tempdir().unwrap();
+    let home = dir.path().join("home");
+    let code = dir.path().join("code");
+    let shop = project_with(
+        &home,
+        &code,
+        "shop",
+        vec![(
+            "feat+one",
+            vec![("dev", process(dead_pid(), running(), dir.path()))],
+            vec![],
+        )],
+    );
+    let lock_file = home.join("projects").join(&shop.id).join("state.lock");
+    let held = state::lock(&lock_file).unwrap();
+    let before = snapshot(&home);
+    let all = summaries(&home);
+    assert_eq!(snapshot(&home), before);
+    assert_eq!((all[0].up, all[0].failed), (1, 0), "{all:?}");
+
+    drop(held);
+    let all = summaries(&home);
+    assert_eq!((all[0].up, all[0].failed), (0, 1), "{all:?}");
+}
+
+#[test]
+fn known_recovers_an_unregistered_project_and_registers_it_once() {
+    let dir = tempdir().unwrap();
+    let repo = dir.path().join("acme-shop");
+    init_repo(&repo);
+    let project = ProjectRef::from_root(&repo).unwrap();
+    let home = dir.path().join("home");
+    let project_dir = unregistered_dir(&home, &project);
+    record(&project_dir, &[("acme-shop", &project.root)]);
+
+    let found = known(&home);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, project.id);
+    assert_eq!(found[0].registered, Registered::of(&project));
+    assert!(!found[0].moved);
+    assert_eq!(
+        project::registered(&project_dir),
+        Some(Registered::of(&project))
+    );
+    let file = project_dir.join(project::PROJECT_FILE);
+    let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
+    assert_eq!(known(&home), found);
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().modified().unwrap(),
+        modified
+    );
+}
+
+#[test]
+fn a_port_two_projects_claim_is_a_clash_and_one_project_twice_is_not() {
+    let dir = tempdir().unwrap();
+    let home = dir.path().join("home");
+    let code = dir.path().join("code");
+    let logs = dir.path().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let a = crate::testutil::spawn_guarded("sleep 30", dir.path(), &logs.join("a.log"));
+    let b = crate::testutil::spawn_guarded("sleep 30", dir.path(), &logs.join("b.log"));
+    let c = crate::testutil::spawn_guarded("sleep 30", dir.path(), &logs.join("c.log"));
+    let live = |d: &crate::testutil::Detached| ProcessRecord {
+        pgid: d.pgid,
+        ..process(d.pid, running(), &logs)
+    };
+    let one = project_with(
+        &home,
+        &code,
+        "one",
+        vec![
+            // 17_003 twice, in one project: that project's own business.
+            (
+                "feat+a",
+                vec![("dev", live(&a))],
+                vec![("web", 17_001), ("api", 17_003)],
+            ),
+            (
+                "feat+b",
+                vec![("dev", live(&b))],
+                vec![("web", 17_002), ("api", 17_003)],
+            ),
+        ],
+    );
+    let two = project_with(
+        &home,
+        &code,
+        "two",
+        vec![("feat+c", vec![("dev", live(&c))], vec![("web", 17_001)])],
+    );
+    // A stopped worktree's ports are no clash: nothing holds them.
+    project_with(
+        &home,
+        &code,
+        "three",
+        vec![("feat+d", vec![], vec![("web", 17_002)])],
+    );
+
+    let clashes = port_clashes(&summaries(&home));
+    assert_eq!(clashes.len(), 1, "{clashes:?}");
+    let mut by = clashes[&17_001].clone();
+    by.sort();
+    let mut want = vec![
+        (one.id.clone(), "feat+a".to_string()),
+        (two.id.clone(), "feat+c".to_string()),
+    ];
+    want.sort();
+    assert_eq!(by, want);
+}

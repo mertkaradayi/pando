@@ -154,6 +154,41 @@ pub fn inspect(paths: &PandoPaths) -> Refreshed {
     advanced(store, &scans)
 }
 
+/// The ports every live process group was seen listening on, by group:
+/// what a scan answers, and what [`observe`] advances with.
+pub type Scans = BTreeMap<proc::Group, Option<Vec<u16>>>;
+
+/// One scan of the live groups of every store given, so a reader of many
+/// projects pays for one `ps` and one `lsof` pass rather than one each.
+pub fn scan_all(stores: &[&state::State]) -> Scans {
+    let mut groups: Vec<proc::Group> = stores.iter().flat_map(|s| live_groups(s)).collect();
+    groups.sort();
+    groups.dedup();
+    if groups.is_empty() {
+        return Scans::new();
+    }
+    crate::platform::process::ports_by_group(&groups)
+}
+
+/// Another project's state, as a reader of it sees it: `seen`, read from
+/// its state file, advanced on the copy with `scans` and returned, never
+/// saved and never signalled — the reader rules of `state`'s module doc.
+///
+/// While another pando holds `lock_file` a death keeps the phase it was
+/// recorded in, as [`refresh`] answers then. A lock file that is not there
+/// is free, and is not made: a reader of every project writes no lock into
+/// any of them.
+pub fn observe(seen: state::State, lock_file: &Path, scans: &Scans) -> Refreshed {
+    if !lock_file.exists() {
+        return advanced(seen, scans);
+    }
+    match state::try_lock(lock_file) {
+        Ok(Some(_free)) => advanced(seen, scans),
+        // Held, or not to be asked: either way nothing is called dead.
+        Ok(None) | Err(_) => advanced_while_held(seen, scans),
+    }
+}
+
 /// [`refresh`]'s answer while another pando holds the lock: the advance on
 /// a copy, except that nothing is called dead.
 ///
