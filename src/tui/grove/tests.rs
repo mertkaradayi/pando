@@ -455,7 +455,7 @@ fn x_in_the_column_asks_naming_each_worktree_then_stops_them() {
     press(&mut grove, KeyCode::Char('y'));
     assert_eq!(
         grove.stop_after_open,
-        Some((id_of("api"), vec!["feat+up0".to_string()]))
+        BTreeMap::from([(id_of("api"), vec!["feat+up0".to_string()])])
     );
     assert_eq!(grove.open_requests, vec![id_of("api")]);
     // Nothing up, nothing to ask.
@@ -486,6 +486,54 @@ fn x_on_a_project_with_only_failures_has_nothing_to_stop() {
     assert!(grove.confirm.is_none(), "{:?}", grove.confirm);
     let status = grove.front_app().unwrap().status.clone().unwrap();
     assert_eq!(status.message, "nothing is up in api");
+}
+
+// Two stops confirmed for two projects still being opened: each carried
+// out in its own project once that one opens, neither dropped for the
+// other.
+#[test]
+fn stops_confirmed_for_two_projects_opening_each_land_in_their_own() {
+    let mut summaries = a_grove().summaries;
+    summaries[2] = summary("docs", 1, 0);
+    let mut grove = Grove::new_for_test(summaries);
+    grove.adopt(app_for("shop"), true);
+    grove.focus = Focus::Column;
+    for name in ["api", "docs"] {
+        grove.cursor = grove.summaries.iter().position(|s| s.name == name).unwrap();
+        if name == "api" {
+            grove.summaries[1]
+                .worktrees
+                .push(live("feat+up0", running()));
+        }
+        press(&mut grove, KeyCode::Char('X'));
+        press(&mut grove, KeyCode::Char('y'));
+    }
+    assert_eq!(grove.open_requests, vec![id_of("api"), id_of("docs")]);
+    assert_eq!(
+        grove.stop_after_open.len(),
+        2,
+        "{:?}",
+        grove.stop_after_open
+    );
+    // api opens first: its stop starts, and docs' still waits.
+    let mut api = app_for("api");
+    api.state.worktrees.clear();
+    grove.handle_event(GroveEvent::Opened(id_of("api"), Box::new(Ok(api))));
+    let api = &grove.open[&id_of("api")].app;
+    assert!(
+        api.pending.iter().any(|p| p.kind == PendingKind::StopAll),
+        "api stops what was confirmed"
+    );
+    assert_eq!(
+        grove.stop_after_open,
+        BTreeMap::from([(id_of("docs"), vec!["feat+up0".to_string()])])
+    );
+    // docs could not be opened: its stop goes with it.
+    grove.handle_event(GroveEvent::Opened(
+        id_of("docs"),
+        Box::new(Err("gone".into())),
+    ));
+    assert!(grove.stop_after_open.is_empty());
 }
 
 /// `name`'s app, open behind, with `pending` in flight.

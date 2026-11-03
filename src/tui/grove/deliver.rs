@@ -136,17 +136,15 @@ impl Grove {
         match result {
             Ok(app) => {
                 self.adopt(app, wanted);
-                if let Some((stop, names)) = self.stop_after_open.take() {
-                    match self.open.get_mut(&stop) {
-                        Some(opened) => opened.app.stop_everything(names),
-                        None => self.stop_after_open = Some((stop, names)),
-                    }
+                // Its own stop only: another project's waits for its own.
+                if let Some(names) = self.stop_after_open.remove(&id)
+                    && let Some(opened) = self.open.get_mut(&id)
+                {
+                    opened.app.stop_everything(names);
                 }
             }
             Err(e) => {
-                if self.stop_after_open.as_ref().is_some_and(|(s, _)| s == &id) {
-                    self.stop_after_open = None;
-                }
+                self.stop_after_open.remove(&id);
                 self.say(e, true);
             }
         }

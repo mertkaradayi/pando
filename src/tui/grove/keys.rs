@@ -223,7 +223,7 @@ impl Grove {
         let Some(summary) = self.summaries.iter().find(|s| s.id == confirm.id).cloned() else {
             return;
         };
-        self.stop_after_open = Some((confirm.id, confirm.worktrees));
+        self.stop_after_open.insert(confirm.id, confirm.worktrees);
         self.request_open(&summary);
     }
 }

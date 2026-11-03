@@ -132,9 +132,9 @@ pub struct Grove {
     pub open: BTreeMap<String, Opened>,
     /// Projects being opened on a worker.
     pub opening: Vec<String>,
-    /// A stop `X` confirmed for a project still being opened, carried
-    /// out once it is.
-    pub stop_after_open: Option<(String, Vec<String>)>,
+    /// Each stop `X` confirmed for a project still being opened, by the
+    /// project's id, carried out once that project is.
+    pub stop_after_open: BTreeMap<String, Vec<String>>,
     pub focus: Focus,
     pub shown: Shown,
     pub width: u16,
@@ -200,7 +200,7 @@ impl Grove {
             front: None,
             open: BTreeMap::new(),
             opening: Vec::new(),
-            stop_after_open: None,
+            stop_after_open: BTreeMap::new(),
             focus: Focus::Column,
             shown,
             width,
