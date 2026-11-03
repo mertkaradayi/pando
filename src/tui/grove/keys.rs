@@ -32,6 +32,19 @@ impl Grove {
             }
             return;
         }
+        // The second `q` the grove asked for is the grove's, wherever the
+        // focus is; given to the front app instead, it would ask its own
+        // question again. A dialog on the front app keeps its `q`.
+        if key.code == KeyCode::Char('q')
+            && (self.quitting || self.quit_is_armed())
+            && self.front_app().is_none_or(|app| app.idle_on_list())
+        {
+            match self.quitting {
+                true => self.should_quit = true,
+                false => self.confirm_quit(),
+            }
+            return;
+        }
         // A question, a dialog, the log viewer or a filter on the front
         // app has the keyboard, wherever the focus was.
         if self.front_app().is_some_and(|app| !app.idle_on_list()) {

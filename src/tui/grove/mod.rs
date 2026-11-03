@@ -149,6 +149,9 @@ pub struct Grove {
     pub note: Option<(String, Instant)>,
     /// The first `q` while other projects have work in flight.
     pub quit_armed: Option<Instant>,
+    /// The second `q` cancelled the starts in flight in every project;
+    /// pando quits once each has run its undo.
+    pub quitting: bool,
     pub should_quit: bool,
     pub tick: u32,
     pub hits: GroveHits,
@@ -206,6 +209,7 @@ impl Grove {
             confirm: None,
             note: None,
             quit_armed: None,
+            quitting: false,
             should_quit: false,
             tick: 0,
             hits: GroveHits::default(),

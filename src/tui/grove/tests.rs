@@ -467,17 +467,30 @@ fn x_in_the_column_asks_naming_each_worktree_then_stops_them() {
     );
 }
 
-#[test]
-fn q_with_work_in_flight_elsewhere_asks_for_a_second() {
-    let mut grove = a_grove();
-    grove.adopt(app_for("api"), false);
+/// `name`'s app, open behind, with `pending` in flight.
+fn busy_behind(grove: &mut Grove, name: &str, pending: PendingAction) {
+    grove.adopt(app_for(name), false);
     grove
         .open
-        .get_mut(&id_of("api"))
+        .get_mut(&id_of(name))
         .unwrap()
         .app
         .pending
-        .push(in_flight());
+        .push(pending);
+}
+
+/// A start in flight that a quit cancels, and the cancel it reads.
+fn cancellable() -> (PendingAction, crate::cancel::Cancel) {
+    let cancel = crate::cancel::Cancel::new();
+    let mut pending = in_flight();
+    pending.cancel = Some(cancel.clone());
+    (pending, cancel)
+}
+
+#[test]
+fn q_with_work_in_flight_elsewhere_asks_for_a_second() {
+    let mut grove = a_grove();
+    busy_behind(&mut grove, "api", in_flight());
     press(&mut grove, KeyCode::Char('q'));
     assert!(!grove.should_quit);
     let status = grove.front_app().unwrap().status.clone().unwrap();
@@ -494,6 +507,84 @@ fn q_with_work_in_flight_elsewhere_asks_for_a_second() {
         KeyCode::Char('c'),
         KeyModifiers::CONTROL,
     ))));
+    assert!(grove.should_quit);
+}
+
+// Work in flight in front and behind: the front app's two presses for its
+// own, then one for the grove's — not a fourth, which the front app's own
+// question asked again would have taken, overwriting the grove's.
+#[test]
+fn work_in_front_and_behind_quits_on_the_third_q() {
+    let mut grove = a_grove();
+    grove.front_app_mut().unwrap().pending.push(in_flight());
+    busy_behind(&mut grove, "api", in_flight());
+    press(&mut grove, KeyCode::Char('q'));
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit, "the grove names api first");
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert!(status.message.contains("in api"), "{}", status.message);
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit, "the third q is the grove's second");
+}
+
+// The front app's `q` `q` cancelled its start and asks to quit once it is
+// undone; with work behind, the grove asks first. Its question is answered
+// only by a key: the front app asking again on the next tick is not one.
+#[test]
+fn a_front_app_asking_again_never_answers_the_groves_question() {
+    let mut grove = a_grove();
+    busy_behind(&mut grove, "api", in_flight());
+    // As the front app's second `q` leaves it once its undo has run.
+    grove.front_app_mut().unwrap().quitting = true;
+    grove.handle_event(GroveEvent::Tick);
+    assert!(!grove.should_quit, "the grove names api first");
+    assert!(grove.quit_armed.is_some());
+    for _ in 0..3 {
+        grove.handle_event(GroveEvent::Tick);
+    }
+    assert!(!grove.should_quit, "no tick answers for the developer");
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit, "the q the grove asked for does");
+}
+
+// The confirming `q` cancels a start in flight behind and waits for its
+// undo, as a project's own second `q` does, rather than abandoning it
+// half done; a `q` meanwhile quits at once.
+#[test]
+fn the_groves_second_q_cancels_the_starts_behind_and_waits() {
+    let mut grove = a_grove();
+    let (pending, cancel) = cancellable();
+    busy_behind(&mut grove, "api", pending);
+    press(&mut grove, KeyCode::Char('q'));
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(cancel.is_cancelled(), "the start behind is cancelled");
+    assert!(!grove.should_quit, "and its undo waited for");
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert!(
+        status.message.contains("cancelling feat/one in api"),
+        "{}",
+        status.message
+    );
+    grove.handle_event(GroveEvent::Tick);
+    assert!(!grove.should_quit, "still undoing");
+    // Its undo ran.
+    grove
+        .open
+        .get_mut(&id_of("api"))
+        .unwrap()
+        .app
+        .pending
+        .clear();
+    grove.handle_event(GroveEvent::Tick);
+    assert!(grove.should_quit, "pando goes once it is undone");
+    // A q while it is undone quits at once.
+    let mut grove = a_grove();
+    let (pending, _cancel) = cancellable();
+    busy_behind(&mut grove, "api", pending);
+    press(&mut grove, KeyCode::Char('q'));
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit);
+    press(&mut grove, KeyCode::Char('q'));
     assert!(grove.should_quit);
 }
 

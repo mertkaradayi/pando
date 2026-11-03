@@ -65,8 +65,18 @@ impl Grove {
         for id in quitting {
             if let Some(opened) = self.open.get_mut(&id) {
                 opened.app.should_quit = false;
+                // Its own undo has run, or it had none to run: what is
+                // left to ask is the grove's, and only a key answers it.
+                // Left set, every tick would ask to quit again and answer
+                // the grove's question for the developer.
+                opened.app.quitting = false;
             }
             self.request_quit(Some(&id));
+        }
+        // The confirming `q` cancelled the starts in flight; pando goes
+        // once every one has run its undo.
+        if self.quitting && !self.cancelling() {
+            self.should_quit = true;
         }
         let in_flight: usize = self.open.values().map(|o| o.app.pending.len()).sum();
         if in_flight != self.in_flight {
@@ -143,10 +153,12 @@ impl Grove {
         true
     }
 
-    /// A press of `q` or ctrl-c that would end the TUI, from the app of
-    /// `from` or from the column. Work in flight in another project is
-    /// named first and abandoned only on a second `q`: its own app asked
-    /// about its own already.
+    /// A press of `q` that would end the TUI, from the app of `from` or
+    /// from the column. Work in flight in another project is named first,
+    /// and only a second `q` pressed while that is fresh goes on
+    /// ([`confirm_quit`](Self::confirm_quit)): its own app asked about its
+    /// own already. Never confirms by itself, so an app asking again is
+    /// never the developer's answer.
     pub(super) fn request_quit(&mut self, from: Option<&str>) {
         let busy: Vec<String> = self
             .open
@@ -154,14 +166,13 @@ impl Grove {
             .filter(|(id, o)| Some(id.as_str()) != from && !o.app.pending.is_empty())
             .map(|(_, o)| o.app.paths.project.display_name.clone())
             .collect();
-        let armed = self.quit_armed.is_some_and(|at| at.elapsed() < ARM_TTL);
-        if busy.is_empty() || armed {
+        if busy.is_empty() {
             self.should_quit = true;
             return;
         }
         self.quit_armed = Some(Instant::now());
         let message = format!(
-            "{} still in flight in {} — q again abandons it and quits",
+            "{} still in flight in {} — q again cancels any start, abandons the rest and quits",
             match busy.len() {
                 1 => "an action is",
                 _ => "actions are",
@@ -172,6 +183,53 @@ impl Grove {
             Some(app) => app.set_prompt(message),
             None => self.say(message, false),
         }
+    }
+
+    /// Whether a first `q` is waiting for its second.
+    pub(super) fn quit_is_armed(&self) -> bool {
+        self.quit_armed.is_some_and(|at| at.elapsed() < ARM_TTL)
+    }
+
+    /// The second `q`: what a project's own second `q` does, in every
+    /// open project. A start or a restart in flight is cancelled rather
+    /// than abandoned, and pando quits once each has run its undo —
+    /// abandoned, a switch to isolated mode leaves containers up that its
+    /// record does not say are isolated. Anything else is abandoned. A `q`
+    /// meanwhile quits at once, and so does ctrl-c.
+    pub(super) fn confirm_quit(&mut self) {
+        self.quit_armed = None;
+        let mut cancelled = Vec::new();
+        for opened in self.open.values() {
+            for pending in &opened.app.pending {
+                if let Some(cancel) = &pending.cancel {
+                    cancel.cancel();
+                    cancelled.push(format!(
+                        "{} in {}",
+                        pending.label, opened.app.paths.project.display_name
+                    ));
+                }
+            }
+        }
+        if cancelled.is_empty() {
+            self.should_quit = true;
+            return;
+        }
+        self.quitting = true;
+        self.say(
+            format!(
+                "cancelling {} — pando quits once it is undone · q quits now",
+                cancelled.join(", ")
+            ),
+            false,
+        );
+    }
+
+    /// Whether a start or a restart some open app runs is still in flight
+    /// with a cancel, which a quit waits for.
+    fn cancelling(&self) -> bool {
+        self.open
+            .values()
+            .any(|o| o.app.pending.iter().any(|p| p.cancel.is_some()))
     }
 
     /// A shell or an editor some open app asked for, with the app's id.
