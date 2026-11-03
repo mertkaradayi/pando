@@ -183,7 +183,7 @@ fn render_column(f: &mut Frame, area: Rect, grove: &mut Grove) {
     }
     let width = inner.width as usize;
     let hints = match focused && inner.height >= 6 {
-        true => column_hint_lines(width),
+        true => column_hint_lines(width, grove.front.is_some()),
         false => Vec::new(),
     };
     let footer = 1 + hints.len() as u16;
@@ -334,10 +334,15 @@ fn name_style(look: &RowLook) -> Style {
 }
 
 /// The column's keys while it has them, as many rows as they take.
-fn column_hint_lines(width: usize) -> Vec<Line<'static>> {
+/// `tab` goes to the list of the project in front, so with none in
+/// front it is not offered.
+fn column_hint_lines(width: usize, has_front: bool) -> Vec<Line<'static>> {
     let mut lines: Vec<Vec<Span<'static>>> = vec![Vec::new()];
     let mut used = 0;
     for (key, label) in COLUMN_HINTS {
+        if key == "tab" && !has_front {
+            continue;
+        }
         let needs = 1 + text_width(key) + 1 + text_width(label);
         if used + needs > width && used > 0 {
             lines.push(Vec::new());

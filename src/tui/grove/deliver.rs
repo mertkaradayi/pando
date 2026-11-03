@@ -131,6 +131,7 @@ impl Grove {
 
     fn opened(&mut self, id: String, result: Result<crate::tui::app::App, String>) -> bool {
         self.opening.retain(|o| o != &id);
+        self.forget_opening_note(&id);
         let wanted = self.front.as_deref() == Some(id.as_str())
             || self.selected().is_some_and(|s| s.id == id);
         match result {
@@ -147,6 +148,34 @@ impl Grove {
             }
         }
         true
+    }
+
+    /// "opening <name>…" was said on whichever app was in front when the
+    /// open began; once the open has landed it is news about nothing, and
+    /// left there it would greet the developer on coming back to that app.
+    fn forget_opening_note(&mut self, id: &str) {
+        let Some(name) = self
+            .summaries
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.name.clone())
+        else {
+            return;
+        };
+        let said = opening_note(&name);
+        for opened in self.open.values_mut() {
+            if opened
+                .app
+                .status
+                .as_ref()
+                .is_some_and(|s| s.message == said)
+            {
+                opened.app.status = None;
+            }
+        }
+        if self.note.as_ref().is_some_and(|(n, _)| *n == said) {
+            self.note = None;
+        }
     }
 
     /// A press of `q` that would end the TUI, from the app of `from` or
@@ -272,4 +301,9 @@ impl Grove {
             _ => false,
         }
     }
+}
+
+/// What the grove says while a project opens, on the app in front.
+pub(super) fn opening_note(name: &str) -> String {
+    format!("opening {name}…")
 }

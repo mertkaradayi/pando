@@ -25,7 +25,7 @@ impl Grove {
             return;
         }
         self.opening.push(summary.id.clone());
-        self.say(format!("opening {}…", summary.name), false);
+        self.say(super::deliver::opening_note(&summary.name), false);
         #[cfg(test)]
         {
             self.open_requests.push(summary.id.clone());

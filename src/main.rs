@@ -130,7 +130,17 @@ fn run(cli: Cli) -> Result<()> {
     let project = match project::discover(&cwd, &home) {
         Ok(project) => project,
         Err(e) if cli.command.is_none() && std::io::stdout().is_terminal() => {
-            return tui::run_home(home, Some(format!("{e:#}")));
+            let why = format!("{e:#}");
+            // Not being in a repository is why the home is open, not a
+            // fault: said as where pando is, with what it shows instead.
+            let why = match why.starts_with("not inside a git repository") {
+                true => format!(
+                    "{} is no repository · here is every project pando knows",
+                    cwd.display()
+                ),
+                false => why,
+            };
+            return tui::run_home(home, Some(why));
         }
         Err(e) => return Err(e),
     };

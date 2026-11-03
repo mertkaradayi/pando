@@ -1308,3 +1308,41 @@ fn the_website_documents_the_grove_and_its_layout() {
         assert!(grove.contains(&kbd), "{key} in the grove's section");
     }
 }
+
+// Found in a real terminal: "opening api…" was said on `shop`, in front
+// when `]` began the open, and greeted the developer on coming back.
+#[test]
+fn the_opening_note_goes_once_the_project_has_opened() {
+    let mut grove = a_grove();
+    press(&mut grove, KeyCode::Char(']'));
+    let said = |g: &Grove, id: &str| g.open[id].app.status.as_ref().map(|s| s.message.clone());
+    assert_eq!(
+        said(&grove, &id_of("shop")).as_deref(),
+        Some("opening api…")
+    );
+    grove.handle_event(GroveEvent::Opened(
+        id_of("api"),
+        Box::new(Ok(app_for("api"))),
+    ));
+    press(&mut grove, KeyCode::Char('['));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    assert_ne!(
+        said(&grove, &id_of("shop")).as_deref(),
+        Some("opening api…")
+    );
+}
+
+// `tab` gives the keys to the list of the project in front: with none in
+// front there is no list, so the column does not offer it.
+#[test]
+fn the_column_offers_tab_only_with_a_project_in_front() {
+    let mut grove = a_grove();
+    grove.focus = Focus::Column;
+    let with = text_of(&draw(&mut grove, 140, 40));
+    assert!(with.contains("tab list"), "{with}");
+    grove.open.clear();
+    grove.front = None;
+    let home = text_of(&draw(&mut grove, 140, 40));
+    assert!(!home.contains("tab list"), "{home}");
+    assert!(home.contains("⏎ open"), "{home}");
+}
