@@ -681,7 +681,10 @@ registry: pando ran there. `id`, `root`, `name` and `repos` are what
 beside its state. `moved` is true when that repository is no longer
 there, or its path now belongs to another project: such a project is
 listed so it can be found, and is not one to act on — `pando doctor`
-in the repository's new place offers to adopt it.
+in the repository's new place offers to adopt it. A project whose
+state records no checkout that is still there, and that has no registry,
+is listed as moved with an empty `root` and the name its id carries;
+any pando command run in its repository registers it again.
 
 Projects come in a fixed order: those with something up or starting
 first, then those with only failures, then idle ones, then moved ones;

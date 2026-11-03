@@ -72,7 +72,12 @@ pub fn ls_machine_text_with<W: Write>(home: &Path, out: &mut W, view: &LsView) -
         let name = pad(&summary.name, name_width);
         let counts = pad(counts, counts_width);
         let lead = format!("{mark} {name}  {counts}");
-        let root = style.tilde(&summary.root.display().to_string());
+        // No record says where it is: the place of a path is how to
+        // bring it back.
+        let root = match summary.root.as_os_str().is_empty() {
+            true => "not located · run pando in its repository once".to_string(),
+            false => style.tilde(&summary.root.display().to_string()),
+        };
         let room = view.width.saturating_sub(text_width(&lead) + 2);
         let mut line = format!(
             "{} {}  {}",

@@ -37,8 +37,10 @@ impl KnownProject {
 /// made it and ran nothing there, or something else put it there. One
 /// with a state file and no registry was registered before registries
 /// existed; its root is recovered from the checkouts it records and its
-/// registry written then, once. One whose root cannot be worked out is
-/// left out, since there is nowhere to say it is.
+/// registry written then, once. One whose root cannot be worked out —
+/// every checkout it records is gone — is still listed, as moved, under
+/// the name its directory carries and an empty root, and nothing is
+/// written: running pando in its repository once registers it again.
 pub fn known(home: &Path) -> Vec<KnownProject> {
     project::project_dirs(home)
         .into_iter()
@@ -49,13 +51,19 @@ pub fn known(home: &Path) -> Vec<KnownProject> {
 fn known_at(id: String, dir: PathBuf) -> Option<KnownProject> {
     let registered = match project::registered(&dir) {
         Some(registered) => registered,
-        None if dir.join("state.json").is_file() => {
-            let recovered = recover_registry(&id, &dir)?;
-            // Not worth failing a listing over: the next one recovers it
-            // again.
-            let _ = project::remember_as(&dir, &recovered);
-            recovered
-        }
+        None if dir.join("state.json").is_file() => match recover_registry(&id, &dir) {
+            Some(recovered) => {
+                // Not worth failing a listing over: the next one recovers
+                // it again.
+                let _ = project::remember_as(&dir, &recovered);
+                recovered
+            }
+            None => Registered {
+                root: PathBuf::new(),
+                name: name_of(&id),
+                repos: Vec::new(),
+            },
+        },
         None => return None,
     };
     let moved = registered.moved_from(&id);
@@ -65,4 +73,19 @@ fn known_at(id: String, dir: PathBuf) -> Option<KnownProject> {
         registered,
         moved,
     })
+}
+
+/// The display name in a project's id, `<name>-<8 hex>`: the whole id
+/// when it has no such tail.
+fn name_of(id: &str) -> String {
+    match id.rsplit_once('-') {
+        Some((name, hash))
+            if !name.is_empty()
+                && hash.len() == 8
+                && hash.bytes().all(|b| b.is_ascii_hexdigit()) =>
+        {
+            name.to_string()
+        }
+        _ => id.to_string(),
+    }
 }

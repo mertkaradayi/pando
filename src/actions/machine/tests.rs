@@ -445,3 +445,23 @@ fn a_port_two_projects_claim_is_a_clash_and_one_project_twice_is_not() {
     want.sort();
     assert_eq!(by, want);
 }
+
+// Found on the maintainer's machine: a project whose one recorded
+// worktree had been removed vanished from `ls --all` and the grove.
+#[test]
+fn a_project_nothing_locates_is_listed_moved_and_left_unregistered() {
+    let dir = tempdir().unwrap();
+    let gone = dir.path().join("worktrees").join("feat+old");
+    let project = ProjectRef::from_root(dir.path().join("acme-shop")).unwrap();
+    let home = dir.path().join("home");
+    let project_dir = unregistered_dir(&home, &project);
+    record(&project_dir, &[("feat+old", &gone)]);
+
+    let found = known(&home);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].id, project.id);
+    assert_eq!(found[0].registered.name, "acme-shop");
+    assert_eq!(found[0].registered.root, PathBuf::new());
+    assert!(found[0].moved);
+    assert_eq!(project::registered(&project_dir), None, "nothing written");
+}

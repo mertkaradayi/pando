@@ -6404,3 +6404,26 @@ fn ls_all_says_so_when_pando_knows_no_project() {
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["projects"], serde_json::json!([]));
 }
+
+#[test]
+fn ls_all_says_how_to_locate_a_project_nothing_records_the_place_of() {
+    let dir = tempdir().unwrap();
+    let project_dir = dir.path().join("projects").join("acme-shop-1fb718a9");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let mut store = crate::state::State::new();
+    store.worktrees.insert(
+        "feat+old".into(),
+        crate::state::WorktreeRecord::new(dir.path().join("gone"), true),
+    );
+    crate::state::save(&project_dir.join("state.json"), &store).unwrap();
+    let text = capture(|b| ls_machine_text_with(dir.path(), b, &LsView::plain(120)));
+    assert!(text.contains("acme-shop"), "{text}");
+    assert!(
+        text.contains("not located · run pando in its repository once"),
+        "{text}"
+    );
+    let json = capture(|b| ls_machine_json(dir.path(), b));
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["projects"][0]["root"], "");
+    assert_eq!(v["projects"][0]["moved"], true);
+}
