@@ -35,7 +35,7 @@ own, inside `.git`, removed when it is done.
    file, which would be a file in their repository:
 
    ```bash
-   pando init --answers - --dry-run    # JSON on stdin; writes nothing
+   pando init --answers - --dry-run    # JSON on stdin; writes no config
    pando init --answers -              # the same, written
    pando init --yes                    # then pando's choice for the rest
    ```

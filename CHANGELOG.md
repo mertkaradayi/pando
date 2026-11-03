@@ -14,8 +14,8 @@ may change behaviour.
   first, each with what it has up, starting, failed and stopped, its
   live worktrees' processes and ports, and a port two projects claim
   marked. `--json` is a published shape, documented in `agent/json.md`.
-  It reads each project's state the way `status` does and saves
-  nothing.
+  It reads each project's state the way `status` does and saves none
+  of it.
 - The TUI's grove: a column left of the worktrees lists every project
   pando knows, the ones with something up first, each a stem in the
   list's glyphs, all standing on one root line that lights while
@@ -37,7 +37,8 @@ may change behaviour.
   every project pando knows, drawn as the brand's grove with a stem for
   each, in leaf when something of it is up.
 - Each project's directory under pando's home records where its
-  repository is, in `project.json`, written when pando runs there. A
+  repository is, in `project.json`, written when pando runs there,
+  whatever the command, a read-only one included. A
   project pando ran in before is recovered from the checkouts its state
   records, and one whose repository has moved is listed as moved.
 

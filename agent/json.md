@@ -345,7 +345,11 @@ Four more facts about `slots` that are not visible in the shape:
 
 The whole report, plus the exit code as a value. It probes this machine —
 `bash -lc`, the tools on `PATH`, the engines a recipe needs — so it is the
-half `signals` deliberately leaves out. It writes nothing anywhere.
+half `signals` deliberately leaves out. It writes no config, state or
+log. The one write it may make is the one every command may: a
+project's registry, `project.json` under pando's home, written when it
+is missing or says another root — once for a project pando ran in
+before there were registries.
 
 ```jsonc
 {
