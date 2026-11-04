@@ -175,10 +175,14 @@ impl ProjectRef {
 /// all beside one would be noise, and a list nobody asked to publish.
 /// `None` for a multi-repo project itself.
 pub fn folder_of(project: &ProjectRef, home: &Path) -> Option<ProjectRef> {
+    folder_of_in(project, &Places::here(home))
+}
+
+pub(super) fn folder_of_in(project: &ProjectRef, places: &Places) -> Option<ProjectRef> {
     if project.is_multi_repo() {
         return None;
     }
-    let folder = known_multi_repo(project.root.parent()?, home)?;
+    let folder = known_multi_repo(project.root.parent()?, places)?;
     let name = project.root.file_name()?.to_str()?;
     folder
         .repos
@@ -215,6 +219,89 @@ pub const PROJECTS_DIR: &str = "projects";
 /// repository's project, and `pando` inside it says so.
 const FIRST_SIGHT_REPOS: usize = 2;
 
+/// Whether [`discover_as`] may take a folder of repositories pando has
+/// never run as a project of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirstSight {
+    /// A command was given: a folder of [`FIRST_SIGHT_REPOS`] or more
+    /// repositories is their project. Only `new` and `init` write it down.
+    Allow,
+    /// `pando` with no command, which opens the TUI and would make the
+    /// folder a project by looking at it: an unknown folder of
+    /// repositories is an [`UnknownFolder`] instead.
+    Deny,
+}
+
+/// A folder of repositories pando does not know, met where
+/// [`FirstSight::Deny`] keeps it from becoming a project by a look.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownFolder {
+    pub dir: PathBuf,
+    pub repos: Vec<String>,
+}
+
+impl UnknownFolder {
+    /// Its repositories, the first three by name and how many more.
+    pub fn names(&self) -> String {
+        let shown: Vec<&str> = self.repos.iter().take(3).map(String::as_str).collect();
+        match self.repos.len().saturating_sub(shown.len()) {
+            0 => shown.join(", "),
+            more => format!("{}, … {more} more", shown.join(", ")),
+        }
+    }
+}
+
+impl std::fmt::Display for UnknownFolder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} holds {} repositories ({}) that pando does not know as one project — \
+             `pando init` or `pando new <branch>` here makes them one",
+            self.dir.display(),
+            self.repos.len(),
+            self.names()
+        )
+    }
+}
+
+impl std::error::Error for UnknownFolder {}
+
+/// Where discovery looks from: pando's home, and the user's home
+/// directory, which a test chooses.
+pub(super) struct Places<'a> {
+    pub(super) home: &'a Path,
+    /// Canonical, and `None` when the OS names none.
+    pub(super) user_home: Option<PathBuf>,
+}
+
+impl<'a> Places<'a> {
+    /// `home` beside the user's home directory as the OS names it.
+    pub(super) fn here(home: &'a Path) -> Self {
+        Self::with(home, crate::platform::dirs::home())
+    }
+
+    pub(super) fn with(home: &'a Path, user_home: Option<PathBuf>) -> Self {
+        Self {
+            home,
+            user_home: user_home
+                .filter(|h| h.is_absolute())
+                .map(|h| canonicalize(&h)),
+        }
+    }
+
+    /// Whether `dir`, a canonical folder, can never be a project of the
+    /// repositories in it: the root of the filesystem, the user's home
+    /// directory — where tools clone their own repositories (a shell
+    /// framework, a plugin manager) beside whatever else lives there — and
+    /// any folder pando's own home is in, which would put its state inside
+    /// the project it keeps it for.
+    pub(super) fn never_a_folder_project(&self, dir: &Path) -> bool {
+        dir.parent().is_none()
+            || self.user_home.as_deref() == Some(dir)
+            || crate::paths::resolve_for_compare(self.home).starts_with(dir)
+    }
+}
+
 /// The project containing `cwd`, or an error naming why not.
 ///
 /// A repository, as git finds it from `cwd`; or a multi-repo project: from
@@ -228,12 +315,33 @@ const FIRST_SIGHT_REPOS: usize = 2;
 /// From a repository's main checkout it is that repository, even inside a
 /// folder pando knows as a multi-repo project: a developer who used pando
 /// there before keeps what they had.
+///
+/// A folder the user's home directory is, or pando's home is in, is never
+/// a project of the repositories in it, known or not.
 pub fn discover(cwd: &Path, home: &Path) -> Result<ProjectRef> {
+    discover_as(cwd, home, FirstSight::Allow)
+}
+
+/// [`discover`], with whether an unknown folder of repositories may be
+/// taken as their project at first sight. Under [`FirstSight::Deny`] the
+/// error for one is an [`UnknownFolder`].
+pub fn discover_as(cwd: &Path, home: &Path, sight: FirstSight) -> Result<ProjectRef> {
+    discover_in(cwd, &Places::here(home), sight)
+}
+
+pub(super) fn discover_in(cwd: &Path, places: &Places, sight: FirstSight) -> Result<ProjectRef> {
     let out = git(cwd, ["worktree", "list", "--porcelain"]);
     let out = match out {
         Ok(o) if o.status.success() => o,
-        Ok(_) => match multi_repo_above(cwd, home) {
-            Some(project) => return Ok(project),
+        Ok(_) => match multi_repo_above(cwd, places) {
+            Some((project, Sight::First)) if sight == FirstSight::Deny => {
+                return Err(UnknownFolder {
+                    dir: project.root,
+                    repos: project.repos,
+                }
+                .into());
+            }
+            Some((project, _)) => return Ok(project),
             None => bail!(
                 "not inside a git repository, nor a folder of them: {}",
                 cwd.display()
@@ -256,7 +364,7 @@ pub fn discover(cwd: &Path, home: &Path) -> Result<ProjectRef> {
             root.display()
         );
     }
-    if let Some(project) = set_of_checkout(cwd, &root, home) {
+    if let Some(project) = set_of_checkout(cwd, &root, places) {
         return Ok(project);
     }
     ProjectRef::from_root(&root)
@@ -265,35 +373,46 @@ pub fn discover(cwd: &Path, home: &Path) -> Result<ProjectRef> {
 /// The multi-repo project whose set holds the checkout `cwd` is in, when
 /// it is in one: a linked worktree of `main` under `main`'s own name, in a
 /// directory beside which no repository is, of a folder pando knows.
-fn set_of_checkout(cwd: &Path, main: &Path, home: &Path) -> Option<ProjectRef> {
+fn set_of_checkout(cwd: &Path, main: &Path, places: &Places) -> Option<ProjectRef> {
     let cwd = canonicalize(cwd);
     let checkout = cwd.ancestors().find(|dir| dir.join(".git").exists())?;
     if !checkout.join(".git").is_file() {
         return None;
     }
     let set = checkout.parent()?;
-    let root = set_root(set, home)?;
+    let root = set_root(set, places)?;
     (canonicalize(main).parent() == Some(root.as_path())).then_some(())?;
-    known_multi_repo(&root, home)
+    known_multi_repo(&root, places)
+}
+
+/// How a multi-repo project was found: known to the home, or taken at
+/// first sight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Sight {
+    Known,
+    First,
 }
 
 /// The multi-repo project `cwd` is in when git finds no repository there:
 /// the first of `cwd` and its parents that is a set of a known folder, or
 /// a folder of repositories — any that pando knows, and `cwd` itself when
-/// it holds [`FIRST_SIGHT_REPOS`] or more.
-fn multi_repo_above(cwd: &Path, home: &Path) -> Option<ProjectRef> {
+/// it holds [`FIRST_SIGHT_REPOS`] or more and is not a folder that is
+/// never a project ([`Places::never_a_folder_project`]).
+fn multi_repo_above(cwd: &Path, places: &Places) -> Option<(ProjectRef, Sight)> {
     let cwd = canonicalize(cwd);
     for dir in cwd.ancestors() {
-        if let Some(root) = set_root(dir, home) {
-            return known_multi_repo(&root, home);
+        if let Some(root) = set_root(dir, places) {
+            return known_multi_repo(&root, places).map(|project| (project, Sight::Known));
         }
-        if let Some(project) = known_multi_repo(dir, home) {
-            return Some(project);
+        if let Some(project) = known_multi_repo(dir, places) {
+            return Some((project, Sight::Known));
         }
-        if dir == cwd {
+        if dir == cwd && !places.never_a_folder_project(dir) {
             let repos = repos_in(dir);
-            if repos.len() >= FIRST_SIGHT_REPOS {
-                return ProjectRef::multi_repo(dir, repos).ok();
+            if repos.len() >= FIRST_SIGHT_REPOS
+                && let Ok(project) = ProjectRef::multi_repo(dir, repos)
+            {
+                return Some((project, Sight::First));
             }
         }
     }
@@ -301,9 +420,13 @@ fn multi_repo_above(cwd: &Path, home: &Path) -> Option<ProjectRef> {
 }
 
 /// `dir` as a project pando already knows as several repositories: its
-/// project directory is in `home`, and repositories are under it.
-fn known_multi_repo(dir: &Path, home: &Path) -> Option<ProjectRef> {
+/// project directory is in `home`, and repositories are under it. Never a
+/// folder that is never a project, whatever the home holds.
+fn known_multi_repo(dir: &Path, places: &Places) -> Option<ProjectRef> {
     if dir.join(".git").exists() {
+        return None;
+    }
+    if places.never_a_folder_project(&canonicalize(dir)) {
         return None;
     }
     let repos = repos_in(dir);
@@ -311,16 +434,18 @@ fn known_multi_repo(dir: &Path, home: &Path) -> Option<ProjectRef> {
         return None;
     }
     let project = ProjectRef::multi_repo(dir, repos).ok()?;
-    home.join(PROJECTS_DIR)
+    places
+        .home
+        .join(PROJECTS_DIR)
         .join(&project.id)
         .is_dir()
         .then_some(project)
 }
 
 /// The folder `dir` is a set of, when it is one of a folder pando knows.
-fn set_root(dir: &Path, home: &Path) -> Option<PathBuf> {
+fn set_root(dir: &Path, places: &Places) -> Option<PathBuf> {
     let root = set_folder(dir)?;
-    known_multi_repo(&root, home).map(|_| root)
+    known_multi_repo(&root, places).map(|_| root)
 }
 
 /// The folder `dir` looks like a set of: no checkout itself, and every

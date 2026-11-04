@@ -207,6 +207,100 @@ fn a_plain_folder_below_a_known_one_finds_it_and_an_unknown_one_does_not() {
 }
 
 #[test]
+fn a_folder_holding_the_pando_home_is_never_a_project_of_its_repositories() {
+    // The maintainer's home directory: tool clones beside `.pando`.
+    let dir = tempdir().unwrap();
+    let folder = folder_of_repos(dir.path());
+    let home = folder.join(".pando");
+    let err = discover(&folder, &home).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("not inside a git repository, nor a folder of them"),
+        "{err:#}"
+    );
+    // Not when the home does not exist yet, nor when it already has a
+    // directory for the folder, nor from a plain folder below it.
+    let project =
+        ProjectRef::multi_repo(&folder, vec!["backend".into(), "frontend".into()]).unwrap();
+    std::fs::create_dir_all(home.join(PROJECTS_DIR).join(&project.id)).unwrap();
+    assert!(discover(&folder, &home).is_err());
+    assert!(discover(&folder.join("docs"), &home).is_err());
+    assert_eq!(
+        folder_of(&discover(&folder.join("backend"), &home).unwrap(), &home),
+        None
+    );
+    // Each repository in it is still its own project.
+    assert_eq!(
+        discover(&folder.join("backend"), &home).unwrap().root,
+        folder.join("backend")
+    );
+}
+
+#[test]
+fn the_users_home_directory_is_never_a_project_of_its_repositories() {
+    use super::discover::{Places, discover_in};
+    let dir = tempdir().unwrap();
+    let folder = folder_of_repos(dir.path());
+    let elsewhere = dir.path().join("pando-home");
+    let places = Places::with(&elsewhere, Some(folder.clone()));
+    for sight in [FirstSight::Allow, FirstSight::Deny] {
+        let err = discover_in(&folder, &places, sight).unwrap_err();
+        assert!(
+            format!("{err:#}").starts_with("not inside a git repository"),
+            "{err:#}"
+        );
+    }
+    // Even once a directory for it is there.
+    let project =
+        ProjectRef::multi_repo(&folder, vec!["backend".into(), "frontend".into()]).unwrap();
+    std::fs::create_dir_all(elsewhere.join(PROJECTS_DIR).join(&project.id)).unwrap();
+    assert!(discover_in(&folder.join("docs"), &places, FirstSight::Allow).is_err());
+    // Another user home leaves it a folder of repositories.
+    let other = Places::with(&elsewhere, Some(dir.path().join("someone")));
+    assert_eq!(
+        discover_in(&folder, &other, FirstSight::Deny).unwrap(),
+        project
+    );
+}
+
+#[test]
+fn a_look_never_takes_an_unknown_folder_and_a_command_does() {
+    let dir = tempdir().unwrap();
+    let folder = folder_of_repos(dir.path());
+    let err = discover_as(&folder, no_home(), FirstSight::Deny).unwrap_err();
+    let unknown = err
+        .downcast_ref::<UnknownFolder>()
+        .expect("an unknown folder");
+    assert_eq!(unknown.dir, folder);
+    assert_eq!(unknown.repos, ["backend", "frontend"]);
+    assert!(
+        err.to_string()
+            .contains("`pando init` or `pando new <branch>`"),
+        "{err}"
+    );
+
+    let project = discover_as(&folder, no_home(), FirstSight::Allow).unwrap();
+    let home = home_knowing(dir.path(), &project);
+    // Known, a look finds it like a command.
+    assert_eq!(
+        discover_as(&folder, &home, FirstSight::Deny).unwrap(),
+        project
+    );
+    assert_eq!(
+        discover_as(&folder.join("docs"), &home, FirstSight::Deny).unwrap(),
+        project
+    );
+}
+
+#[test]
+fn an_unknown_folder_names_three_repositories_and_counts_the_rest() {
+    let folder = UnknownFolder {
+        dir: PathBuf::from("/code"),
+        repos: ["a", "b", "c", "d", "e"].map(String::from).to_vec(),
+    };
+    assert_eq!(folder.names(), "a, b, c, … 2 more");
+}
+
+#[test]
 fn a_main_checkout_in_the_folder_is_still_its_own_repository() {
     let dir = tempdir().unwrap();
     let folder = folder_of_repos(dir.path());

@@ -298,7 +298,7 @@
 
 <section>
 <h2 id="repos">Several repositories</h2>
-<p>A product split across repositories cloned side by side is one project. Run <code>pando</code> in the plain folder that holds them:</p>
+<p>A product split across repositories cloned side by side is one project. Run a pando command in the plain folder that holds them; <code>pando init --agent</code> or <code>pando new &lt;branch&gt;</code> makes it one. Until then <code>pando</code> alone there opens <a href="#tui-grove">the grove</a>, so a look at a folder of unrelated clones never makes it a project, and your home directory, or a folder holding pando's own home, never is one:</p>
 <div class="code"><pre class="fit"><span class="w">product/</span>       <span class="d">a plain folder, not a repository</span>
 <span class="d">├──</span> backend/   <span class="d">a git repository</span>
 <span class="d">└──</span> frontend/  <span class="d">a git repository</span></pre></div>

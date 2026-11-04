@@ -484,7 +484,8 @@ Right of it is the TUI of the project in front, exactly as it is when
 pando runs in that project alone. A project opened stays open while
 another is in front, so a start begun in one finishes while you look at
 the next, and `q` asks first when quitting would abandon it. `pando`
-outside any repository opens the grove with no project in front: the
+outside any repository — `cd ~ && pando` — opens the grove with no
+project in front: the
 brand's grove, one stem per project, its name under it, the running ones
 in leaf. `pando ls --all` prints the same from any directory, and
 `--json` is a [published shape](agent/json.md).
@@ -520,7 +521,11 @@ column down to 72 columns, under which it is always the line.
 ### Several repositories
 
 A product split across repositories cloned side by side is one project:
-run `pando` in the folder that holds them.
+run a pando command in the folder that holds them — `pando init --agent`
+or `pando new <branch>` makes it one. `pando` alone there opens the
+grove until then, so a look at a folder of unrelated clones (`~/code`)
+never makes it a project, and your home directory, or any folder that
+holds pando's own home, never is one.
 
 ```text
 product/            a plain folder, not a repository

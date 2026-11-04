@@ -191,3 +191,76 @@ fn a_project_without_a_registry_is_recovered_and_a_moved_one_said_so() {
     assert_eq!(projects[1]["moved"], true, "{v}");
     assert_eq!(projects[0]["moved"], false, "{v}");
 }
+
+/// A folder like a developer's home directory: repositories cloned by
+/// tools directly in it, and nothing that is a project of them.
+fn folder_of_clones(parent: &Path) -> PathBuf {
+    let folder = parent.join("me");
+    for repo in ["iterm", "tpm"] {
+        let at = folder.join(repo);
+        std::fs::create_dir_all(&at).unwrap();
+        common::git(&at, &["init", "--quiet"]);
+    }
+    std::fs::create_dir_all(folder.join("Downloads")).unwrap();
+    std::fs::canonicalize(folder).unwrap()
+}
+
+fn pando_with_home(home: &Path, cwd: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_pando"))
+        .env("PANDO_HOME", home)
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("run pando")
+}
+
+fn projects_in(home: &Path) -> Vec<String> {
+    std::fs::read_dir(home.join("projects"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_folder_holding_the_pando_home_is_no_project_of_its_clones() {
+    common::hermetic_home();
+    let dir = TempDir::new().unwrap();
+    let folder = folder_of_clones(dir.path());
+    let home = folder.join(".pando");
+
+    for args in [&["ls"][..], &["status"], &[]] {
+        let out = pando_with_home(&home, &folder, args);
+        let err = stderr(&out);
+        assert_ne!(out.status.code(), Some(0), "{args:?}: {err}");
+        assert!(!err.contains("inside the repository"), "{args:?}: {err}");
+    }
+    assert!(projects_in(&home).is_empty(), "{:?}", projects_in(&home));
+    ok(pando_with_home(&home, &folder, &["ls", "--all"]));
+}
+
+#[test]
+fn a_look_at_an_unknown_folder_of_repositories_makes_it_no_project() {
+    common::hermetic_home();
+    let dir = TempDir::new().unwrap();
+    let folder = folder_of_clones(dir.path());
+    let home = dir.path().join("pando-home");
+
+    // `pando` with no command (here into a pipe) says how to make it one,
+    // and makes nothing.
+    let out = pando_with_home(&home, &folder, &[]);
+    assert_ne!(out.status.code(), Some(0));
+    assert!(projects_in(&home).is_empty(), "{:?}", projects_in(&home));
+    // A command still takes it, and a read-only one writes nothing.
+    ok(pando_with_home(&home, &folder, &["ls"]));
+    assert!(projects_in(&home).is_empty(), "{:?}", projects_in(&home));
+    let out = pando_with_home(&home, &folder.join("Downloads"), &["ls"]);
+    assert!(
+        stderr(&out).contains("not inside a git repository"),
+        "{}",
+        stderr(&out)
+    );
+}

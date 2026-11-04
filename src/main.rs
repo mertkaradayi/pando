@@ -126,19 +126,34 @@ fn run(cli: Cli) -> Result<()> {
         return pando::cli::ls_machine(&home, json, long, &mut pando::cli::Stdout);
     }
     // `pando` alone outside any repository opens the grove: every project
-    // this machine's pando knows, with none in front.
-    let project = match project::discover(&cwd, &home) {
+    // this machine's pando knows, with none in front. A folder of
+    // repositories pando does not know opens it too: the TUI would make
+    // the folder a project by looking at it, and only a command —
+    // `init` or `new` — says that is what was wanted.
+    let sight = match cli.command {
+        None => project::FirstSight::Deny,
+        Some(_) => project::FirstSight::Allow,
+    };
+    let project = match project::discover_as(&cwd, &home, sight) {
         Ok(project) => project,
         Err(e) if cli.command.is_none() && std::io::stdout().is_terminal() => {
-            let why = format!("{e:#}");
-            // Not being in a repository is why the home is open, not a
-            // fault: said as where pando is, with what it shows instead.
-            let why = match why.starts_with("not inside a git repository") {
-                true => format!(
-                    "{} is no repository · here is every project pando knows",
-                    cwd.display()
+            let style = pando::term::Style::with(false, pando::platform::dirs::home());
+            let why = match e.downcast_ref::<project::UnknownFolder>() {
+                Some(folder) => format!(
+                    "{} holds {} repositories ({}) · `pando init` or `pando new <branch>` here \
+                     makes them one project",
+                    style.tilde(&folder.dir.display().to_string()),
+                    folder.repos.len(),
+                    folder.names()
                 ),
-                false => why,
+                // Not being in a repository is why the home is open, not
+                // a fault: said as where pando is, the reason first so a
+                // narrow screen cuts the path rather than it.
+                None if format!("{e:#}").starts_with("not inside a git repository") => format!(
+                    "no repository here ({}) · here is every project pando knows",
+                    style.tilde(&cwd.display().to_string())
+                ),
+                None => format!("{e:#}"),
             };
             return tui::run_home(home, Some(why));
         }

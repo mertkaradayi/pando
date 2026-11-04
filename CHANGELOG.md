@@ -7,6 +7,17 @@ may change behaviour.
 
 ## Unreleased
 
+### Changed
+
+- `pando` with no command no longer makes a folder of repositories it
+  does not know a project by opening it: it opens the grove and says
+  that `pando init` or `pando new <branch>` there makes them one. A
+  command still takes such a folder as before. Your home directory, the
+  root of the filesystem and any folder holding pando's own home are
+  never a project of the repositories in them, so `cd ~ && pando` opens
+  the grove where it refused with "pando home … is inside the
+  repository ~".
+
 ### Added
 
 - `pando ls --all` lists every project pando knows on this machine, from

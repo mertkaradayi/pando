@@ -23,7 +23,7 @@ mod tests;
 
 pub(crate) use discover::canonicalize;
 pub use discover::{
-    GIT_TIMEOUT, PROJECTS_DIR, ProjectRef, discover, folder_of, git, git_within, linked_gitdir,
-    repos_in, set_folder,
+    FirstSight, GIT_TIMEOUT, PROJECTS_DIR, ProjectRef, UnknownFolder, discover, discover_as,
+    folder_of, git, git_within, linked_gitdir, repos_in, set_folder,
 };
 pub use registry::{PROJECT_FILE, Registered, project_dirs, registered, remember, remember_as};
