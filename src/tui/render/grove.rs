@@ -660,6 +660,94 @@ pub(crate) fn stems_with_room(wants: &[usize], fit: usize, width: usize) -> usiz
     stems
 }
 
+/// The home pane's keys, most needed first, and whether one is never
+/// shed: `⏎` opens, `?` says the rest, `q` leaves.
+const HOME_HINTS: [(&str, &str, bool); 5] = [
+    ("⏎", "open", true),
+    ("j k", "project", false),
+    ("w", "column", false),
+    ("?", "help", true),
+    ("q", "quit", true),
+];
+
+/// The line under the home pane's grove, longest first: the first that
+/// fits whole is said, or none.
+pub(crate) const IDLE_CAPTIONS: [&str; 3] = [
+    "Pando: one aspen, 47,000 stems, one root. Every project, every branch alive.",
+    "Pando: one aspen, 47,000 stems, one root.",
+    "one aspen, one root",
+];
+const ALIVE_CAPTIONS: [&str; 2] = ["one root, every project alive", "every project alive"];
+const EMPTY_CAPTIONS: [&str; 3] = [
+    "no project yet — run pando in a repository and it grows here",
+    "no project yet — run pando in a repository",
+    "no project yet",
+];
+
+/// The home pane's keys in `width` cells, centred, shedding whole keys
+/// from the least needed end until the rest fit.
+fn home_hint_line(hints: &[(&str, &str, bool)], width: usize) -> Line<'static> {
+    const GAP: &str = "  ";
+    let items: Vec<(usize, bool)> = hints
+        .iter()
+        .map(|(key, label, essential)| (text_width(key) + 1 + text_width(label), *essential))
+        .collect();
+    let keep = super::chrome::keep_hints(&items, text_width(GAP), width);
+    let mut spans = Vec::new();
+    for ((key, label, _), keep) in hints.iter().zip(&keep) {
+        if !keep {
+            continue;
+        }
+        if !spans.is_empty() {
+            spans.push(Span::raw(GAP));
+        }
+        spans.push(Span::styled(
+            (*key).to_string(),
+            Style::new().fg(orange()).add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {label}"),
+            Style::new().fg(text_dim()),
+        ));
+    }
+    let used: usize = spans.iter().map(|s| text_width(&s.content)).sum();
+    spans.insert(0, Span::raw(" ".repeat(width.saturating_sub(used) / 2)));
+    super::truncate_line(Line::from(spans), width)
+}
+
+/// A home-pane note in rows of `width` cells, broken only between its
+/// ` · ` parts, each part whole where it fits: a part wider than the
+/// row is the only one wrapped at its words.
+pub(crate) fn note_rows(note: &str, width: usize) -> Vec<String> {
+    let mut rows: Vec<String> = Vec::new();
+    let mut row = String::new();
+    for part in note.split(" · ") {
+        let joined = match row.is_empty() {
+            true => part.to_string(),
+            false => format!("{row} · {part}"),
+        };
+        if text_width(&joined) <= width {
+            row = joined;
+            continue;
+        }
+        if !row.is_empty() {
+            rows.push(std::mem::take(&mut row));
+        }
+        match text_width(part) <= width {
+            true => row = part.to_string(),
+            false => {
+                let mut wrapped = super::wrap_text(part, width);
+                row = wrapped.pop().unwrap_or_default();
+                rows.extend(wrapped);
+            }
+        }
+    }
+    if !row.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
 /// Where the projects the home pane has no stem for are on screen.
 #[derive(Clone, Copy)]
 enum TheRest {
@@ -731,7 +819,7 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove, rest: TheRest) {
     // rather than losing its end, which is usually what to do.
     let note: Vec<String> = grove
         .fresh_note()
-        .map(|note| super::wrap_text(note, width.saturating_sub(4).max(1)))
+        .map(|note| note_rows(note, width.saturating_sub(4).max(1)))
         .unwrap_or_default();
     // Under the picture: the names, a `+n more` when some have no stem,
     // the caption, a blank row, the keys, and the note's rows.
@@ -767,7 +855,12 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove, rest: TheRest) {
                 .iter()
                 .map(|row| art_line_with(row, centre(mark_width), |_, c| art_style(c, alive))),
         );
-        let credit = truncate(&crate::art::credit(), width);
+        // Who made it, without where when both do not fit whole.
+        let credit = crate::art::credit();
+        let credit = match text_width(&credit) <= width {
+            true => credit,
+            false => truncate(&format!("created by {}", crate::art::CREATOR), width),
+        };
         lines.push(Line::from(vec![
             Span::raw(" ".repeat(centre(text_width(&credit)))),
             Span::styled(credit, Style::new().fg(text_muted())),
@@ -873,13 +966,18 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove, rest: TheRest) {
         ]));
     }
     let caption = match () {
-        _ if projects.is_empty() => "no project yet — run pando in a repository and it grows here",
-        _ if alive => "one root, every project alive",
-        _ => "Pando: one aspen, 47,000 stems, one root. Every project, every branch alive.",
+        _ if projects.is_empty() => EMPTY_CAPTIONS.as_slice(),
+        _ if alive => ALIVE_CAPTIONS.as_slice(),
+        _ => IDLE_CAPTIONS.as_slice(),
     };
-    let caption = truncate(caption, art_width.max(1));
+    // The longest that fits whole, or none: a tagline cut is no tagline.
+    let caption = caption
+        .iter()
+        .find(|c| text_width(c) <= width.saturating_sub(2))
+        .copied()
+        .unwrap_or_default();
     lines.push(Line::from(vec![
-        Span::raw(" ".repeat(width.saturating_sub(text_width(&caption)) / 2)),
+        Span::raw(" ".repeat(width.saturating_sub(text_width(caption)) / 2)),
         Span::styled(
             caption,
             Style::new()
@@ -888,36 +986,14 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove, rest: TheRest) {
         ),
     ]));
     lines.push(Line::raw(""));
-    let key =
-        |k: &'static str| Span::styled(k, Style::new().fg(orange()).add_modifier(Modifier::BOLD));
-    let said = |s: &'static str| Span::styled(s, Style::new().fg(text_dim()));
-    // With no project, only what does something.
-    let keys = match grove.summaries.is_empty() {
-        true => vec![
-            key("w"),
-            said(" column  "),
-            key("?"),
-            said(" help  "),
-            key("q"),
-            said(" quit"),
-        ],
-        false => vec![
-            key("⏎"),
-            said(" open  "),
-            key("j k"),
-            said(" project  "),
-            key("w"),
-            said(" column  "),
-            key("?"),
-            said(" help  "),
-            key("q"),
-            said(" quit"),
-        ],
-    };
-    let keys_width: usize = keys.iter().map(|s| text_width(&s.content)).sum();
-    let mut centred = vec![Span::raw(" ".repeat(width.saturating_sub(keys_width) / 2))];
-    centred.extend(keys);
-    lines.push(super::truncate_line(Line::from(centred), width));
+    // With no project, only what does something; on a narrow pane whole
+    // keys go from the least needed, as the footer's do, never half one.
+    let hints: Vec<(&str, &str, bool)> = HOME_HINTS
+        .iter()
+        .copied()
+        .filter(|(key, ..)| !grove.summaries.is_empty() || !matches!(*key, "⏎" | "j k"))
+        .collect();
+    lines.push(home_hint_line(&hints, width));
     for row in note {
         lines.push(Line::from(vec![
             Span::raw(" ".repeat(width.saturating_sub(text_width(&row)) / 2)),

@@ -2409,3 +2409,77 @@ fn the_home_says_where_the_projects_with_no_stem_are() {
         "{text}"
     );
 }
+
+/// The projects of [`shared_starts`], none of them up.
+fn shared_starts_idle() -> Grove {
+    let mut grove = shared_starts();
+    for s in &mut grove.summaries {
+        s.up = 0;
+        s.worktrees.clear();
+    }
+    grove
+}
+
+// On a narrow home pane nothing under the grove is cut: the keys shed
+// whole hints from the least needed end, the tagline is the longest
+// that fits whole or none, and a note breaks only between its parts.
+#[test]
+fn the_home_pane_fits_its_lines_rather_than_cutting_them() {
+    let note = "no repository here (~) · here is every project pando knows";
+    for width in [50, 60, 72, 80, 140] {
+        let mut grove = shared_starts_idle();
+        grove.note = Some((note.into(), std::time::Instant::now()));
+        let text = text_of(&draw(&mut grove, width, 40));
+        let rows: Vec<String> = text
+            .lines()
+            .map(|l| {
+                l.rsplit("││")
+                    .next()
+                    .unwrap_or(l)
+                    .trim_matches(['│', ' '])
+                    .to_string()
+            })
+            .collect();
+        let keys = rows.iter().find(|r| r.contains(" open")).expect("the keys");
+        assert!(!keys.contains('…'), "{width}: {keys}");
+        assert!(keys.starts_with("⏎ open"), "{width}: {keys}");
+        assert!(keys.ends_with("? help  q quit"), "{width}: {keys}");
+        for row in rows
+            .iter()
+            .filter(|r| r.contains("aspen") || r.contains("Pando:"))
+        {
+            assert!(
+                crate::tui::render::IDLE_CAPTIONS.contains(&row.as_str()),
+                "{width}: {row}"
+            );
+        }
+        let said: Vec<&String> = rows
+            .iter()
+            .filter(|r| r.contains("no repository") || r.contains("every project pando"))
+            .collect();
+        let parts = [
+            "no repository here (~)",
+            "here is every project pando knows",
+        ];
+        match said.as_slice() {
+            [one] => assert_eq!(one.as_str(), note, "{width}"),
+            [a, b] => assert_eq!([a.as_str(), b.as_str()], parts, "{width}"),
+            _ => panic!("{width}: {said:?}\n{text}"),
+        }
+        assert!(
+            !rows.iter().any(|r| r.contains("mertk…")),
+            "{width}:\n{text}"
+        );
+    }
+    // Wide enough, every key and the whole tagline.
+    let mut grove = shared_starts_idle();
+    let text = text_of(&draw(&mut grove, 140, 40));
+    assert!(
+        text.contains("⏎ open  j k project  w column  ? help  q quit"),
+        "{text}"
+    );
+    assert!(
+        text.contains(crate::tui::render::IDLE_CAPTIONS[0]),
+        "{text}"
+    );
+}

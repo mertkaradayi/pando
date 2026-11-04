@@ -30,7 +30,7 @@ use detail::render_detail;
 pub(super) use grove::PROJECT_ROOMY_WIDTH;
 pub(super) use grove::render_grove;
 #[cfg(test)]
-pub(crate) use grove::{STEM_LABEL_MIN, column_title, stems_with_room};
+pub(crate) use grove::{IDLE_CAPTIONS, STEM_LABEL_MIN, column_title, stems_with_room};
 use list::render_list;
 pub(super) use list::run_marker;
 use log_viewer::{render_inspect, render_log_viewer};
