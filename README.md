@@ -493,7 +493,8 @@ the next, and `q` asks first when quitting would abandon it. `pando`
 outside any repository — `cd ~ && pando` — opens the grove with no
 project in front: the
 brand's grove, one stem per project, its name under it, the running ones
-in leaf. Begun there, `q` or esc on a project's list goes back to it,
+in leaf; where there are more than the pane can name readably, the first
+in the column's order get a stem and the rest are counted under them. Begun there, `q` or esc on a project's list goes back to it,
 leaving the project open with what is in flight in it, and `q` on the
 home pane quits; begun in a project, `q` quits as it does alone.
 `pando ls --all` prints the same from any directory, and

@@ -28,9 +28,9 @@ use chrome::{header_height, render_footer, render_header};
 use detail::render_detail;
 #[cfg(test)]
 pub(super) use grove::PROJECT_ROOMY_WIDTH;
-#[cfg(test)]
-pub(crate) use grove::column_title;
 pub(super) use grove::render_grove;
+#[cfg(test)]
+pub(crate) use grove::{STEM_LABEL_MIN, column_title, stems_with_room};
 use list::render_list;
 pub(super) use list::run_marker;
 use log_viewer::{render_inspect, render_log_viewer};

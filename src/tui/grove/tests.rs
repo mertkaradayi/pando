@@ -2165,3 +2165,127 @@ fn a_twins_header_says_which_of_its_name_is_in_front() {
     let header = cells(&buf, 0, COLUMN_WIDTH, 120);
     assert!(header.trim_start().starts_with("shop · "), "{header}");
 }
+
+/// Fourteen projects in the column's order: twins in short folders and
+/// long ones, names that share a long start, a long name, dot-folders.
+fn fourteen() -> Grove {
+    let all = [
+        ("app", "work"),
+        ("app", "personal"),
+        ("mono-storefront-checkout", "src"),
+        ("mono-analytics-pipeline", "src"),
+        ("mono-inventory-warehouse", "src"),
+        ("mono-notifications-gateway", "src"),
+        ("mono-web-api", "src"),
+        (".dotfiles", "home"),
+        (".config-sync", "home"),
+        ("really-long-storefront-service-name", "src"),
+        ("docs", "src"),
+        ("plain", "pando-fixture-1793784766375615000"),
+        ("plain", "pando-fixture-1793784766837094000"),
+        ("site", "src"),
+    ]
+    .iter()
+    .map(|(name, folder)| {
+        let mut s = summary(name, 0, 0);
+        s.id = format!("{name}-{folder}");
+        s.root = std::path::PathBuf::from("/tmp").join(folder).join(name);
+        s
+    })
+    .collect();
+    Grove::new_for_test(all)
+}
+
+/// The home pane's row of labels under the stems, and the line under it.
+fn home_labels(text: &str) -> (String, String) {
+    let rows: Vec<&str> = text
+        .lines()
+        .map(|l| l.rsplit("││").next().unwrap_or(l))
+        .collect();
+    let at = rows
+        .iter()
+        .position(|l| l.contains('╺') && l.contains('┻'))
+        .expect("a root line");
+    let at = at
+        + rows[at..]
+            .iter()
+            .skip(1)
+            .position(|l| l.contains('╺'))
+            .map_or(0, |p| p + 1);
+    let row = |i: usize| {
+        rows.get(i)
+            .unwrap_or(&"")
+            .trim_end_matches(['│', ' '])
+            .to_string()
+    };
+    (row(at + 1), row(at + 2))
+}
+
+// With more projects than the home pane can label, it draws a stem only
+// for as many as each keep a readable label, in the column's order, and
+// counts the rest under them: no label is a mark alone or a bare `…`, a
+// twin's number follows part of its name, and no two read alike.
+#[test]
+fn a_crowded_home_draws_only_the_stems_it_can_name() {
+    for reversed in [false, true] {
+        for width in [80, 90, 110, 140] {
+            let mut grove = fourteen();
+            if reversed {
+                grove.summaries.reverse();
+            }
+            let order: Vec<String> = grove.summaries.iter().map(|s| s.name.clone()).collect();
+            let text = text_of(&draw(&mut grove, width, 40));
+            let (row, more) = home_labels(&text);
+            let labels: Vec<String> = row
+                .split("  ")
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect();
+            assert!(
+                labels.len() >= 3 && labels.len() < 14,
+                "{width}: {labels:?}\n{text}"
+            );
+            assert_eq!(
+                more.trim(),
+                format!("+{} more in the column", 14 - labels.len()),
+                "{width}:\n{text}"
+            );
+            for (label, name) in labels.iter().zip(&order) {
+                let head: String = name.chars().take(2).collect();
+                assert!(label.starts_with(&head), "{width}: {labels:?}\n{text}");
+                assert!(text_width(label) >= 4, "{width}: {labels:?}\n{text}");
+                if let Some(at) = label.find('·') {
+                    assert!(label[..at].starts_with(&head), "{width}: {labels:?}");
+                }
+            }
+            for (i, a) in labels.iter().enumerate() {
+                assert!(!labels[i + 1..].contains(a), "{width}: {labels:?}\n{text}");
+            }
+        }
+    }
+}
+
+// The stems the home pane draws: as many as the grove holds while each
+// label keeps its whole or the fewest readable cells, fewer otherwise,
+// never none.
+#[test]
+fn the_home_draws_as_many_stems_as_keep_their_labels() {
+    use crate::tui::render::{STEM_LABEL_MIN, stems_with_room};
+    assert_eq!(stems_with_room(&[4, 4, 4], 10, 40), 3);
+    assert_eq!(stems_with_room(&[30; 14], 22, 110), 9);
+    for width in [40, 60, 80, 110, 140] {
+        let stems = stems_with_room(&[30; 14], 99, width);
+        let rooms = crate::art::share_room(&[30; 14][..stems], width);
+        assert!(
+            rooms.iter().all(|&r| r >= STEM_LABEL_MIN),
+            "{width}: {rooms:?}"
+        );
+        let more = crate::art::share_room(&[30; 14][..stems + 1], width);
+        assert!(
+            more.iter().any(|&r| r < STEM_LABEL_MIN),
+            "{width}: {more:?}"
+        );
+    }
+    assert_eq!(stems_with_room(&[30; 3], 10, 4), 1);
+}

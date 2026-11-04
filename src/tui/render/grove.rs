@@ -628,6 +628,32 @@ fn label_spans(label: &str, parts: &(String, String, bool), style: Style) -> Vec
     spans
 }
 
+/// The fewest cells a stem's label is given, its marks included: room
+/// for a head of its name and a twin's number, so that no label is a
+/// mark alone and two never read alike for being cut to nothing.
+pub(crate) const STEM_LABEL_MIN: usize = 10;
+
+/// How many of the projects wanting `wants` cells, in the column's
+/// order, the home pane draws a stem for in a row `width` wide: no more
+/// than `fit`, the stems the grove holds, and no more than each keep
+/// their whole label or [`STEM_LABEL_MIN`] cells of it. The rest are
+/// counted in the line under them.
+pub(crate) fn stems_with_room(wants: &[usize], fit: usize, width: usize) -> usize {
+    let mut stems = wants.len().min(fit);
+    while stems > 1 {
+        let rooms = crate::art::share_room(&wants[..stems], width);
+        let readable = rooms
+            .iter()
+            .zip(wants)
+            .all(|(&room, &want)| room >= want.min(STEM_LABEL_MIN));
+        if readable {
+            break;
+        }
+        stems -= 1;
+    }
+    stems
+}
+
 /// The home pane, with no project in front: the wordmark, then the grove
 /// with a stem for each project, its name under it and the ones with
 /// something up in leaf, and the keys that open one.
@@ -654,7 +680,25 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
         .iter()
         .filter(|s| !s.moved || s.is_live())
         .collect();
-    let stems = projects.len().min(crate::art::stems_that_fit(art_width));
+    // What each label wants: its name, the folder when another project
+    // has the name, and its marks.
+    let clashing = crate::actions::clashing_projects(&grove.summaries);
+    let failed_only = |s: &ProjectSummary| s.failed > 0 && !s.is_live();
+    let marks = |s: &ProjectSummary| 2 * usize::from(clashing.contains(&s.id));
+    let wants: Vec<usize> = projects
+        .iter()
+        .map(|s| {
+            let twin = s
+                .twin_folder(&grove.summaries)
+                .map_or(0, |t| 1 + text_width(&t.folder));
+            usize::from(failed_only(s)) + text_width(&s.name) + twin + marks(s)
+        })
+        .collect();
+    let stems = stems_with_room(
+        &wants,
+        crate::art::stems_that_fit(art_width),
+        width.saturating_sub(2),
+    );
     let more = projects.len() - stems;
     // A note takes the pane's whole width, not the picture's, and wraps
     // rather than losing its end, which is usually what to do.
@@ -737,23 +781,11 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
         // the room the pane has around its stem: the whole row is shared,
         // the short labels whole and the long alike, the folder gives way
         // first, then the name, and the mark never does.
-        let clashing = crate::actions::clashing_projects(&grove.summaries);
-        let failed = |s: &ProjectSummary| s.failed > 0 && !s.is_live();
-        let marks = |s: &ProjectSummary| 2 * usize::from(clashing.contains(&s.id));
-        let wants: Vec<usize> = shown
-            .iter()
-            .map(|s| {
-                let twin = s
-                    .twin_folder(&grove.summaries)
-                    .map_or(0, |t| 1 + text_width(&t.folder));
-                usize::from(failed(s)) + text_width(&s.name) + twin + marks(s)
-            })
-            .collect();
-        let rooms = crate::art::share_room(&wants, width.saturating_sub(2));
+        let rooms = crate::art::share_room(&wants[..stems], width.saturating_sub(2));
         let mut name_rooms = vec![None; grove.summaries.len()];
         for (s, room) in shown.iter().zip(&rooms) {
             if let Some(i) = grove.summaries.iter().position(|o| o.id == s.id) {
-                name_rooms[i] = Some(room.saturating_sub(marks(s) + usize::from(failed(s))));
+                name_rooms[i] = Some(room.saturating_sub(marks(s) + usize::from(failed_only(s))));
             }
         }
         let names = super::twins::names_apart(&grove.summaries, &name_rooms);
@@ -762,7 +794,7 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
             .map(|s| {
                 let i = grove.summaries.iter().position(|o| o.id == s.id);
                 let (name, twin) = i.and_then(|i| names[i].clone()).unwrap_or_default();
-                let name = match failed(s) && !(name.is_empty() && twin.is_empty()) {
+                let name = match failed_only(s) && !(name.is_empty() && twin.is_empty()) {
                     true => format!("✗{name}"),
                     false => name,
                 };

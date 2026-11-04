@@ -75,12 +75,19 @@ pub(crate) fn names_apart(
     parts
 }
 
-/// A twin's name with its number among the projects of its name.
+/// The cells of its name a numbered twin keeps at least: its number
+/// only ever follows part of its name.
+const NUMBERED_HEAD: usize = 3;
+
+/// A twin's name with its number among the projects of its name, after
+/// a head of the name of [`NUMBERED_HEAD`] cells at least; the name
+/// alone, cut to the room, where not even that fits beside the number.
 fn numbered(name: &str, number: usize, room: usize) -> NameParts {
     let mark = format!(" ·{number}");
-    match room > text_width(&mark) {
+    let head = text_width(name).min(NUMBERED_HEAD);
+    match room >= head + text_width(&mark) {
         true => (truncate(name, room - text_width(&mark)), mark),
-        false => (String::new(), truncate(mark.trim_start(), room)),
+        false => (truncate(name, room), String::new()),
     }
 }
 
