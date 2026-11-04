@@ -21,6 +21,9 @@ may change behaviour.
   repository in reach when the directory holds one; `pando` alone into a
   pipe says it needs a terminal wherever it runs. `pando ls --all`
   answers from a directory that was removed.
+- A pando home or `worktrees_dir` inside a folder of repositories is
+  refused as inside that folder, naming its repositories, rather than
+  inside "the repository" it is not.
 
 ### Added
 

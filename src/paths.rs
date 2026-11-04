@@ -254,7 +254,7 @@ impl PandoPaths {
     pub fn ensure_home(&self) -> Result<()> {
         // The last gate: whatever computed this home, nothing is created
         // until it is proven to sit outside the repository.
-        ensure_outside_repository("pando home", &self.home, self.root(), &[])?;
+        ensure_outside_project("pando home", &self.home, &self.project, &[])?;
         ensure_dir_private(&self.home)?;
         std::fs::create_dir_all(self.project_dir())
             .with_context(|| format!("create {}", self.project_dir().display()))?;
@@ -431,6 +431,29 @@ pub fn ensure_outside_repository(
         }
     }
     Ok(())
+}
+
+/// [`ensure_outside_repository`] for `project`'s main checkout, worded for
+/// what that is: a repository, or a plain folder of them, which no message
+/// should call a repository.
+pub fn ensure_outside_project(
+    label: &str,
+    path: &Path,
+    project: &ProjectRef,
+    worktrees: &[PathBuf],
+) -> Result<()> {
+    if project.is_multi_repo()
+        && resolve_for_compare(path).starts_with(resolve_for_compare(&project.root))
+    {
+        anyhow::bail!(
+            "{label} {} is inside the folder {}, which pando runs as one project of its \
+             repositories ({}) — pando never writes into it; move {label} outside it",
+            path.display(),
+            project.root.display(),
+            project.repos.join(", ")
+        );
+    }
+    ensure_outside_repository(label, path, &project.root, worktrees)
 }
 
 /// Canonicalises the deepest existing ancestor and re-appends the rest, so a
@@ -779,6 +802,23 @@ mod tests {
             format!("{err:#}").contains("inside the repository"),
             "unexpected error: {err:#}"
         );
+        assert!(!home.exists(), "a refused home must not be created");
+    }
+
+    #[test]
+    fn a_home_inside_a_folder_of_repositories_is_refused_as_inside_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap().join("product");
+        std::fs::create_dir_all(&root).unwrap();
+        let project =
+            ProjectRef::multi_repo(&root, vec!["backend".into(), "frontend".into()]).unwrap();
+        let home = root.join("state").join(".pando");
+        let p = PandoPaths::new(&home, project);
+
+        let err = format!("{:#}", p.ensure_home().unwrap_err());
+        assert!(err.contains("inside the folder"), "{err}");
+        assert!(!err.contains("repository"), "{err}");
+        assert!(err.contains("backend, frontend"), "{err}");
         assert!(!home.exists(), "a refused home must not be created");
     }
 

@@ -26,7 +26,7 @@ pub fn validate(config: &Config, project: &ProjectRef) -> Result<()> {
     if let Some(dir) = config.configured_worktrees_dir(&project.root) {
         // Against the repository root only: the fuller check, which also
         // knows about linked worktrees, needs git and runs once at startup.
-        crate::paths::ensure_outside_repository("worktrees_dir", &dir, &project.root, &[])?;
+        crate::paths::ensure_outside_project("worktrees_dir", &dir, project, &[])?;
     }
     validate_processes(config)?;
     validate_services(config)?;
