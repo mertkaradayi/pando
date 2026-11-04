@@ -2289,3 +2289,84 @@ fn the_home_draws_as_many_stems_as_keep_their_labels() {
     }
     assert_eq!(stems_with_room(&[30; 3], 10, 4), 1);
 }
+
+/// Names of their own that share a long start, each up once.
+fn shared_starts() -> Grove {
+    let names = [
+        "mono-storefront-checkout",
+        "mono-analytics-pipeline",
+        "mono-inventory-warehouse",
+        "mono-notifications-gateway",
+        "mono-web-api",
+        "mono-web-admin",
+    ];
+    Grove::new_for_test(names.iter().map(|n| summary(n, 1, 0)).collect())
+}
+
+// Names of their own that would read alike once cut are cut where they
+// differ instead, under the stems and in a column narrowed to its least.
+#[test]
+fn names_that_share_a_long_start_never_read_alike() {
+    for width in [80, 110, 140] {
+        let mut grove = shared_starts();
+        let text = text_of(&draw(&mut grove, width, 40));
+        let (row, _) = home_labels(&text);
+        let labels: Vec<&str> = row
+            .split("  ")
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert!(labels.len() >= 4, "{width}: {labels:?}\n{text}");
+        for (i, a) in labels.iter().enumerate() {
+            assert!(a.starts_with("mo"), "{width}: {labels:?}");
+            assert!(!labels[i + 1..].contains(a), "{width}: {labels:?}\n{text}");
+        }
+        // The column, at its least.
+        let mut grove = shared_starts();
+        grove.focus = Focus::Column;
+        for _ in 0..20 {
+            press(&mut grove, KeyCode::Char('{'));
+        }
+        assert_eq!(grove.width, COLUMN_MIN_WIDTH);
+        let text = text_of(&draw(&mut grove, width, 40));
+        let rows = column_labels(&text, "mo");
+        assert_eq!(rows.len(), 6, "{width}:\n{text}");
+        for (i, a) in rows.iter().enumerate() {
+            assert!(!rows[i + 1..].contains(a), "{width}: {rows:?}\n{text}");
+        }
+    }
+}
+
+// Cut where they differ: a head of the start they share, `…`, and the
+// rest from where each differs.
+#[test]
+fn a_name_cut_alike_is_cut_where_it_differs() {
+    use crate::tui::render::names_apart;
+    let grove = Grove::new_for_test(vec![
+        summary("pando-fixture-alpha", 0, 0),
+        summary("pando-fixture-beta", 0, 0),
+        summary("docs", 0, 0),
+    ]);
+    let names: Vec<String> = names_apart(&grove.summaries, &[Some(10); 3])
+        .into_iter()
+        .map(|p| p.unwrap().0)
+        .collect();
+    assert_eq!(names, ["pando…alp…", "pando…beta", "docs"]);
+    // With the room for an end that already differs, the end cut.
+    let names: Vec<String> = names_apart(&grove.summaries, &[Some(16); 3])
+        .into_iter()
+        .map(|p| p.unwrap().0)
+        .collect();
+    assert_eq!(names, ["pando-fixture-a…", "pando-fixture-b…", "docs"]);
+    let grove = shared_starts();
+    for room in 5..12 {
+        let names: Vec<String> = names_apart(&grove.summaries, &[Some(room); 6])
+            .into_iter()
+            .map(|p| p.unwrap().0)
+            .collect();
+        for (i, a) in names.iter().enumerate() {
+            assert!(text_width(a) <= room, "{room}: {names:?}");
+            assert!(!names[i + 1..].contains(a), "{room}: {names:?}");
+        }
+    }
+}

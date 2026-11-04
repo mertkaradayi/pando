@@ -1,7 +1,8 @@
 //! How projects of one name read apart in the room each label has: the
 //! name, then the part of its folder that differs from every other
 //! project of that name, and a number in the column's order when not even
-//! one character of that part fits.
+//! one character of that part fits. Names of their own that would read
+//! alike once cut are cut where they differ instead.
 
 use crate::actions::{ProjectSummary, TwinFolder};
 
@@ -24,7 +25,9 @@ pub(crate) type NameParts = (String, String);
 /// what that leaves, and gives way to a short head when the folder would
 /// not show where it differs otherwise. Where even that does not fit, or
 /// two would still read alike, every one of that name carries its number
-/// instead, `·1` `·2` in the column's order, so no two labels ever read
+/// instead, `·1` `·2` in the column's order. Projects of different names
+/// whose labels would read alike are each cut where the name differs
+/// from the others', rather than at its end, so no two labels ever read
 /// the same.
 pub(crate) fn names_apart(
     summaries: &[ProjectSummary],
@@ -72,7 +75,96 @@ pub(crate) fn names_apart(
             }
         }
     }
-    parts
+    unalike(summaries, rooms, parts)
+}
+
+/// The labels of `parts` with no two of different names reading alike:
+/// a name cut at its end to the same label as another's is cut where it
+/// differs from those instead, `pando…alp…` and `pando…beta` for
+/// `pando-fixture-alpha` and `pando-fixture-beta`.
+fn unalike(
+    summaries: &[ProjectSummary],
+    rooms: &[Option<usize>],
+    parts: Vec<Option<NameParts>>,
+) -> Vec<Option<NameParts>> {
+    let labels: Vec<Option<String>> = parts
+        .iter()
+        .map(|p| p.as_ref().map(|(name, aside)| format!("{name}{aside}")))
+        .collect();
+    let mut apart = parts.clone();
+    for (i, label) in labels.iter().enumerate() {
+        let (Some(label), Some(room), Some((_, aside))) = (label, rooms[i], &parts[i]) else {
+            continue;
+        };
+        let name = &summaries[i].name;
+        let alike: Vec<&str> = (0..summaries.len())
+            .filter(|&j| labels[j].as_ref() == Some(label) && summaries[j].name != *name)
+            .map(|j| summaries[j].name.as_str())
+            .collect();
+        if alike.is_empty() {
+            continue;
+        }
+        if let Some(cut) = cut_apart(name, &alike, room.saturating_sub(text_width(aside))) {
+            apart[i] = Some((cut, aside.clone()));
+        }
+    }
+    apart
+}
+
+/// The cells of a name's start kept before where it differs, at most.
+const APART_HEAD: usize = 5;
+
+/// The cells kept from where it differs on, its trailing `…` included,
+/// before the head is given any.
+const APART_REST: usize = 4;
+
+/// `name` in `room` cells, cut where it differs from every one of
+/// `others`: a head of its start, `…`, then its end where what follows
+/// that point fits, or the name from that point cut at its end. `None` where the name fits whole,
+/// is wide, holds no more than they share, or the room holds no such cut.
+fn cut_apart(name: &str, others: &[&str], room: usize) -> Option<String> {
+    let chars: Vec<char> = name.chars().collect();
+    let len = chars.len();
+    if text_width(name) <= room || text_width(name) != len {
+        return None;
+    }
+    let differs = others
+        .iter()
+        .map(|o| {
+            chars
+                .iter()
+                .zip(o.chars())
+                .take_while(|(a, b)| **a == *b)
+                .count()
+        })
+        .max()
+        .unwrap_or(0);
+    let rest = len.checked_sub(differs).filter(|&r| r > 0)?;
+    // A character of the head, the `…`, and one of the rest.
+    if differs == 0 || room < 3 {
+        return None;
+    }
+    let head = differs
+        .min(APART_HEAD)
+        .min(room.saturating_sub(1 + rest.min(APART_REST)))
+        .max(1);
+    let left = room.checked_sub(head + 1).filter(|&l| l > 0)?;
+    // Its end where the rest fits, as much of it as the room holds;
+    // from where it differs, cut at its end, where it does not.
+    let (from, tail) = match rest <= left {
+        true => (len - left, chars[len - left..].iter().collect::<String>()),
+        false if left >= 2 => {
+            let kept: String = chars[differs..differs + left - 1].iter().collect();
+            (differs, format!("{kept}…"))
+        }
+        false => return None,
+    };
+    let head: String = chars[..head].iter().collect();
+    // `…` where it skips some of the name.
+    Some(match head.chars().count() == from {
+        true => format!("{head}{tail}"),
+        false => format!("{head}…{tail}"),
+    })
 }
 
 /// The cells of its name a numbered twin keeps at least: its number
