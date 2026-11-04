@@ -1692,6 +1692,10 @@ pub(super) fn render_grove_help(f: &mut Frame, area: Rect, scroll: usize) -> usi
                     "folder",
                     "dimmed after a name: another project has this name",
                 ),
+                (
+                    "·1 ·2",
+                    "after a name, where the folders do not fit: its place among those of the name",
+                ),
             ],
         ),
     )

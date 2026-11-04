@@ -50,7 +50,10 @@ may change behaviour.
   folds to one line above the list (`grove = "on"` keeps it down to 72).
   With one project known it stays hidden until `w`. Two projects of one
   name show the folder each is in, cut where it is too long to the part
-  that tells the two apart, and `!` marks one with a port another
+  that tells it from every other of the name, a long name giving way to
+  a short head of itself so that part still shows; where not one
+  character of it fits, each carries its place in the column instead,
+  `·1` `·2`, so no two read alike. `!` marks one with a port another
   project claims too, kept however short its label is cut.
 - The grove's layout is the developer's, saved in `~/.pando/config.toml`
   by the key that changes it, as `,` saves the list's order: `[ui] grove`

@@ -480,6 +480,11 @@ runs:
 ╰────────────────────────╯   dimmed, by the folder each is in
 ```
 
+The folder is cut to the part that differs, and a long name gives way
+to a short head of itself so that part still shows. Where not one
+character of it fits, each carries its place in the column instead,
+`·1` and `·2`, so no two projects ever read alike.
+
 Right of it is the TUI of the project in front, exactly as it is when
 pando runs in that project alone. A project opened stays open while
 another is in front, so a start begun in one finishes while you look at

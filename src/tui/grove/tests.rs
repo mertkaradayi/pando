@@ -1831,6 +1831,21 @@ fn the_home_help_explains_the_clash_mark_and_a_twins_folder() {
     assert!(all.contains("another project has this name"), "{all}");
 }
 
+/// Projects of one name, each up on one port, in `/tmp/<folder>/<name>`.
+fn twins_in(name: &str, folders: &[&str]) -> Grove {
+    let all = folders
+        .iter()
+        .map(|folder| {
+            let mut s = summary(name, 1, 0);
+            s.id = format!("{name}-{folder}");
+            s.root = std::path::PathBuf::from("/tmp").join(folder).join(name);
+            s.worktrees[0].claimed = [19744].into();
+            s
+        })
+        .collect();
+    Grove::new_for_test(all)
+}
+
 /// Each label in the row of the home pane that names `name` `count`
 /// times, from one `name` to the next.
 fn labels_under_stems(text: &str, name: &str, count: usize) -> Vec<String> {
@@ -1849,6 +1864,134 @@ fn labels_under_stems(text: &str, name: &str, count: usize) -> Vec<String> {
             row[from..to].trim_end_matches(['│', ' ']).to_string()
         })
         .collect()
+}
+
+/// Each row of the column that names `name`, from its glyph to the end
+/// of its name and folder.
+fn column_labels(text: &str, name: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| l.contains("││"))
+        .map(|l| l.split("││").next().unwrap_or(l))
+        .filter(|l| l.contains(name))
+        .map(|l| {
+            let from = l.find(name).unwrap_or(0);
+            l[from..].trim_end_matches(['│', ' ']).to_string()
+        })
+        .collect()
+}
+
+/// No two of `labels` read alike, and each says more than `name` and the
+/// clash mark.
+fn assert_apart(labels: &[String], name: &str, count: usize, text: &str) {
+    assert_eq!(labels.len(), count, "{labels:?}\n{text}");
+    for (i, a) in labels.iter().enumerate() {
+        let bare = a.trim_end_matches(" ! 1").trim_end_matches(" !").trim();
+        assert_ne!(bare, name, "{labels:?}\n{text}");
+        assert!(
+            !bare.ends_with('…') || bare.chars().filter(|&c| c != '…').count() > name.len(),
+            "{labels:?}\n{text}"
+        );
+        for b in &labels[i + 1..] {
+            assert_ne!(a, b, "{labels:?}\n{text}");
+        }
+    }
+}
+
+// Twins whose name is long: the name gives way to a head, so each still
+// shows where its folder differs, in the column and under the stems.
+#[test]
+fn twins_with_a_long_name_keep_where_their_folders_differ() {
+    let name = "really-long-storefront-service-name";
+    for width in [80, 90, 140, 220] {
+        for widen in 0..=4 {
+            let mut grove = twins_in(name, &["first-customer", "second-customer"]);
+            for _ in 0..widen {
+                press(&mut grove, KeyCode::Char('}'));
+            }
+            let text = text_of(&draw(&mut grove, width, 40));
+            let column = column_labels(&text, "reall");
+            assert_eq!(column.len(), 2, "{text}");
+            assert!(column[0].contains("fi"), "{column:?}\n{text}");
+            assert!(column[1].contains("se"), "{column:?}\n{text}");
+            let stems = labels_under_stems(&text, "reall", 2);
+            assert!(stems[0].contains("fi"), "{stems:?}\n{text}");
+            assert!(stems[1].contains("se"), "{stems:?}\n{text}");
+        }
+    }
+}
+
+// At every narrow width, with two twins and four, every twin's label
+// differs from every other's: by its folder where a character of where
+// it differs fits, by its number in the column's order otherwise.
+#[test]
+fn twins_never_read_alike_at_any_width() {
+    let shapes: [&[&str]; 4] = [
+        &["pando-twins-alpha", "pando-twins-beta"],
+        &[
+            "pando-twins-alpha",
+            "pando-twins-beta",
+            "pando-twins-gamma",
+            "pando-twins-delta",
+        ],
+        &["x-alpha", "x-beta"],
+        &["x-alpha", "x-beta", "y-alpha", "y-beta"],
+    ];
+    for folders in shapes {
+        for width in [64, 80, 90] {
+            let mut grove = twins_in("plain", folders);
+            let text = text_of(&draw(&mut grove, width, 40));
+            let stems = labels_under_stems(&text, "plain", folders.len());
+            assert_apart(&stems, "plain", folders.len(), &text);
+            if width >= 80 {
+                let column = column_labels(&text, "plain");
+                assert_apart(&column, "plain", folders.len(), &text);
+            }
+            // The strip, on each of them.
+            for cursor in 0..folders.len() {
+                let mut grove = twins_in("plain", folders);
+                grove.cursor = cursor;
+                let text = text_of(&draw(&mut grove, 60, 30));
+                let strip = text.lines().find(|l| l.contains('◀')).unwrap_or_default();
+                // Something beside the name, before its state.
+                assert!(!strip.contains("● plain · "), "{strip}");
+            }
+        }
+    }
+}
+
+// Where not one character of where their folders differ fits, the twins
+// carry their number in the column's order.
+#[test]
+fn twins_too_narrow_for_their_folders_are_numbered_in_the_columns_order() {
+    use crate::tui::render::names_apart;
+    let grove = twins_in("plain", &["x-alpha", "x-beta", "y-alpha", "y-beta"]);
+    let rooms = vec![Some(9); 4];
+    let names: Vec<String> = names_apart(&grove.summaries, &rooms)
+        .into_iter()
+        .map(|p| {
+            let (name, aside) = p.unwrap();
+            format!("{name}{aside}")
+        })
+        .collect();
+    assert_eq!(names, ["plain ·1", "plain ·2", "plain ·3", "plain ·4"]);
+    // With the room for it, the folders.
+    let rooms = vec![Some(12); 4];
+    let names: Vec<String> = names_apart(&grove.summaries, &rooms)
+        .into_iter()
+        .map(|p| {
+            let (name, aside) = p.unwrap();
+            format!("{name}{aside}")
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "plain x-alp…",
+            "plain x-beta",
+            "plain y-alp…",
+            "plain y-beta"
+        ]
+    );
 }
 
 // A label takes the room the pane has around its stem, not a fixed share

@@ -5618,33 +5618,45 @@ fn a_narrow_header_says_a_folders_branches_differ_rather_than_cutting_them() {
 
 #[test]
 fn a_twin_folder_cut_to_its_room_keeps_where_it_differs() {
-    use super::grove::fit_folder;
+    use super::twins::fit_folder;
     use crate::actions::TwinFolder;
-    let a = TwinFolder {
-        folder: "client-project-a".into(),
-        shared: 15,
+    let twin = |folder: &str, shared: usize, others: &[&str]| TwinFolder {
+        folder: folder.into(),
+        shared,
+        others: others.iter().map(|o| o.to_string()).collect(),
     };
-    let b = TwinFolder {
-        folder: "client-project-b".into(),
-        shared: 15,
-    };
+    let a = twin("client-project-a", 15, &["client-project-b"]);
+    let b = twin("client-project-b", 15, &["client-project-a"]);
     // Whole where it fits.
-    assert_eq!(fit_folder(&a, 20), "client-project-a");
+    assert_eq!(fit_folder(&a, 20).unwrap(), "client-project-a");
     // Cut at the front where the end is what differs.
-    assert_eq!(fit_folder(&a, 8), "…oject-a");
+    assert_eq!(fit_folder(&a, 8).unwrap(), "…oject-a");
     assert_ne!(fit_folder(&a, 4), fit_folder(&b, 4));
-    assert_eq!(fit_folder(&b, 2), "…b");
+    assert_eq!(fit_folder(&b, 2).unwrap(), "…b");
     // Where they differ early, cut at the end as any label is.
-    let early = TwinFolder {
-        folder: "alpha-workspace".into(),
-        shared: 0,
-    };
-    assert_eq!(fit_folder(&early, 6), "alpha…");
+    let early = twin("alpha-workspace", 0, &["beta-workspace"]);
+    assert_eq!(fit_folder(&early, 6).unwrap(), "alpha…");
     // Where the part that differs is long, from where it starts.
-    let long = TwinFolder {
-        folder: "pando-fixture-1793784766375615000".into(),
-        shared: 24,
-    };
-    assert_eq!(fit_folder(&long, 6), "…3756…");
-    assert_eq!(fit_folder(&long, 12), "…66375615000");
+    let long = twin(
+        "pando-fixture-1793784766375615000",
+        24,
+        &["pando-fixture-1793784766837094000"],
+    );
+    assert_eq!(fit_folder(&long, 6).unwrap(), "…3756…");
+    assert_eq!(fit_folder(&long, 12).unwrap(), "…66375615000");
+    // Never a cut that reads as another's: `x-alpha` beside `x-beta` and
+    // `y-alpha` differs from both only in its first character.
+    let x = twin("x-alpha", 2, &["x-beta", "y-alpha"]);
+    assert_eq!(fit_folder(&x, 4).unwrap(), "x-a…");
+    assert_eq!(fit_folder(&x, 3), None);
+    // Two cells show nothing of where four alike folders differ.
+    let four = twin(
+        "pando-twins-alpha",
+        12,
+        &["pando-twins-beta", "pando-twins-gamma", "pando-twins-delta"],
+    );
+    assert_eq!(fit_folder(&four, 2), None);
+    assert_eq!(fit_folder(&four, 4).unwrap(), "…al…");
+    // The same folder twice is never told apart by it.
+    assert_eq!(fit_folder(&twin("work", 4, &["work"]), 10), None);
 }

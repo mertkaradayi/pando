@@ -236,6 +236,17 @@ fn render_column(f: &mut Frame, area: Rect, grove: &mut Grove) {
         .min(grove.summaries.len().saturating_sub(visible));
     let mut rows = Vec::new();
     let clashing = crate::actions::clashing_projects(&grove.summaries);
+    // Every row's name at once: projects of one name are told apart
+    // against each other, in the room each row leaves.
+    let rooms: Vec<Option<usize>> = grove
+        .summaries
+        .iter()
+        .map(|s| {
+            let count_width = row_count_width(grove, s, clashing.contains(&s.id));
+            Some(width.saturating_sub(ROW_LEAD + count_width + usize::from(count_width > 0)))
+        })
+        .collect();
+    let names = super::twins::names_apart(&grove.summaries, &rooms);
     for (row, (i, summary)) in grove
         .summaries
         .iter()
@@ -247,7 +258,7 @@ fn render_column(f: &mut Frame, area: Rect, grove: &mut Grove) {
         let rect = Rect::new(rows_area.x, rows_area.y + row as u16, rows_area.width, 1);
         let selected = i == grove.cursor;
         let marks = RowMarks {
-            twin: summary.twin_folder(&grove.summaries),
+            name: names[i].clone().unwrap_or_default(),
             clash: clashing.contains(&summary.id),
         };
         f.render_widget(
@@ -322,12 +333,27 @@ pub(crate) fn column_title(
     (Line::from(title), Line::from(tally).right_aligned())
 }
 
-/// What sets a project's row apart from the others': the folder its
-/// repository is in when another project has its name, and whether a
-/// port of it is one another project claims too.
+/// What sets a project's row apart from the others': its name fitted to
+/// the row, with the folder its repository is in when another project
+/// has its name, and whether a port of it is one another project claims
+/// too.
 struct RowMarks {
-    twin: Option<crate::actions::TwinFolder>,
+    name: super::twins::NameParts,
     clash: bool,
+}
+
+/// The cells a row's count and clash mark take at its right.
+fn row_count_width(grove: &Grove, summary: &ProjectSummary, clash: bool) -> usize {
+    let count: usize = row_look(grove, summary)
+        .count
+        .iter()
+        .map(|s| text_width(&s.content))
+        .sum();
+    match (clash, count) {
+        (false, _) => count,
+        (true, 0) => 1,
+        (true, _) => count + 2,
+    }
 }
 
 /// One project's row: ` ▸┃● name      2`, the cursor's on a band; a
@@ -355,28 +381,16 @@ fn column_row(
         look.count.insert(0, clash);
     }
     let count_width: usize = look.count.iter().map(|s| text_width(&s.content)).sum();
-    let room = width.saturating_sub(ROW_LEAD + count_width + usize::from(count_width > 0));
-    let name = truncate(&summary.name, room);
-    // The folder in what the name leaves, never at the name's cost.
-    let left = room.saturating_sub(text_width(&name) + 1);
-    let twin = marks
-        .twin
-        .as_ref()
-        .filter(|_| left >= 2)
-        .map(|twin| fit_folder(twin, left));
-    let twin_width = twin.as_ref().map_or(0, |t| 1 + text_width(t));
-    let gap = width.saturating_sub(ROW_LEAD + text_width(&name) + twin_width + count_width);
+    let (name, twin) = marks.name.clone();
+    let gap = width.saturating_sub(ROW_LEAD + text_width(&name) + text_width(&twin) + count_width);
     let mut spans = vec![
         cursor,
         Span::styled(look.stem.0.to_string(), Style::new().fg(look.stem.1)),
         Span::styled(look.glyph.0, Style::new().fg(look.glyph.1)),
         Span::styled(name, name_style(&look)),
     ];
-    if let Some(twin) = twin {
-        spans.push(Span::styled(
-            format!(" {twin}"),
-            Style::new().fg(text_muted()),
-        ));
+    if !twin.is_empty() {
+        spans.push(Span::styled(twin, Style::new().fg(text_muted())));
     }
     spans.push(Span::raw(" ".repeat(gap)));
     spans.extend(look.count);
@@ -505,13 +519,11 @@ fn render_strip(f: &mut Frame, area: Rect, grove: &mut Grove) {
                 + text_width(&state)
                 + text_width(&place);
             let room = (area.width as usize).saturating_sub(fixed);
-            let name = truncate(&summary.name, room);
-            // The folder in what the name leaves, never at the name's cost.
-            let left = room.saturating_sub(text_width(&name) + 1);
-            let twin = summary
-                .twin_folder(&grove.summaries)
-                .filter(|_| left >= 2)
-                .map(|twin| format!(" {}", fit_folder(&twin, left)))
+            // Told apart from the others of its name as the column would
+            // in this room.
+            let rooms = vec![Some(room); grove.summaries.len()];
+            let (name, twin) = super::twins::names_apart(&grove.summaries, &rooms)
+                .swap_remove(i)
                 .unwrap_or_default();
             middle.push(Span::styled(
                 name,
@@ -588,52 +600,6 @@ fn strip_hints(room: usize) -> Vec<Span<'static>> {
         spans.push(Span::raw(" "));
     }
     spans
-}
-
-/// A twin's folder in `room` cells, cut so that what tells it from the
-/// others' survives: at its end, as any label, when the cut keeps where
-/// it differs; at its front otherwise — `client-project-a` and
-/// `client-project-b` read `…ect-a` and `…ect-b` — and at both ends when
-/// even what differs is longer than the room.
-pub(crate) fn fit_folder(twin: &crate::actions::TwinFolder, room: usize) -> String {
-    let folder = &twin.folder;
-    let len = folder.chars().count();
-    // The offsets are in characters, a cell apiece only when nothing in
-    // the folder is wide: a folder that is not is cut plainly.
-    if text_width(folder) <= room || room < 2 || twin.shared + 1 < room || text_width(folder) != len
-    {
-        return truncate(folder, room);
-    }
-    let keep = room - 1;
-    let start = match len - twin.shared.min(len) <= keep {
-        true => len - keep,
-        false => twin.shared,
-    };
-    let rest: String = folder.chars().skip(start).collect();
-    format!("…{}", truncate(&rest, keep))
-}
-
-/// A stem's label in `room` cells, as its name, its folder with the
-/// space before it, and whether the clash's ` !` follows: the name cut
-/// only when the mark leaves it too little, the folder only in what the
-/// name leaves, and gone when that is not two cells.
-fn fit_stem_label(
-    name: &str,
-    twin: Option<&crate::actions::TwinFolder>,
-    clash: bool,
-    room: usize,
-) -> (String, String, bool) {
-    let mark = match clash {
-        true => 2,
-        false => 0,
-    };
-    let name = truncate(name, room.saturating_sub(mark));
-    let left = room.saturating_sub(mark + text_width(&name) + 1);
-    let twin = match twin {
-        Some(twin) if left >= 2 => format!(" {}", fit_folder(twin, left)),
-        _ => String::new(),
-    };
-    (name, twin, clash)
 }
 
 /// A stem's label in its pieces' styles: the name in `style`, its folder
@@ -766,40 +732,46 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
         // the short labels whole and the long alike, the folder gives way
         // first, then the name, and the mark never does.
         let clashing = crate::actions::clashing_projects(&grove.summaries);
-        let named: Vec<String> = shown
-            .iter()
-            .map(|s| match s.failed > 0 && !s.is_live() {
-                true => format!("✗{}", s.name),
-                false => s.name.clone(),
-            })
-            .collect();
+        let failed = |s: &ProjectSummary| s.failed > 0 && !s.is_live();
+        let marks = |s: &ProjectSummary| 2 * usize::from(clashing.contains(&s.id));
         let wants: Vec<usize> = shown
             .iter()
-            .zip(&named)
-            .map(|(s, name)| {
+            .map(|s| {
                 let twin = s
                     .twin_folder(&grove.summaries)
                     .map_or(0, |t| 1 + text_width(&t.folder));
-                let mark = 2 * usize::from(clashing.contains(&s.id));
-                text_width(name) + twin + mark
+                usize::from(failed(s)) + text_width(&s.name) + twin + marks(s)
             })
             .collect();
         let rooms = crate::art::share_room(&wants, width.saturating_sub(2));
+        let mut name_rooms = vec![None; grove.summaries.len()];
+        for (s, room) in shown.iter().zip(&rooms) {
+            if let Some(i) = grove.summaries.iter().position(|o| o.id == s.id) {
+                name_rooms[i] = Some(room.saturating_sub(marks(s) + usize::from(failed(s))));
+            }
+        }
+        let names = super::twins::names_apart(&grove.summaries, &name_rooms);
         let parts: Vec<(String, String, bool)> = shown
             .iter()
-            .zip(&named)
-            .zip(&rooms)
-            .map(|((s, name), &room)| {
-                let twin = s.twin_folder(&grove.summaries);
-                fit_stem_label(name, twin.as_ref(), clashing.contains(&s.id), room)
+            .map(|s| {
+                let i = grove.summaries.iter().position(|o| o.id == s.id);
+                let (name, twin) = i.and_then(|i| names[i].clone()).unwrap_or_default();
+                let name = match failed(s) && !(name.is_empty() && twin.is_empty()) {
+                    true => format!("✗{name}"),
+                    false => name,
+                };
+                (name, twin, clashing.contains(&s.id))
             })
             .collect();
         let labels: Vec<String> = parts
             .iter()
-            .map(|(name, twin, clash)| match (clash, name.is_empty()) {
-                (true, false) => format!("{name}{twin} !"),
-                (true, true) => "!".to_string(),
-                (false, _) => format!("{name}{twin}"),
+            .zip(&rooms)
+            .map(|((name, twin, clash), &room)| match clash {
+                true if room >= 3 && !(name.is_empty() && twin.is_empty()) => {
+                    format!("{name}{twin} !")
+                }
+                true if room >= 1 => "!".to_string(),
+                _ => format!("{name}{twin}"),
             })
             .collect();
         let widths: Vec<usize> = labels.iter().map(|l| text_width(l)).collect();

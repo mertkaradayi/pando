@@ -128,9 +128,9 @@ impl ProjectSummary {
             return None;
         }
         let folder = folder_of(self)?;
-        let shared = twins
+        let others: Vec<String> = twins.iter().filter_map(|other| folder_of(other)).collect();
+        let shared = others
             .iter()
-            .filter_map(|other| folder_of(other))
             .map(|other| {
                 folder
                     .chars()
@@ -140,7 +140,11 @@ impl ProjectSummary {
             })
             .max()
             .unwrap_or(0);
-        Some(TwinFolder { folder, shared })
+        Some(TwinFolder {
+            folder,
+            shared,
+            others,
+        })
     }
 
     /// Whether anything of it is up or coming up.
@@ -169,6 +173,9 @@ pub struct TwinFolder {
     /// The characters its start shares with the most alike of the other
     /// projects' folders: where it first tells itself apart.
     pub shared: usize,
+    /// The folders of the other projects of its name, which a cut of it
+    /// must still differ from.
+    pub others: Vec<String>,
 }
 
 /// A worktree with something recorded up, coming up, or failed.

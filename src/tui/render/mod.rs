@@ -15,6 +15,7 @@ mod hints;
 mod list;
 mod log_viewer;
 mod setup;
+mod twins;
 mod welcome;
 
 use ratatui::Frame;
@@ -34,6 +35,8 @@ use list::render_list;
 pub(super) use list::run_marker;
 use log_viewer::{render_inspect, render_log_viewer};
 use setup::render_setup;
+#[cfg(test)]
+pub(crate) use twins::names_apart;
 use welcome::render_welcome;
 
 /// Below this the list and the detail pane stop both being readable side by
