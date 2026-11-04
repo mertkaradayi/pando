@@ -6429,3 +6429,44 @@ fn ls_all_says_how_to_locate_a_project_nothing_records_the_place_of() {
     assert_eq!(v["projects"][0]["root"], "");
     assert_eq!(v["projects"][0]["moved"], true);
 }
+
+// Two clones of one repository, both main checkouts up on one port:
+// told apart by where each is, and never "plain plain".
+#[test]
+fn a_clash_between_two_projects_of_one_name_names_where_each_is() {
+    let project = |root: &str, claimed: u16| actions::ProjectSummary {
+        id: format!("plain-{:08x}", claimed as u32 + root.len() as u32),
+        name: "plain".into(),
+        root: PathBuf::from(root),
+        repos: Vec::new(),
+        moved: false,
+        up: 1,
+        starting: 0,
+        failed: 0,
+        stopped: 0,
+        worktrees: vec![actions::LiveWorktree {
+            name: "plain".into(),
+            path: PathBuf::from(root),
+            phase: crate::state::Aggregate::Running {
+                since: chrono::Utc::now(),
+            },
+            processes: Default::default(),
+            ports: Default::default(),
+            claimed: [claimed].into(),
+        }],
+        last_used: None,
+        warning: None,
+    };
+    let summaries = vec![project("/work/plain", 8000), project("/tmp/x/plain", 8000)];
+    let lines = super::machine::clash_lines(&summaries, &crate::term::Style::plain());
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].contains("/work/plain (main checkout)"),
+        "{lines:?}"
+    );
+    assert!(
+        lines[0].contains("/tmp/x/plain (main checkout)"),
+        "{lines:?}"
+    );
+    assert!(!lines[0].contains("plain plain"), "{lines:?}");
+}

@@ -115,29 +115,55 @@ pub fn ls_machine_text_with<W: Write>(home: &Path, out: &mut W, view: &LsView) -
             write_worktree(out, view, worktree, worktree_width, &clashing)?;
         }
     }
-    let all = actions::port_clashes(&summaries);
-    if !all.is_empty() {
+    let lines = clash_lines(&summaries, style);
+    if !lines.is_empty() {
         writeln!(out)?;
-        for (port, claims) in all {
-            let by: Vec<String> = claims
-                .iter()
-                .map(|(id, worktree)| {
-                    let name = summaries
-                        .iter()
-                        .find(|s| &s.id == id)
-                        .map_or(id.as_str(), |s| s.name.as_str());
-                    format!("{name} {worktree}")
-                })
-                .collect();
-            writeln!(
-                out,
-                "{} port {port} is claimed by {}",
-                style.paint("!", Paint::Bad),
-                by.join(" and ")
-            )?;
+        for line in lines {
+            writeln!(out, "{line}")?;
         }
     }
     Ok(())
+}
+
+/// The trailer's line for each port two projects claim. A project is
+/// named by its name, or by where it is when another listed project
+/// shares that name — two clones of one repository — and a claim by its
+/// main checkout says so rather than repeating the name.
+pub(super) fn clash_lines(summaries: &[ProjectSummary], style: &Style) -> Vec<String> {
+    let label = |id: &str| -> String {
+        let Some(summary) = summaries.iter().find(|s| s.id == id) else {
+            return id.to_string();
+        };
+        let shared = summaries.iter().filter(|o| o.name == summary.name).count() > 1;
+        match (shared, summary.located()) {
+            (false, _) => summary.name.clone(),
+            (true, true) => style.tilde(&summary.root.display().to_string()),
+            (true, false) => summary.id.clone(),
+        }
+    };
+    actions::port_clashes(summaries)
+        .into_iter()
+        .map(|(port, claims)| {
+            let by: Vec<String> = claims
+                .iter()
+                .map(|(id, worktree)| {
+                    let main = summaries
+                        .iter()
+                        .find(|s| &s.id == id)
+                        .is_some_and(|s| &s.name == worktree);
+                    match main {
+                        true => format!("{} (main checkout)", label(id)),
+                        false => format!("{} {worktree}", label(id)),
+                    }
+                })
+                .collect();
+            format!(
+                "{} port {port} is claimed by {}",
+                style.paint("!", Paint::Bad),
+                by.join(" and ")
+            )
+        })
+        .collect()
 }
 
 /// One live worktree's line under its project: its name, its phase, its
