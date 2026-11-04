@@ -88,7 +88,7 @@ fn app_for(name: &str) -> crate::tui::app::App {
 }
 
 /// Four projects, the way the column orders them: one up, one failed,
-/// one idle, one moved; `shop` open and in front.
+/// one idle, one moved; `shop` open and in front, pando started in it.
 fn a_grove() -> Grove {
     let mut moved = summary("old", 0, 0);
     moved.moved = true;
@@ -99,6 +99,7 @@ fn a_grove() -> Grove {
         moved,
     ];
     let mut grove = Grove::new_for_test(summaries);
+    grove.started_in = Some(id_of("shop"));
     grove.adopt(app_for("shop"), true);
     grove
 }
@@ -2050,4 +2051,89 @@ fn a_stop_from_the_home_pane_leaves_the_home_pane_in_front() {
     // ⏎ still brings it.
     press(&mut grove, KeyCode::Enter);
     assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+}
+
+// Begun on the home pane, a project's list goes back to it on `q`, or on
+// esc once esc has nothing left to clear, keeping the project open with
+// what is in flight in it; `q` on the home pane quits.
+#[test]
+fn begun_on_the_home_pane_q_and_esc_on_a_list_go_back_to_it() {
+    let mut grove = Grove::new_for_test(vec![summary("shop", 1, 0), summary("api", 0, 0)]);
+    press(&mut grove, KeyCode::Enter);
+    grove.handle_event(GroveEvent::Opened(
+        id_of("shop"),
+        Box::new(Ok(app_for("shop"))),
+    ));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    grove
+        .open
+        .get_mut(&id_of("shop"))
+        .unwrap()
+        .app
+        .pending
+        .push(in_flight());
+    // Its footer and its help say where `q` goes.
+    let screen = text_of(&draw(&mut grove, 160, 40));
+    assert!(screen.contains("q home"), "{screen}");
+    press(&mut grove, KeyCode::Char('?'));
+    let help = text_of(&draw(&mut grove, 120, 80));
+    assert!(
+        help.contains("back to the home pane, where q quits"),
+        "{help}"
+    );
+    press(&mut grove, KeyCode::Esc);
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit);
+    assert_eq!(grove.front, None);
+    assert_eq!(grove.focus, Focus::Column);
+    assert_eq!(grove.selected().unwrap().id, id_of("shop"));
+    assert_eq!(grove.open[&id_of("shop")].app.pending.len(), 1);
+    // Back in front: esc clears the filter first, then goes back.
+    press(&mut grove, KeyCode::Enter);
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    grove.front_app_mut().unwrap().filter = "feat".into();
+    press(&mut grove, KeyCode::Esc);
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    assert!(grove.front_app().unwrap().filter.is_empty());
+    press(&mut grove, KeyCode::Esc);
+    assert_eq!(grove.front, None);
+    assert!(!grove.should_quit);
+    // From the column with the project in front, `q` goes back too.
+    press(&mut grove, KeyCode::Enter);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('q'));
+    assert_eq!(grove.front, None);
+    assert!(!grove.should_quit);
+    // On the home pane, `q` quits, asking first about what is in flight.
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit);
+    assert!(
+        grove
+            .fresh_note()
+            .unwrap_or_default()
+            .contains("in flight in shop")
+    );
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit);
+}
+
+// Begun in a project, its list's `q` quits as it does alone, and help
+// says so.
+#[test]
+fn begun_in_a_project_q_on_its_list_quits() {
+    let mut grove = a_grove();
+    let screen = text_of(&draw(&mut grove, 160, 40));
+    assert!(
+        screen.contains("q quit") && !screen.contains("q home"),
+        "{screen}"
+    );
+    press(&mut grove, KeyCode::Char('?'));
+    let help = text_of(&draw(&mut grove, 120, 80));
+    assert!(!help.contains("back to the home pane"), "{help}");
+    press(&mut grove, KeyCode::Esc);
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit);
+    let mut grove = a_grove();
+    press(&mut grove, KeyCode::Esc);
+    assert!(grove.should_quit);
 }

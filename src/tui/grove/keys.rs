@@ -168,10 +168,17 @@ impl Grove {
     /// it has work in flight, and nothing recorded, so its setup screen is
     /// there again the next time it is opened.
     fn close_front_setup(&mut self) {
+        self.go_home(true);
+    }
+
+    /// Back to the home pane from the project in front, the column's
+    /// cursor on it: kept open behind, or, when `close` and nothing is in
+    /// flight in it, closed.
+    pub(super) fn go_home(&mut self, close: bool) {
         let Some(id) = self.front.take() else {
             return;
         };
-        if self.open.get(&id).is_some_and(|o| o.app.pending.is_empty()) {
+        if close && self.open.get(&id).is_some_and(|o| o.app.pending.is_empty()) {
             self.open.remove(&id);
         }
         if let Some(i) = self.summaries.iter().position(|s| s.id == id) {

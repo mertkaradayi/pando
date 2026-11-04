@@ -41,8 +41,9 @@ pub use dialogs::{
 };
 pub use git_menu::{BY_HAND_KEY, GitStage};
 pub use keymap::{
-    COLUMN_KEYS, GROVE_KEYS, INSPECT_LEGEND, KeyHelp, LEADER_KEYS, LIST_KEYS, LIST_LEGEND,
-    LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE, MouseHelp, OVERLAY_KEYS, SETUP_KEYS, SETUP_LEGEND,
+    COLUMN_KEYS, GROVE_KEYS, INSPECT_LEGEND, KeyHelp, LEADER_KEYS, LIST_BACK_HOME, LIST_KEYS,
+    LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE, MouseHelp, OVERLAY_KEYS, SETUP_KEYS,
+    SETUP_LEGEND,
 };
 pub use launch::{
     Launch, LaunchEnv, LaunchRequest, is_terminal_editor, plan_editor, plan_shell, said_after,
@@ -395,6 +396,13 @@ pub struct App {
     /// help lists the grove's keys too. Set by the grove, never by the
     /// app itself.
     pub in_grove: bool,
+    /// pando began on the grove's home pane, outside any repository, so
+    /// the list's `q` and esc go back there rather than quit. Set by the
+    /// grove.
+    pub home_behind: bool,
+    /// `q` or esc asked to go back to the home pane, which the grove does
+    /// after the event.
+    pub wants_home: bool,
     /// The grove's column is drawn beside it and carries pando's name and
     /// build, so the header starts at the project. Set by the grove
     /// before each frame.
@@ -500,6 +508,8 @@ impl App {
             setup_row: SetupRow::default(),
             setup_watch: SetupWatch::default(),
             in_grove: false,
+            home_behind: false,
+            wants_home: false,
             grove_chrome: false,
             detail,
             detail_stacked: false,
@@ -1133,7 +1143,14 @@ impl App {
     /// does not say are isolated. A cancel lands at the start's next safe
     /// point, so a hook it is running finishes first; a `q` meanwhile
     /// quits at once. Anything else in flight is abandoned, as before.
+    ///
+    /// Begun on the grove's home pane, they go back to it instead, which
+    /// abandons nothing: what is in flight goes on behind.
     fn quit(&mut self, key: KeyCode) {
+        if self.home_behind && !self.quitting {
+            self.wants_home = true;
+            return;
+        }
         if self.quitting && key == KeyCode::Char('q') {
             self.should_quit = true;
             return;
@@ -1919,6 +1936,8 @@ impl App {
             setup_row: SetupRow::default(),
             setup_watch: SetupWatch::default(),
             in_grove: false,
+            home_behind: false,
+            wants_home: false,
             grove_chrome: false,
             detail,
             detail_stacked: false,

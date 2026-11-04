@@ -53,9 +53,18 @@ impl Grove {
         repaint
     }
 
-    /// After every event: an app that asked to quit, and the summaries
-    /// read again when an action began or ended anywhere.
+    /// After every event: an app that asked to go back to the home pane
+    /// or to quit, and the summaries read again when an action began or
+    /// ended anywhere.
     fn after_event(&mut self) {
+        let homeward: Vec<String> = self
+            .open
+            .iter_mut()
+            .filter_map(|(id, o)| std::mem::take(&mut o.app.wants_home).then(|| id.clone()))
+            .collect();
+        if homeward.iter().any(|id| Some(id) == self.front.as_ref()) {
+            self.go_home(false);
+        }
         let quitting: Vec<String> = self
             .open
             .iter()

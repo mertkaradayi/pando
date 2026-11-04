@@ -64,7 +64,9 @@ may change behaviour.
   screen is what it was.
 - `pando` outside any repository opens the grove instead of failing:
   every project pando knows, drawn as the brand's grove with a stem for
-  each, in leaf when something of it is up.
+  each, in leaf when something of it is up. Begun there, `q` or esc on
+  a project's list goes back to it, leaving the project open with what
+  is in flight in it, and `q` on the home pane quits.
 - Each project's directory under pando's home records where its
   repository is, in `project.json`, written when pando runs there,
   whatever the command, a read-only one included. A

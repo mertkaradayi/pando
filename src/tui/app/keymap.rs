@@ -7,6 +7,7 @@ use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 
 /// One row of help: what its key column says, every key code the row
 /// stands for, and what they do.
+#[derive(Clone, Copy)]
 pub struct KeyHelp {
     pub keys: &'static str,
     /// What the contract test presses. Empty for a row that is not a bare
@@ -178,6 +179,15 @@ pub const LIST_KEYS: &[KeyHelp] = &[
     ),
     key("ctrl-c", &[], "quit from anywhere"),
 ];
+
+/// The list's `q esc` row, for a project in the grove when pando began on
+/// its home pane: they go back there, and help says so in its place.
+pub const LIST_BACK_HOME: KeyHelp = key(
+    "q esc",
+    &[KeyCode::Char('q'), KeyCode::Esc],
+    "back to the home pane, where q quits — esc first clears the filter, then unmarks every \
+     row; what is in flight goes on",
+);
 
 /// The grove's keys from the list, taken only while nothing else is open
 /// on it: every project pando knows is a key away from any of them.

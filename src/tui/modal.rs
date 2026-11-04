@@ -14,9 +14,9 @@ use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
 use super::app::{
     App, BY_HAND_KEY, BranchLoadState, COLUMN_KEYS, CreateRow, GROVE_KEYS, GitStage,
-    INSPECT_LEGEND, KeyHelp, LIST_KEYS, LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE,
-    MarkedRemoval, Modal, MouseHelp, RemoveBlocker, SETUP_KEYS, SETUP_LEGEND, SPINNER_FRAMES,
-    StatusKind, compact_age, create_rows, pr_rows,
+    INSPECT_LEGEND, KeyHelp, LIST_BACK_HOME, LIST_KEYS, LIST_LEGEND, LIST_MOUSE, LOG_KEYS,
+    LOG_MOUSE, MOUSE_NOTE, MarkedRemoval, Modal, MouseHelp, RemoveBlocker, SETUP_KEYS,
+    SETUP_LEGEND, SPINNER_FRAMES, StatusKind, compact_age, create_rows, pr_rows,
 };
 use super::render::{centered_box, chunk_cells, text_width, truncate, truncate_middle, wrap_text};
 use crate::actions;
@@ -125,11 +125,22 @@ pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Pain
             &app.question_checked,
         ),
         Modal::Help => {
+            // Begun on the grove's home pane, the list's `q` and esc go
+            // back to it.
+            let homeward: Vec<KeyHelp> = LIST_KEYS
+                .iter()
+                .map(|k| match k.keys == LIST_BACK_HOME.keys {
+                    true => LIST_BACK_HOME,
+                    false => *k,
+                })
+                .collect();
             let (keys, legend_title, legend): (&[KeyHelp], &str, &[(&str, &str)]) =
                 if app.setup_screen.is_some() {
                     (SETUP_KEYS, "on the setup screen", SETUP_LEGEND)
                 } else if app.log_view().is_some() {
                     (LOG_KEYS, "in the inspect overlay", INSPECT_LEGEND)
+                } else if app.in_grove && app.home_behind {
+                    (&homeward, "in the list", LIST_LEGEND)
                 } else {
                     (LIST_KEYS, "in the list", LIST_LEGEND)
                 };

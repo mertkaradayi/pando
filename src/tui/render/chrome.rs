@@ -473,11 +473,13 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                 .copied()
                 .filter(|(key, ..)| *key != "esc" || app.filter.is_empty())
                 .collect();
-            hint_line(&hints, hints_width)
+            list_hints(app, &hints, hints_width)
         }
         Mode::Normal => match selected {
-            None => hint_line(&EMPTY_HINTS, hints_width),
-            Some(name) if app.start_to_cancel(&name) => hint_line(&STARTING_HINTS, hints_width),
+            None => list_hints(app, &EMPTY_HINTS, hints_width),
+            Some(name) if app.start_to_cancel(&name) => {
+                list_hints(app, &STARTING_HINTS, hints_width)
+            }
             // A shared worktree's public URL is what gets handed out, so
             // its keys come right after the one that shared it.
             Some(name) if app.public_url_of(&name).is_some() => {
@@ -487,15 +489,16 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                     "t",
                     &[("O", "public", false), ("C", "copy public", false)],
                 );
-                hint_line(&with_pr_hint(app, hints), hints_width)
+                list_hints(app, &with_pr_hint(app, hints), hints_width)
             }
             Some(name) if app.phase_of(&name).is_some() => {
-                hint_line(&with_pr_hint(app, RUNNING_HINTS.to_vec()), hints_width)
+                list_hints(app, &with_pr_hint(app, RUNNING_HINTS.to_vec()), hints_width)
             }
             // Said first, in the footer's own row: what `⏎` would have
             // done, and the pane beside it says where to fix it.
             Some(_) if app.nothing_to_run => {
-                let mut line = hint_line(
+                let mut line = list_hints(
+                    app,
                     &with_pr_hint(app, NOTHING_TO_RUN_HINTS.to_vec()),
                     hints_width.saturating_sub(17),
                 );
@@ -505,7 +508,7 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                 );
                 truncate_line(line, hints_width)
             }
-            Some(_) => hint_line(&with_pr_hint(app, STOPPED_HINTS.to_vec()), hints_width),
+            Some(_) => list_hints(app, &with_pr_hint(app, STOPPED_HINTS.to_vec()), hints_width),
         },
     };
     let line = match marked {
@@ -559,6 +562,21 @@ fn insert_after<'a>(
         .position(|(k, ..)| *k == key)
         .map_or(0, |i| i + 1);
     hints.splice(at..at, extra.iter().copied());
+}
+
+/// The list's hints, its `q` saying where it goes: home, in a grove
+/// begun on its home pane.
+fn list_hints(app: &App, hints: &[(&str, &str, bool)], width: usize) -> Line<'static> {
+    let hints: Vec<(&str, &str, bool)> = hints
+        .iter()
+        .map(
+            |&(key, label, essential)| match (key, app.in_grove && app.home_behind) {
+                ("q", true) => (key, "home", essential),
+                _ => (key, label, essential),
+            },
+        )
+        .collect();
+    hint_line(&hints, width)
 }
 
 pub(super) fn hint_line(hints: &[(&str, &str, bool)], width: usize) -> Line<'static> {

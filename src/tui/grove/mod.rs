@@ -244,6 +244,7 @@ impl Grove {
     pub fn adopt(&mut self, mut app: App, front: bool) {
         let id = app.paths.project.id.clone();
         app.in_grove = true;
+        app.home_behind = self.started_in.is_none();
         app.detail = self.detail;
         app.theme.settings = Arc::clone(&self.theme_settings);
         if let Some(resolved) = &mut self.theme {
