@@ -132,8 +132,11 @@ impl Grove {
     fn opened(&mut self, id: String, result: Result<crate::tui::app::App, String>) -> bool {
         self.opening.retain(|o| o != &id);
         self.forget_opening_note(&id);
+        // A project opened only to stop what `X` confirmed stays behind:
+        // the developer asked for a stop, not to leave where they are.
+        let for_stop = self.stop_after_open.contains_key(&id);
         let wanted = self.front.as_deref() == Some(id.as_str())
-            || self.selected().is_some_and(|s| s.id == id);
+            || (!for_stop && self.selected().is_some_and(|s| s.id == id));
         // Never from under a dialog, a filter or the log viewer opened in
         // the meantime: what is typed there would land on the list of the
         // project that just opened, as its keys.

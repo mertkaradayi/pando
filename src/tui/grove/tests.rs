@@ -2028,3 +2028,26 @@ fn stem_labels_take_the_room_the_pane_has() {
         );
     }
 }
+
+// `X` and `y` on the home pane: the project is opened to stop what was
+// confirmed and stays behind; the home pane stays in front and says what
+// is being stopped.
+#[test]
+fn a_stop_from_the_home_pane_leaves_the_home_pane_in_front() {
+    let mut grove = Grove::new_for_test(vec![summary("shop", 2, 0), summary("api", 0, 0)]);
+    press(&mut grove, KeyCode::Char('X'));
+    press(&mut grove, KeyCode::Char('y'));
+    assert_eq!(grove.open_requests, [id_of("shop")]);
+    let mut shop = app_for("shop");
+    shop.state.worktrees.clear();
+    grove.handle_event(GroveEvent::Opened(id_of("shop"), Box::new(Ok(shop))));
+    assert_eq!(grove.front, None);
+    assert_eq!(grove.focus, Focus::Column);
+    let shop = &grove.open[&id_of("shop")].app;
+    assert!(shop.pending.iter().any(|p| p.kind == PendingKind::StopAll));
+    let note = grove.fresh_note().unwrap_or_default();
+    assert_eq!(note, "stopping feat+up0, feat+up1 in shop…");
+    // ⏎ still brings it.
+    press(&mut grove, KeyCode::Enter);
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+}

@@ -321,19 +321,27 @@ impl Grove {
         self.request_open(&summary);
     }
 
-    /// Stops `names` in `id`'s open app. A stop the app refuses — an
-    /// action already covers one of them — says why on its own header,
-    /// which nobody sees while the project is behind; the grove says it
-    /// then, so a confirmed stop never does nothing in silence.
+    /// Stops `names` in `id`'s open app. Its header says so, which
+    /// nobody sees while the project is behind; the grove says then what
+    /// it stops, and why a stop the app refuses — an action already
+    /// covers one of them — did nothing, so a confirmed stop is never
+    /// silent.
     pub(super) fn stop_in(&mut self, id: &str, names: Vec<String>) {
         let front = self.front.as_deref() == Some(id);
         let Some(opened) = self.open.get_mut(id) else {
             return;
         };
-        if opened.app.stop_everything(names) || front {
+        let listed = names.join(", ");
+        let started = opened.app.stop_everything(names);
+        if front {
             return;
         }
         let app = &opened.app;
+        if started {
+            let name = app.paths.project.display_name.clone();
+            self.say(format!("stopping {listed} in {name}…"), false);
+            return;
+        }
         let why = app
             .status
             .as_ref()

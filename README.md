@@ -499,7 +499,7 @@ in leaf. `pando ls --all` prints the same from any directory, and
 [ ]      bring the previous / next project to the front
 ←        to the column: j k move, ⏎ or → opens one, tab or esc goes back
 X        in the column: stop everything up in that project (asks first,
-         naming each worktree)
+         naming each worktree), leaving it behind what is in front
 w        show or hide the column
 { }      narrow / widen the column
 |        the detail pane right of the list, under it, or hidden

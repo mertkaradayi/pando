@@ -42,7 +42,8 @@ may change behaviour.
   list's glyphs, all standing on one root line that lights while
   anything is up. `[` `]` bring the previous and next project to the
   front, `←` moves to the column, where `⏎` opens a project and `X`
-  stops everything up in it after naming each worktree; `w` hides the
+  stops everything up in it after naming each worktree, leaving what is
+  in front there and saying what it stops; `w` hides the
   column and `{` `}` resize it. A project opened stays open while
   another is in front, so what is in flight in it finishes, and `q`
   asks first when it would abandon work in another project. Where the
