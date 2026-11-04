@@ -232,9 +232,9 @@ impl Grove {
                     crate::actions::ProjectSummary::READ_AGAIN
                 ),
                 true => format!(
-                    "{} is not at {} any more — run pando in it where it is now",
+                    "{} is not at {} any more — `pando doctor` where it is now adopts it",
                     summary.name,
-                    summary.root.display()
+                    crate::tui::render::home_relative(&summary.root)
                 ),
                 false => format!(
                     "{} is not located — {}",

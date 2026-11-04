@@ -1444,6 +1444,50 @@ fn a_project_pando_may_not_read_says_so_rather_than_moved() {
 }
 
 #[test]
+fn a_home_pane_note_keeps_its_end_on_any_width() {
+    // The end of a note is what to do: on a wide screen it takes the
+    // pane's width, past the picture's, and on a narrow one it wraps.
+    let mut moved = summary("plain", 1, 0);
+    moved.moved = true;
+    moved.worktrees[0].processes.insert(
+        "dev".into(),
+        crate::actions::LiveProcess {
+            pid: 4242,
+            phase: crate::state::Phase::Running {
+                since: chrono::Utc::now(),
+            },
+        },
+    );
+    for width in [200, 80] {
+        let mut grove = Grove::new_for_test(vec![moved.clone()]);
+        grove.shown = Shown::Off;
+        press(&mut grove, KeyCode::Char('X'));
+        let note = grove.fresh_note().unwrap_or_default().to_string();
+        assert!(note.ends_with("`kill` ends them"), "{note}");
+        let text = text_of(&draw(&mut grove, width, 40));
+        let flat_of = |text: &str| -> String {
+            text.lines()
+                .map(|l| l.trim_matches(|c: char| c == '│' || c == ' '))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert!(
+            flat_of(&text).contains("`kill` ends them"),
+            "{width}:\n{text}"
+        );
+        // ⏎ on it names where it was and what adopts it where it is.
+        press(&mut grove, KeyCode::Enter);
+        let note = grove.fresh_note().unwrap_or_default().to_string();
+        assert!(
+            note.ends_with("`pando doctor` where it is now adopts it"),
+            "{note}"
+        );
+        let text = text_of(&draw(&mut grove, width, 40));
+        assert!(flat_of(&text).contains("adopts it"), "{width}:\n{text}");
+    }
+}
+
+#[test]
 fn enter_on_a_project_nothing_locates_says_how_to_find_it() {
     let mut lost = summary("lost", 0, 0);
     lost.moved = true;

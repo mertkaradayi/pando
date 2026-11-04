@@ -569,9 +569,15 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
         .collect();
     let stems = projects.len().min(crate::art::stems_that_fit(art_width));
     let more = projects.len() - stems;
+    // A note takes the pane's whole width, not the picture's, and wraps
+    // rather than losing its end, which is usually what to do.
+    let note: Vec<String> = grove
+        .fresh_note()
+        .map(|note| super::wrap_text(note, width.saturating_sub(4).max(1)))
+        .unwrap_or_default();
     // Under the picture: the names, a `+n more` when some have no stem,
-    // the caption, a blank row, the keys, and a note when there is one.
-    let under = 1 + usize::from(more > 0) + 1 + 1 + 1 + usize::from(grove.fresh_note().is_some());
+    // the caption, a blank row, the keys, and the note's rows.
+    let under = 1 + usize::from(more > 0) + 1 + 1 + 1 + note.len();
     let big = WORDMARK_HEIGHT + 2;
     let compact = 2 + 2;
     let mark = match () {
@@ -722,11 +728,10 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
     let mut centred = vec![Span::raw(" ".repeat(width.saturating_sub(keys_width) / 2))];
     centred.extend(keys);
     lines.push(super::truncate_line(Line::from(centred), width));
-    if let Some(note) = grove.fresh_note() {
-        let note = truncate(note, art_width.max(1));
+    for row in note {
         lines.push(Line::from(vec![
-            Span::raw(" ".repeat(width.saturating_sub(text_width(&note)) / 2)),
-            Span::styled(note, Style::new().fg(yellow())),
+            Span::raw(" ".repeat(width.saturating_sub(text_width(&row)) / 2)),
+            Span::styled(row, Style::new().fg(yellow())),
         ]));
     }
     // Centred top to bottom in what is left.
