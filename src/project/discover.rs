@@ -306,7 +306,11 @@ impl<'a> Places<'a> {
             _ if dir.parent().is_none() => Some(NeverWhy::Root),
             _ if self.user_home.as_deref() == Some(dir) => Some(NeverWhy::UserHome),
             _ if crate::paths::resolve_for_compare(self.home).starts_with(dir) => {
-                Some(NeverWhy::HoldsHome(self.home.to_path_buf()))
+                // Resolved as `dir` is, so the sentence naming both writes
+                // each path one way.
+                Some(NeverWhy::HoldsHome(crate::paths::resolve_for_compare(
+                    self.home,
+                )))
             }
             _ => None,
         }
@@ -320,7 +324,7 @@ pub enum NeverWhy {
     Root,
     /// The user's home directory.
     UserHome,
-    /// It holds pando's home, the path here.
+    /// It holds pando's home, the path here, resolved as the folder is.
     HoldsHome(PathBuf),
 }
 

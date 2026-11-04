@@ -548,3 +548,26 @@ fn a_projects_dir_that_cannot_be_read_is_an_error_not_none() {
     std::fs::write(&file, "").unwrap();
     assert!(project_dirs(&file).is_err());
 }
+
+// The folder is said where it resolves to, and so is the home it holds,
+// though the home was named through a symlink: one sentence, one way of
+// writing a path.
+#[test]
+fn a_folder_holding_the_pando_home_names_both_paths_the_same_way() {
+    let dir = tempdir().unwrap();
+    let folder = folder_of_repos(dir.path());
+    let link = dir.path().join("link");
+    crate::platform::files::symlink(&folder, &link).unwrap();
+    let home = link.join(".pando");
+    std::fs::create_dir_all(&home).unwrap();
+    let err = discover(&folder, &home).unwrap_err();
+    assert_eq!(
+        format!("{err:#}"),
+        format!(
+            "not inside a git repository: {} holds pando's home ({}), never a project of the \
+             repositories in it",
+            folder.display(),
+            folder.join(".pando").display()
+        )
+    );
+}
