@@ -6509,3 +6509,35 @@ fn ls_all_fails_on_a_home_it_cannot_read_rather_than_listing_none() {
     let mut out = Vec::new();
     assert!(ls_machine_text_with(dir.path(), &mut out, &LsView::plain(80)).is_err());
 }
+
+// A state file pando may not read is said under the project, its path
+// written with `~` as the project's own path above it is.
+#[test]
+fn ls_all_writes_an_unreadable_state_files_path_under_the_home_with_a_tilde() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempdir().unwrap();
+    let user_home = std::fs::canonicalize(dir.path()).unwrap();
+    let home = user_home.join(".pando");
+    let project_dir = home.join("projects").join("acme-shop-1fb718a9");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let file = project_dir.join("state.json");
+    crate::state::save(&file, &crate::state::State::new()).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::read(&file).is_ok();
+    let view = LsView {
+        width: 200,
+        long: false,
+        style: crate::term::Style::with(false, Some(user_home.clone())),
+    };
+    let text = capture(|b| ls_machine_text_with(&home, b, &view));
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    // Root reads it all the same: nothing to prove then.
+    if readable {
+        return;
+    }
+    assert!(
+        text.contains("~/.pando/projects/acme-shop-1fb718a9/state.json"),
+        "{text}"
+    );
+    assert!(!text.contains(&user_home.display().to_string()), "{text}");
+}

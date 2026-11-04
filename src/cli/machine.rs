@@ -110,7 +110,7 @@ pub fn ls_machine_text_with<W: Write>(home: &Path, out: &mut W, view: &LsView) -
                 out,
                 "    {}",
                 style.paint(
-                    &ellipsize_end(warning, view.width.saturating_sub(4)),
+                    &ellipsize_end(&style.tilde_in(warning), view.width.saturating_sub(4)),
                     Paint::Bad
                 )
             )?;

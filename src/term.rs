@@ -124,6 +124,43 @@ impl Style {
     }
 }
 
+impl Style {
+    /// `text` — an error that quotes paths — with each path in it under
+    /// the home written with `~`, as [`Style::tilde`] writes a path alone.
+    /// A path counts from its start: `/x/home/a` is never `/x~/a`.
+    pub fn tilde_in(&self, text: &str) -> String {
+        let mut homes: Vec<String> = [&self.home, &self.real_home]
+            .into_iter()
+            .flatten()
+            .map(|h| h.to_string_lossy().trim_end_matches('/').to_string())
+            .filter(|h| !h.is_empty())
+            .collect();
+        // The longer first: `/private/tmp/h` before `/tmp/h`.
+        homes.sort_by_key(|h| std::cmp::Reverse(h.len()));
+        let in_path = |c: char| !c.is_whitespace() && !"'\"`(<[{,;:".contains(c);
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        'scan: while !rest.is_empty() {
+            let starts = out.chars().last().is_none_or(|c| !in_path(c));
+            if starts {
+                for home in &homes {
+                    if let Some(after) = rest.strip_prefix(home.as_str())
+                        && after.chars().next().is_none_or(|c| c == '/' || !in_path(c))
+                    {
+                        out.push('~');
+                        rest = after;
+                        continue 'scan;
+                    }
+                }
+            }
+            let c = rest.chars().next().expect("not empty");
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+        out
+    }
+}
+
 /// `path` with `home` written as `~`, when it is under it.
 fn tilde_under(path: &str, home: &Path) -> Option<String> {
     let home = home.to_string_lossy();
@@ -318,6 +355,21 @@ mod tests {
         assert_eq!(ellipsize_end("abcdefghij", 5), "abcd…");
         assert_eq!(ellipsize_end("日本語", 4), "日…");
         assert_eq!(ellipsize_end("abc", 0), "");
+    }
+
+    #[test]
+    fn tilde_in_shortens_each_path_under_the_home_and_nothing_else() {
+        let style = Style::with(false, Some(PathBuf::from("/Users/me")));
+        assert_eq!(
+            style.tilde_in("read state file /Users/me/.pando/state.json: denied"),
+            "read state file ~/.pando/state.json: denied"
+        );
+        assert_eq!(style.tilde_in("in /Users/me"), "in ~");
+        // Only a path's start, and only the whole of the home's name.
+        assert_eq!(style.tilde_in("/x/Users/me/a"), "/x/Users/me/a");
+        assert_eq!(style.tilde_in("/Users/meg/a"), "/Users/meg/a");
+        assert_eq!(style.tilde_in("(/Users/me/a)"), "(~/a)");
+        assert_eq!(Style::plain().tilde_in("/Users/me/a"), "/Users/me/a");
     }
 
     #[test]
