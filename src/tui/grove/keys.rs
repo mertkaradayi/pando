@@ -226,11 +226,9 @@ impl Grove {
         };
         if summary.moved {
             let text = match summary.located() {
-                _ if summary.unreadable => format!(
-                    "{} cannot be read — {}",
-                    summary.name,
-                    crate::actions::ProjectSummary::READ_AGAIN
-                ),
+                _ if summary.unreadable => {
+                    format!("{} cannot be read — {}", summary.name, summary.read_again())
+                }
                 true => format!(
                     "{} is not at {} any more — {}",
                     summary.name,
@@ -261,11 +259,9 @@ impl Grove {
             let up: Vec<&crate::actions::LiveWorktree> =
                 summary.worktrees.iter().filter(|w| w.is_up()).collect();
             let text = match up.is_empty() {
-                true if summary.unreadable => format!(
-                    "{} cannot be read — {}",
-                    summary.name,
-                    crate::actions::ProjectSummary::READ_AGAIN
-                ),
+                true if summary.unreadable => {
+                    format!("{} cannot be read — {}", summary.name, summary.read_again())
+                }
                 true => format!("{} has moved — nothing of it is acted on", summary.name),
                 false => {
                     let names: Vec<&str> = up.iter().map(|w| w.name.as_str()).collect();

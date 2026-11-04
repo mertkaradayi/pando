@@ -49,10 +49,16 @@ impl ProjectSummary {
     }
 
     /// What gives an unreadable project back: its directory under the
-    /// home made the developer's again — a run under `sudo` leaves it
-    /// root's.
-    pub const READ_AGAIN: &str =
-        "pando may not read its folder under pando's home — `chown` it back to you";
+    /// home made the developer's to read again — `chmod` when its mode
+    /// took that away, `chown` when a run under `sudo` left it root's.
+    /// Both are named, the one that applies plain to whoever reads it.
+    pub fn read_again(&self) -> String {
+        format!(
+            "pando may not read projects/{} in pando's home — `chmod u+rwx` it there, or \
+             `chown` it back to you if a run under `sudo` left it root's",
+            self.id
+        )
+    }
 
     /// What its line says instead of where it is: why it is not located.
     /// How to bring it back is [`Self::find_again`].
@@ -66,10 +72,10 @@ impl ProjectSummary {
     /// What brings back a project nothing locates, or one pando may not
     /// read: its repository is registered by any pando run there while it
     /// is where it was, and adopted where it moved to as
-    /// [`Self::adopt_hint`] says.
+    /// [`Self::adopt_hint`] says; an unreadable one as [`Self::read_again`] does.
     pub fn find_again(&self) -> String {
         match self.unreadable {
-            true => Self::READ_AGAIN.to_string(),
+            true => self.read_again(),
             false => format!(
                 "run pando in its repository; if it moved, {}",
                 self.adopt_hint()

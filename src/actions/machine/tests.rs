@@ -573,5 +573,10 @@ fn a_project_dir_that_cannot_be_read_is_listed_with_why() {
     assert!(all[0].moved && all[0].unreadable, "{all:?}");
     assert_eq!(all[0].hands_off_word(), "unreadable");
     assert_eq!(all[0].not_located(), "cannot be read");
-    assert_eq!(all[0].find_again(), ProjectSummary::READ_AGAIN);
+    // Mode 000 under the developer's own name is a `chmod`; a run under
+    // `sudo` leaves it root's, a `chown`: both are named, with the folder.
+    let how = all[0].find_again();
+    assert!(how.contains(&format!("projects/{}", shop.id)), "{how}");
+    assert!(how.contains("`chmod u+rwx`"), "{how}");
+    assert!(how.contains("`chown`"), "{how}");
 }
