@@ -5701,3 +5701,28 @@ fn a_twins_folder_in_the_header_gives_way_to_what_runs() {
     );
     assert!(wide.contains("● 1 running"), "{wide}");
 }
+
+// The setup screen of a project another has the name of says its
+// folder after the name, as the list's header does: whole where it fits
+// beside what the screen is, cut to where it differs where it does not.
+#[test]
+fn a_twins_setup_screen_names_its_folder() {
+    let (_dir, mut app) = app_on_setup_screen(false);
+    app.twin_folder = Some(fixture_twin());
+    let header = |app: &mut App, width: u16| {
+        text_of(&draw(app, width, 30))
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let wide = header(&mut app, 120);
+    assert!(
+        wide.contains("pando — acme-shop pando-fixture-1793791398151457000"),
+        "{wide}"
+    );
+    assert!(wide.contains("first time here"), "{wide}");
+    let narrow = header(&mut app, 60);
+    assert!(narrow.contains("pando — acme-shop …"), "{narrow}");
+    assert!(narrow.contains("first time here"), "{narrow}");
+}

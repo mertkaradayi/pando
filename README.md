@@ -485,8 +485,10 @@ to a short head of itself so that part still shows. Where not one
 character of it fits, each carries its place in the column instead,
 `·1` and `·2`. Names of their own that would read alike once cut, such
 as two that share a long start, are cut where they differ instead, so
-no two projects ever read alike. The header of the one in front says
-its folder after its name too.
+no two projects ever read alike. The header of the one in front, and
+its setup screen, say its folder after its name too: whole where the
+bar has room, and otherwise cut to the part that differs, so it never
+pushes the branch or what runs off the bar.
 
 Right of it is the TUI of the project in front, exactly as it is when
 pando runs in that project alone. A project opened stays open while

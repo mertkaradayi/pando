@@ -56,7 +56,8 @@ may change behaviour.
   character of it fits, each carries its place in the column instead,
   `·1` `·2`; names of their own that would read alike once cut are cut
   where they differ instead, so no two read alike, and the header of the one in front
-  says its folder after its name. `!` marks one with a port another
+  and its setup screen say its folder after its name, cut to the part
+  that differs before the branch or what runs gives way. `!` marks one with a port another
   project claims too, kept however short its label is cut.
 - The grove's layout is the developer's, saved in `~/.pando/config.toml`
   by the key that changes it, as `,` saves the list's order: `[ui] grove`
