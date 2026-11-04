@@ -213,9 +213,19 @@ fn a_folder_holding_the_pando_home_is_never_a_project_of_its_repositories() {
     let folder = folder_of_repos(dir.path());
     let home = folder.join(".pando");
     let err = discover(&folder, &home).unwrap_err();
-    assert!(
-        format!("{err:#}").contains("not inside a git repository, nor a folder of them"),
-        "{err:#}"
+    // Said as why, never as "nor a folder of them" over the repositories
+    // the next words count.
+    let never = err.downcast_ref::<NeverAFolder>().expect("why it is none");
+    assert_eq!(never.why, NeverWhy::HoldsHome(home.clone()));
+    assert_eq!(never.repos, ["backend", "frontend"]);
+    assert_eq!(
+        format!("{err:#}"),
+        format!(
+            "not inside a git repository: {} holds pando's home ({}), never a project of the \
+             repositories in it",
+            folder.display(),
+            home.display()
+        )
     );
     // Not when the home does not exist yet, nor when it already has a
     // directory for the folder, nor from a plain folder below it.
@@ -245,10 +255,25 @@ fn the_users_home_directory_is_never_a_project_of_its_repositories() {
     for sight in [FirstSight::Allow, FirstSight::Deny] {
         let err = discover_in(&folder, &places, sight).unwrap_err();
         assert!(
-            format!("{err:#}").starts_with("not inside a git repository"),
+            format!("{err:#}").starts_with("not inside a git repository: "),
             "{err:#}"
         );
+        assert!(
+            format!("{err:#}")
+                .ends_with("is your home directory, never a project of the repositories in it"),
+            "{err:#}"
+        );
+        let never = err.downcast_ref::<NeverAFolder>().expect("why it is none");
+        assert_eq!(never.why, NeverWhy::UserHome);
+        // The repositories it counts are the ones a `cd` is offered into.
+        assert_eq!(never.repos, repos_in(&folder));
     }
+    // With fewer than two repositories it is none for the plain reason.
+    let lone = dir.path().join("lone");
+    init_repo(&lone.join("only"));
+    let lone_home = Places::with(&elsewhere, Some(lone.clone()));
+    let err = discover_in(&lone, &lone_home, FirstSight::Allow).unwrap_err();
+    assert!(err.downcast_ref::<NeverAFolder>().is_none(), "{err:#}");
     // Even once a directory for it is there.
     let project =
         ProjectRef::multi_repo(&folder, vec!["backend".into(), "frontend".into()]).unwrap();

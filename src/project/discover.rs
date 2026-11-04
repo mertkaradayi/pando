@@ -296,11 +296,70 @@ impl<'a> Places<'a> {
     /// any folder pando's own home is in, which would put its state inside
     /// the project it keeps it for.
     pub(super) fn never_a_folder_project(&self, dir: &Path) -> bool {
-        dir.parent().is_none()
-            || self.user_home.as_deref() == Some(dir)
-            || crate::paths::resolve_for_compare(self.home).starts_with(dir)
+        self.why_never_a_folder(dir).is_some()
+    }
+
+    /// Why `dir`, a canonical folder, can never be a project of the
+    /// repositories in it, when it cannot.
+    pub(super) fn why_never_a_folder(&self, dir: &Path) -> Option<NeverWhy> {
+        match () {
+            _ if dir.parent().is_none() => Some(NeverWhy::Root),
+            _ if self.user_home.as_deref() == Some(dir) => Some(NeverWhy::UserHome),
+            _ if crate::paths::resolve_for_compare(self.home).starts_with(dir) => {
+                Some(NeverWhy::HoldsHome(self.home.to_path_buf()))
+            }
+            _ => None,
+        }
     }
 }
+
+/// Why a folder is never a project of the repositories in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NeverWhy {
+    /// The root of the filesystem.
+    Root,
+    /// The user's home directory.
+    UserHome,
+    /// It holds pando's home, the path here.
+    HoldsHome(PathBuf),
+}
+
+/// A folder holding repositories that pando never takes as a project of
+/// them ([`NeverWhy`]): said as such, so the repositories counted after
+/// it are not taken for a contradiction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NeverAFolder {
+    pub dir: PathBuf,
+    pub why: NeverWhy,
+    pub repos: Vec<String>,
+}
+
+impl NeverAFolder {
+    /// What the folder is, after its path, with each path written as
+    /// `show` writes it: `is your home directory, never a project of the
+    /// repositories in it`.
+    pub fn reason(&self, show: impl Fn(&Path) -> String) -> String {
+        let what = match &self.why {
+            NeverWhy::Root => "is the filesystem's root".to_string(),
+            NeverWhy::UserHome => "is your home directory".to_string(),
+            NeverWhy::HoldsHome(home) => format!("holds pando's home ({})", show(home)),
+        };
+        format!("{what}, never a project of the repositories in it")
+    }
+}
+
+impl std::fmt::Display for NeverAFolder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "not inside a git repository: {} {}",
+            self.dir.display(),
+            self.reason(|p| p.display().to_string())
+        )
+    }
+}
+
+impl std::error::Error for NeverAFolder {}
 
 /// The project containing `cwd`, or an error naming why not.
 ///
@@ -342,10 +401,21 @@ pub(super) fn discover_in(cwd: &Path, places: &Places, sight: FirstSight) -> Res
                 .into());
             }
             Some((project, _)) => return Ok(project),
-            None => bail!(
-                "not inside a git repository, nor a folder of them: {}",
-                cwd.display()
-            ),
+            None => {
+                // A folder of repositories pando will not take as their
+                // project says why, rather than that it is none.
+                let dir = canonicalize(cwd);
+                let repos = repos_in(&dir);
+                if repos.len() >= FIRST_SIGHT_REPOS
+                    && let Some(why) = places.why_never_a_folder(&dir)
+                {
+                    return Err(NeverAFolder { dir, why, repos }.into());
+                }
+                bail!(
+                    "not inside a git repository, nor a folder of them: {}",
+                    cwd.display()
+                )
+            }
         },
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => bail!(
             "`git worktree list` did not answer in {}s in {} — a hung git process or an \

@@ -147,10 +147,20 @@ fn run(cli: Cli) -> Result<()> {
         Ok(project) => project,
         Err(e) if cli.command.is_none() && std::io::stdout().is_terminal() => {
             let style = pando::term::Style::with(false, pando::platform::dirs::home());
-            let why = match e.downcast_ref::<project::UnknownFolder>() {
+            let tilde = |p: &std::path::Path| style.tilde(&p.display().to_string());
+            let never = e.downcast_ref::<project::NeverAFolder>();
+            let why = match (e.downcast_ref::<project::UnknownFolder>(), never) {
+                // Repositories here that are no project: what the folder
+                // is, then the way into one of them.
+                (None, Some(never)) => format!(
+                    "{} {} · `cd` into one of its {} repositories for its project",
+                    tilde(&never.dir),
+                    never.reason(tilde),
+                    never.repos.len()
+                ),
                 // The reason first, so a narrow screen cuts the names
                 // rather than it; the folder is where pando was run.
-                Some(folder) => format!(
+                (Some(folder), _) => format!(
                     "{} repositories here, no project of them yet · `pando init` or `pando new \
                      <branch>` here makes them one ({})",
                     folder.repos.len(),
@@ -159,11 +169,13 @@ fn run(cli: Cli) -> Result<()> {
                 // Not being in a repository is why the home is open, not
                 // a fault: said as where pando is, the reason first so a
                 // narrow screen cuts the path rather than it.
-                None if format!("{e:#}").starts_with("not inside a git repository") => format!(
-                    "no repository here ({}) · here is every project pando knows",
-                    style.tilde(&cwd.display().to_string())
-                ),
-                None => format!("{e:#}"),
+                (None, None) if format!("{e:#}").starts_with("not inside a git repository") => {
+                    format!(
+                        "no repository here ({}) · here is every project pando knows",
+                        tilde(&cwd)
+                    )
+                }
+                (None, None) => format!("{e:#}"),
             };
             return tui::run_home(home, Some(why));
         }
