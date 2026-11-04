@@ -235,6 +235,7 @@ fn render_column(f: &mut Frame, area: Rect, grove: &mut Grove) {
         .saturating_sub(visible.saturating_sub(1))
         .min(grove.summaries.len().saturating_sub(visible));
     let mut rows = Vec::new();
+    let clashing = crate::actions::clashing_projects(&grove.summaries);
     for (row, (i, summary)) in grove
         .summaries
         .iter()
@@ -245,7 +246,14 @@ fn render_column(f: &mut Frame, area: Rect, grove: &mut Grove) {
     {
         let rect = Rect::new(rows_area.x, rows_area.y + row as u16, rows_area.width, 1);
         let selected = i == grove.cursor;
-        f.render_widget(column_row(grove, summary, selected, focused, width), rect);
+        let marks = RowMarks {
+            twin: summary.twin_folder(&grove.summaries),
+            clash: clashing.contains(&summary.id),
+        };
+        f.render_widget(
+            column_row(grove, summary, &marks, selected, focused, width),
+            rect,
+        );
         rows.push((rect, i));
     }
     grove.hits.rows = rows;
@@ -314,31 +322,62 @@ pub(crate) fn column_title(
     (Line::from(title), Line::from(tally).right_aligned())
 }
 
-/// One project's row: ` ▸┃● name      2`, the cursor's on a band.
+/// What sets a project's row apart from the others': the folder its
+/// repository is in when another project has its name, and whether a
+/// port of it is one another project claims too.
+struct RowMarks {
+    twin: Option<String>,
+    clash: bool,
+}
+
+/// One project's row: ` ▸┃● name      2`, the cursor's on a band; a
+/// name two projects share followed by its folder, dimmed, and a port
+/// another project claims too marked `!` before the count.
 fn column_row(
     grove: &Grove,
     summary: &ProjectSummary,
+    marks: &RowMarks,
     selected: bool,
     focused: bool,
     width: usize,
 ) -> Paragraph<'static> {
-    let look = row_look(grove, summary);
+    let mut look = row_look(grove, summary);
     let cursor = match (selected, focused) {
         (true, true) => Span::styled("▸ ", Style::new().fg(blue())),
         (true, false) => Span::styled("▸ ", Style::new().fg(text_muted())),
         (false, _) => Span::raw("  "),
     };
+    if marks.clash {
+        let clash = Span::styled("!", Style::new().fg(red()).add_modifier(Modifier::BOLD));
+        if !look.count.is_empty() {
+            look.count.insert(0, Span::raw(" "));
+        }
+        look.count.insert(0, clash);
+    }
     let count_width: usize = look.count.iter().map(|s| text_width(&s.content)).sum();
     let room = width.saturating_sub(ROW_LEAD + count_width + usize::from(count_width > 0));
     let name = truncate(&summary.name, room);
-    let gap = width.saturating_sub(ROW_LEAD + text_width(&name) + count_width);
+    // The folder in what the name leaves, never at the name's cost.
+    let twin = marks
+        .twin
+        .as_deref()
+        .map(|folder| truncate(folder, room.saturating_sub(text_width(&name) + 1)))
+        .filter(|folder| !folder.is_empty());
+    let twin_width = twin.as_ref().map_or(0, |t| 1 + text_width(t));
+    let gap = width.saturating_sub(ROW_LEAD + text_width(&name) + twin_width + count_width);
     let mut spans = vec![
         cursor,
         Span::styled(look.stem.0.to_string(), Style::new().fg(look.stem.1)),
         Span::styled(look.glyph.0, Style::new().fg(look.glyph.1)),
         Span::styled(name, name_style(&look)),
-        Span::raw(" ".repeat(gap)),
     ];
+    if let Some(twin) = twin {
+        spans.push(Span::styled(
+            format!(" {twin}"),
+            Style::new().fg(text_muted()),
+        ));
+    }
+    spans.push(Span::raw(" ".repeat(gap)));
     spans.extend(look.count);
     let line = Line::from(spans);
     // The band says where the cursor is, focused or not; the cursor's
@@ -456,6 +495,10 @@ fn render_strip(f: &mut Frame, area: Rect, grove: &mut Grove) {
                 state.push_str(summary.hands_off_word());
             }
             let place = format!(" · {}/{}", i + 1, grove.summaries.len());
+            let twin = summary
+                .twin_folder(&grove.summaries)
+                .map(|folder| format!(" {folder}"))
+                .unwrap_or_default();
             let fixed: usize = lead
                 .iter()
                 .chain(&tail)
@@ -463,12 +506,14 @@ fn render_strip(f: &mut Frame, area: Rect, grove: &mut Grove) {
                 .sum::<usize>()
                 + 2
                 + text_width(&state)
+                + text_width(&twin)
                 + text_width(&place);
             let name = truncate(&summary.name, (area.width as usize).saturating_sub(fixed));
             middle.push(Span::styled(
                 name,
                 Style::new().fg(look.name).add_modifier(Modifier::BOLD),
             ));
+            middle.push(Span::styled(twin, muted));
             let state_colour = match () {
                 _ if summary.is_live() => green(),
                 _ if summary.failed > 0 && !summary.moved => red(),
@@ -537,6 +582,30 @@ fn strip_hints(room: usize) -> Vec<Span<'static>> {
     }
     if !spans.is_empty() {
         spans.push(Span::raw(" "));
+    }
+    spans
+}
+
+/// A stem's label, cut as it was to fit, in its pieces' styles: the name
+/// in `style`, its folder dimmed, the clash's `!` in red.
+fn label_spans(label: &str, parts: &(String, String, bool), style: Style) -> Vec<Span<'static>> {
+    let (name, twin, _) = parts;
+    let mut chars = label.chars();
+    let mut take = |n: usize| -> String { chars.by_ref().take(n).collect() };
+    let name = take(name.chars().count());
+    let twin = take(twin.chars().count());
+    let rest = take(usize::MAX);
+    let mut spans = vec![Span::styled(name, style)];
+    if !twin.is_empty() {
+        spans.push(Span::styled(twin, Style::new().fg(text_muted())));
+    }
+    if !rest.is_empty() {
+        let clash = Style::new().fg(red()).add_modifier(Modifier::BOLD);
+        let paint = match rest.ends_with('…') {
+            true => style,
+            false => clash,
+        };
+        spans.push(Span::styled(rest, paint));
     }
     spans
 }
@@ -645,11 +714,29 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
                 _ => art_style(cell, alive),
             })
         }));
-        let labels: Vec<String> = shown
+        // Each label is its name, the folder when another project has the
+        // name, and `!` when a port of it is another project's too: the
+        // name in the project's style, the rest dimmed and red.
+        let clashing = crate::actions::clashing_projects(&grove.summaries);
+        let parts: Vec<(String, String, bool)> = shown
             .iter()
-            .map(|s| match s.failed > 0 && !s.is_live() {
-                true => format!("✗{}", s.name),
-                false => s.name.clone(),
+            .map(|s| {
+                let name = match s.failed > 0 && !s.is_live() {
+                    true => format!("✗{}", s.name),
+                    false => s.name.clone(),
+                };
+                let twin = s
+                    .twin_folder(&grove.summaries)
+                    .map(|folder| format!(" {folder}"))
+                    .unwrap_or_default();
+                (name, twin, clashing.contains(&s.id))
+            })
+            .collect();
+        let labels: Vec<String> = parts
+            .iter()
+            .map(|(name, twin, clash)| match clash {
+                true => format!("{name}{twin} !"),
+                false => format!("{name}{twin}"),
             })
             .collect();
         let mut spans = vec![Span::raw(" ".repeat(left))];
@@ -669,7 +756,7 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
             };
             spans.push(Span::raw(" ".repeat(x.saturating_sub(at))));
             at = x + text_width(&label);
-            spans.push(Span::styled(label, style));
+            spans.extend(label_spans(&label, &parts[i], style));
         }
         lines.push(Line::from(spans));
     }

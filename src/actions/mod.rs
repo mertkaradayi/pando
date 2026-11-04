@@ -61,8 +61,8 @@ pub use lifecycle::{
     refuse_only_on_a_mode_change, restart, start, stop, stop_all, stop_all_listed, stop_all_with,
 };
 pub use machine::{
-    KnownProject, LiveProcess, LiveWorktree, ProjectSummary, checkout_root, known, port_clashes,
-    recorded_roots, recover_registry, summaries, worktrees_in_project_dir,
+    KnownProject, LiveProcess, LiveWorktree, ProjectSummary, checkout_root, clashing_projects,
+    known, port_clashes, recorded_roots, recover_registry, summaries, worktrees_in_project_dir,
 };
 pub use namespaced::{
     Leftover, NamespacedAnswer, NamespacedService, PlanRow, Prefixed, login_question,

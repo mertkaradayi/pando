@@ -1488,6 +1488,42 @@ fn a_home_pane_note_keeps_its_end_on_any_width() {
 }
 
 #[test]
+fn two_projects_of_one_name_read_apart_and_a_shared_port_is_marked() {
+    // Two clones of one repository, both up on one port.
+    let clone = |folder: &str| {
+        let mut s = summary("plain", 1, 0);
+        s.id = format!("plain-{folder}");
+        s.root = std::path::PathBuf::from("/").join(folder).join("plain");
+        s.worktrees[0].claimed = [8000].into();
+        s
+    };
+    let mut grove = Grove::new_for_test(vec![clone("work"), clone("tmp"), summary("docs", 0, 0)]);
+    let buf = draw(&mut grove, 160, 40);
+    let text = text_of(&buf);
+    let row = |needle: &str| {
+        text.lines()
+            .find(|l| l.contains(needle))
+            .map(|l| l.split("││").next().unwrap_or(l).to_string())
+            .unwrap_or_default()
+    };
+    // The column: the folder after the name, and `!` before the count.
+    assert!(row("plain work").contains("! 1"), "{text}");
+    assert!(row("plain tmp").contains("! 1"), "{text}");
+    assert!(!row("docs").contains('!'), "{text}");
+    // The home pane's labels under the stems, the same way.
+    let labels = text
+        .lines()
+        .find(|l| l.matches("plain").count() == 2 && !l.contains("▸"))
+        .unwrap_or_default();
+    assert!(
+        labels.contains("plain work !") && labels.contains("plain tmp !"),
+        "{text}"
+    );
+    // A name of its own is left alone.
+    assert!(!text.contains("docs /"), "{text}");
+}
+
+#[test]
 fn enter_on_a_project_nothing_locates_says_how_to_find_it() {
     let mut lost = summary("lost", 0, 0);
     lost.moved = true;

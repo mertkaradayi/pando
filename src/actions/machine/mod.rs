@@ -15,4 +15,6 @@ mod tests;
 
 pub use known::{KnownProject, known};
 pub use recover::{checkout_root, recorded_roots, recover_registry, worktrees_in_project_dir};
-pub use summary::{LiveProcess, LiveWorktree, ProjectSummary, port_clashes, summaries};
+pub use summary::{
+    LiveProcess, LiveWorktree, ProjectSummary, clashing_projects, port_clashes, summaries,
+};

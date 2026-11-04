@@ -75,6 +75,23 @@ impl ProjectSummary {
         }
     }
 
+    /// The folder its repository sits in, when another of `all` has its
+    /// name: two clones of one repository, told apart in a list too
+    /// narrow for their paths. `None` when its name is its own, or
+    /// nothing locates it.
+    pub fn twin_folder(&self, all: &[ProjectSummary]) -> Option<String> {
+        all.iter()
+            .any(|other| other.id != self.id && other.name == self.name)
+            .then_some(())?;
+        Some(
+            self.root
+                .parent()?
+                .file_name()?
+                .to_string_lossy()
+                .into_owned(),
+        )
+    }
+
     /// Whether anything of it is up or coming up.
     pub fn is_live(&self) -> bool {
         self.up + self.starting > 0
@@ -237,6 +254,16 @@ fn summarise(
         });
     }
     summary
+}
+
+/// The ids of the projects one of whose ports another project claims
+/// too ([`port_clashes`]).
+pub fn clashing_projects(summaries: &[ProjectSummary]) -> BTreeSet<String> {
+    port_clashes(summaries)
+        .into_values()
+        .flatten()
+        .map(|(id, _)| id)
+        .collect()
 }
 
 /// The ports live worktrees of two or more projects claim, each with

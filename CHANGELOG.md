@@ -48,7 +48,9 @@ may change behaviour.
   asks first when it would abandon work in another project. Where the
   whole column would leave the project in front under 92 columns, it
   folds to one line above the list (`grove = "on"` keeps it down to 72).
-  With one project known it stays hidden until `w`.
+  With one project known it stays hidden until `w`. Two projects of one
+  name show the folder each is in, and `!` marks one with a port another
+  project claims too.
 - The grove's layout is the developer's, saved in `~/.pando/config.toml`
   by the key that changes it, as `,` saves the list's order: `[ui] grove`
   (`auto`, `on`, `off`) by `w`, `grove_width` by `{` `}`, and the detail
