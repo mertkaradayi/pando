@@ -1499,3 +1499,24 @@ fn the_setup_screen_of_the_project_pando_started_in_quits_on_q() {
     press(&mut grove, KeyCode::Char('q'));
     assert!(grove.should_quit);
 }
+
+// `]` asked for a project, and a dialog was opened on the one in front
+// before it landed: it lands behind, and the dialog keeps the keys.
+#[test]
+fn a_project_landing_never_takes_the_front_from_a_dialog() {
+    let mut grove = a_grove();
+    press(&mut grove, KeyCode::Char(']'));
+    assert_eq!(grove.open_requests, [id_of("api")]);
+    assert_eq!(grove.selected().unwrap().name, "api");
+    grove.front_app_mut().unwrap().modal = Some(Modal::Help);
+    grove.handle_event(GroveEvent::Opened(
+        id_of("api"),
+        Box::new(Ok(app_for("api"))),
+    ));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    assert!(matches!(
+        grove.front_app().unwrap().modal,
+        Some(Modal::Help)
+    ));
+    assert!(grove.open.contains_key(&id_of("api")));
+}

@@ -134,9 +134,24 @@ impl Grove {
         self.forget_opening_note(&id);
         let wanted = self.front.as_deref() == Some(id.as_str())
             || self.selected().is_some_and(|s| s.id == id);
+        // Never from under a dialog, a filter or the log viewer opened in
+        // the meantime: what is typed there would land on the list of the
+        // project that just opened, as its keys.
+        let free = self.front_app().is_none_or(|app| {
+            app.idle_on_list() || (app.setup_screen.is_some() && app.modal.is_none())
+        });
         match result {
             Ok(app) => {
-                self.adopt(app, wanted);
+                if wanted && !free {
+                    let name = app.paths.project.display_name.clone();
+                    self.adopt(app, false);
+                    self.say(
+                        format!("{name} is open — ] or ⏎ in the column brings it"),
+                        false,
+                    );
+                } else {
+                    self.adopt(app, wanted);
+                }
                 // Its own stop only: another project's waits for its own.
                 if let Some(names) = self.stop_after_open.remove(&id) {
                     self.stop_in(&id, names);
