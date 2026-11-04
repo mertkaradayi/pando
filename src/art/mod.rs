@@ -117,6 +117,21 @@ pub fn label_stems(stems: &[usize], labels: &[String], width: usize) -> Vec<(usi
     placed
 }
 
+/// The cells a label under each stem may take: up to two cells short of
+/// the next stem, or to the grove's edge for the last.
+pub fn stem_rooms(stems: &[usize], width: usize) -> Vec<usize> {
+    stems
+        .iter()
+        .enumerate()
+        .map(|(i, &x)| {
+            let end = stems
+                .get(i + 1)
+                .map_or(width, |&next| next.saturating_sub(2));
+            end.saturating_sub(x)
+        })
+        .collect()
+}
+
 /// One label under each stem, in order, left-aligned there and cut with
 /// `…` to the room before the next stem, two cells short of it so two
 /// names never read as one: label `i` is always stem `i`'s,
@@ -125,13 +140,9 @@ pub fn label_stems(stems: &[usize], labels: &[String], width: usize) -> Vec<(usi
 pub fn label_each_stem(stems: &[usize], labels: &[String], width: usize) -> Vec<(usize, String)> {
     stems
         .iter()
+        .zip(stem_rooms(stems, width))
         .zip(labels)
-        .enumerate()
-        .filter_map(|(i, (&x, label))| {
-            let end = stems
-                .get(i + 1)
-                .map_or(width, |&next| next.saturating_sub(2));
-            let room = end.saturating_sub(x);
+        .filter_map(|((&x, room), label)| {
             let length = label.chars().count();
             let fitted = match () {
                 _ if length <= room => label.clone(),

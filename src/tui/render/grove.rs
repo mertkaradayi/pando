@@ -586,8 +586,31 @@ fn strip_hints(room: usize) -> Vec<Span<'static>> {
     spans
 }
 
-/// A stem's label, cut as it was to fit, in its pieces' styles: the name
-/// in `style`, its folder dimmed, the clash's `!` in red.
+/// A stem's label in `room` cells, as its name, its folder with the
+/// space before it, and whether the clash's ` !` follows: the name cut
+/// only when the mark leaves it too little, the folder only in what the
+/// name leaves, and gone when that is not two cells.
+fn fit_stem_label(
+    name: &str,
+    twin: Option<&str>,
+    clash: bool,
+    room: usize,
+) -> (String, String, bool) {
+    let mark = match clash {
+        true => 2,
+        false => 0,
+    };
+    let name = truncate(name, room.saturating_sub(mark));
+    let left = room.saturating_sub(mark + text_width(&name) + 1);
+    let twin = match twin {
+        Some(folder) if left >= 2 => format!(" {}", truncate(folder, left)),
+        _ => String::new(),
+    };
+    (name, twin, clash)
+}
+
+/// A stem's label in its pieces' styles: the name in `style`, its folder
+/// dimmed, the clash's `!` in red.
 fn label_spans(label: &str, parts: &(String, String, bool), style: Style) -> Vec<Span<'static>> {
     let (name, twin, _) = parts;
     let mut chars = label.chars();
@@ -601,11 +624,7 @@ fn label_spans(label: &str, parts: &(String, String, bool), style: Style) -> Vec
     }
     if !rest.is_empty() {
         let clash = Style::new().fg(red()).add_modifier(Modifier::BOLD);
-        let paint = match rest.ends_with('…') {
-            true => style,
-            false => clash,
-        };
-        spans.push(Span::styled(rest, paint));
+        spans.push(Span::styled(rest, clash));
     }
     spans
 }
@@ -715,28 +734,28 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
             })
         }));
         // Each label is its name, the folder when another project has the
-        // name, and `!` when a port of it is another project's too: the
-        // name in the project's style, the rest dimmed and red.
+        // name, and `!` when a port of it is another project's too, fitted
+        // to the room under its stem: the folder gives way first, then the
+        // name, and the mark never does.
         let clashing = crate::actions::clashing_projects(&grove.summaries);
         let parts: Vec<(String, String, bool)> = shown
             .iter()
-            .map(|s| {
+            .zip(crate::art::stem_rooms(&picture.stems, art_width))
+            .map(|(s, room)| {
                 let name = match s.failed > 0 && !s.is_live() {
                     true => format!("✗{}", s.name),
                     false => s.name.clone(),
                 };
-                let twin = s
-                    .twin_folder(&grove.summaries)
-                    .map(|folder| format!(" {folder}"))
-                    .unwrap_or_default();
-                (name, twin, clashing.contains(&s.id))
+                let twin = s.twin_folder(&grove.summaries);
+                fit_stem_label(&name, twin.as_deref(), clashing.contains(&s.id), room)
             })
             .collect();
         let labels: Vec<String> = parts
             .iter()
-            .map(|(name, twin, clash)| match clash {
-                true => format!("{name}{twin} !"),
-                false => format!("{name}{twin}"),
+            .map(|(name, twin, clash)| match (clash, name.is_empty()) {
+                (true, false) => format!("{name}{twin} !"),
+                (true, true) => "!".to_string(),
+                (false, _) => format!("{name}{twin}"),
             })
             .collect();
         let mut spans = vec![Span::raw(" ".repeat(left))];

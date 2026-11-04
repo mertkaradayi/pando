@@ -1697,3 +1697,39 @@ fn a_click_under_the_stop_confirmation_reaches_nothing() {
     let app = grove.front_app().unwrap();
     assert!(app.pending.is_empty() && app.modal.is_none() && app.armed.is_none());
 }
+
+/// Two clones of one repository up on one port, in folders whose long
+/// names share their start.
+fn long_twins() -> Grove {
+    let clone = |folder: &str| {
+        let mut s = summary("plain", 1, 0);
+        s.id = format!("plain-{folder}");
+        s.root = std::path::PathBuf::from("/tmp").join(folder).join("plain");
+        s.worktrees[0].claimed = [19744].into();
+        s
+    };
+    Grove::new_for_test(vec![
+        clone("pando-fixture-1793784766375615000"),
+        clone("pando-fixture-1793784766837094000"),
+    ])
+}
+
+/// The home pane's row of labels under the stems.
+fn stem_labels(text: &str) -> String {
+    text.lines()
+        .map(|l| l.rsplit("││").next().unwrap_or(l))
+        .find(|l| l.matches("plain").count() == 2)
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn a_stem_label_cut_to_its_room_keeps_the_clash_mark() {
+    for width in [120, 140, 220] {
+        let mut grove = long_twins();
+        let text = text_of(&draw(&mut grove, width, 40));
+        let labels = stem_labels(&text);
+        assert_eq!(labels.matches("plain").count(), 2, "{width}:\n{text}");
+        assert_eq!(labels.matches('!').count(), 2, "{width}:\n{text}");
+    }
+}
