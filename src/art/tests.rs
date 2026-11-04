@@ -295,3 +295,43 @@ fn labels_sit_centred_under_their_stems_and_never_touch() {
     }
     assert!(at[2] + widths[2] < 60, "{at:?} {widths:?}");
 }
+
+// Each label is kept to what lets it sit centred under its own stem,
+// two cells from its neighbours, a short one's spare lent to the next,
+// and never below the fewest cells asked for.
+#[test]
+fn labels_are_given_what_keeps_them_under_their_stems() {
+    let stems = [14, 30, 46, 62, 78, 94];
+    let wants = [24, 23, 24, 26, 12, 14];
+    let rooms = label_rooms(&stems, &wants, 110, 10);
+    assert_eq!(rooms, vec![14, 14, 14, 15, 12, 14]);
+    let at = spread_labels(&stems, &rooms, 110);
+    for i in 0..stems.len() {
+        let centre = at[i] + rooms[i] / 2;
+        assert!(centre.abs_diff(stems[i]) <= 1, "{at:?} {rooms:?}");
+        if i > 0 {
+            assert!(at[i] >= at[i - 1] + rooms[i - 1] + 2, "{at:?} {rooms:?}");
+        }
+    }
+    // What fits whole stays whole.
+    assert_eq!(label_rooms(&[10, 30], &[4, 6], 50, 10), vec![4, 6]);
+    // Stems too close for the least: the least, moved apart instead.
+    let rooms = label_rooms(&[5, 10, 15], &[20, 20, 20], 40, 10);
+    assert_eq!(rooms, vec![10, 10, 10]);
+    let at = spread_labels(&[5, 10, 15], &rooms, 40);
+    assert!(
+        at[0] >= 1 && at[1] >= at[0] + 12 && at[2] >= at[1] + 12,
+        "{at:?}"
+    );
+    assert!(at[2] + rooms[2] < 40, "{at:?}");
+}
+
+// Labels that would touch are moved apart about their stems, not all
+// pushed to one side.
+#[test]
+fn labels_that_would_touch_move_apart_about_their_middle() {
+    let at = spread_labels(&[20, 24], &[6, 6], 60);
+    // Centred they would start at 17 and 21; four cells apart is too
+    // close, so each moves.
+    assert_eq!(at, vec![15, 23]);
+}

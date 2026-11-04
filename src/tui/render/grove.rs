@@ -898,10 +898,13 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove, rest: TheRest) {
         }));
         // Each label is its name, the folder when another project has the
         // name, and `!` when a port of it is another project's too, in
-        // the room the pane has around its stem: the whole row is shared,
-        // the short labels whole and the long alike, the folder gives way
-        // first, then the name, and the mark never does.
-        let rooms = crate::art::share_room(&wants[..stems], width.saturating_sub(2));
+        // the room the pane has around its stem: the row is shared, the
+        // short labels whole and the long alike, but never more than lets
+        // each sit centred under its own stem, so none drifts to read as
+        // its neighbour's. The folder gives way first, then the name, and
+        // the mark never does.
+        let stems_at: Vec<usize> = picture.stems.iter().map(|&x| left + x).collect();
+        let rooms = crate::art::label_rooms(&stems_at, &wants[..stems], width, STEM_LABEL_MIN);
         let mut name_rooms = vec![None; grove.summaries.len()];
         for (s, room) in shown.iter().zip(&rooms) {
             if let Some(i) = grove.summaries.iter().position(|o| o.id == s.id) {
@@ -933,7 +936,6 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove, rest: TheRest) {
             })
             .collect();
         let widths: Vec<usize> = labels.iter().map(|l| text_width(l)).collect();
-        let stems_at: Vec<usize> = picture.stems.iter().map(|&x| left + x).collect();
         let starts = crate::art::spread_labels(&stems_at, &widths, width);
         let mut spans = Vec::new();
         let mut at = 0;

@@ -2483,3 +2483,65 @@ fn the_home_pane_fits_its_lines_rather_than_cutting_them() {
         "{text}"
     );
 }
+
+// Where the room allows, each label is centred under its own stem: a
+// long name is cut to what lets it sit there rather than taking the
+// whole row and pushing the labels after it off their stems.
+#[test]
+fn each_label_sits_under_its_own_stem() {
+    use crate::tui::render::STEM_LABEL_MIN;
+    let mut checked = 0;
+    for width in [80, 100, 120, 140, 180] {
+        let mut grove = shared_starts();
+        let text = text_of(&draw(&mut grove, width, 40));
+        let rows: Vec<&str> = text
+            .lines()
+            .map(|l| l.rsplit("││").next().unwrap_or(l))
+            .collect();
+        let root = rows
+            .iter()
+            .position(|l| l.contains('╺') && l.contains('┻') && l.matches('┻').count() > 1)
+            .expect("the home's root line");
+        let stems: Vec<usize> = rows[root]
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c == '┻')
+            .map(|(x, _)| x)
+            .collect();
+        let row: Vec<char> = rows[root + 1].chars().collect();
+        // Each label: where it starts and how wide it is, in cells.
+        let mut labels = Vec::new();
+        let mut x = 1;
+        while x < row.len() {
+            if row[x] == ' ' || row[x] == '│' {
+                x += 1;
+                continue;
+            }
+            let from = x;
+            while x < row.len()
+                && !(row[x] == ' ' && row.get(x + 1).is_none_or(|c| *c == ' '))
+                && row[x] != '│'
+            {
+                x += 1;
+            }
+            labels.push((from, x - from));
+        }
+        assert_eq!(labels.len(), stems.len(), "{width}: {labels:?}\n{text}");
+        // The room allows it where the stems are further apart than the
+        // fewest cells a label has and the two between labels.
+        let room = stems.windows(2).all(|w| w[1] - w[0] >= STEM_LABEL_MIN + 2);
+        if !room {
+            continue;
+        }
+        checked += 1;
+        for (&(from, cells), &stem) in labels.iter().zip(&stems) {
+            let centre = from + cells / 2;
+            assert!(
+                centre.abs_diff(stem) <= 2,
+                "{width}: a label at {from}..{} under the stem at {stem}\n{text}",
+                from + cells
+            );
+        }
+    }
+    assert!(checked >= 2, "{checked}");
+}
