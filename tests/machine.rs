@@ -264,3 +264,61 @@ fn a_look_at_an_unknown_folder_of_repositories_makes_it_no_project() {
         stderr(&out)
     );
 }
+
+#[test]
+fn outside_any_project_pando_points_at_ls_all_and_the_repository_in_reach() {
+    common::hermetic_home();
+    let dir = TempDir::new().unwrap();
+    let home = dir.path().join("pando-home");
+    let empty = dir.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+
+    let out = pando_with_home(&home, &empty, &["ls"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("`pando ls --all`"),
+        "{}",
+        stderr(&out)
+    );
+    // Into a pipe, `pando` alone says it needs a terminal, as it does in
+    // a project.
+    let out = pando_with_home(&home, &empty, &[]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("needs a terminal"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("`pando ls --all`"),
+        "{}",
+        stderr(&out)
+    );
+    // One repository in reach is named.
+    let one = dir.path().join("one");
+    std::fs::create_dir_all(one.join("shop")).unwrap();
+    common::git(&one.join("shop"), &["init", "--quiet"]);
+    let out = pando_with_home(&home, &one, &["status"]);
+    assert!(stderr(&out).contains("`cd shop`"), "{}", stderr(&out));
+}
+
+#[test]
+fn ls_all_answers_from_a_directory_that_was_removed() {
+    let m = Machine::new();
+    ok(m.pando_in(&m.a, &["new", "feat/one"]));
+    let gone = m.nowhere.join("gone");
+    std::fs::create_dir_all(&gone).unwrap();
+    // The shell sits in the directory when it goes, as one does in a
+    // worktree removed from another pane.
+    let out = Command::new("sh")
+        .current_dir(&gone)
+        .env("PANDO_HOME", &m.home)
+        .arg("-c")
+        .arg("rmdir \"$PWD\" && exec \"$0\" ls --all --json")
+        .arg(env!("CARGO_BIN_EXE_pando"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["projects"][0]["id"], m.id(&m.a).as_str(), "{v}");
+}

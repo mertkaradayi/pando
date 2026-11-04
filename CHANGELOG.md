@@ -17,6 +17,10 @@ may change behaviour.
   never a project of the repositories in them, so `cd ~ && pando` opens
   the grove where it refused with "pando home … is inside the
   repository ~".
+- A command outside any project names `pando ls --all`, and the
+  repository in reach when the directory holds one; `pando` alone into a
+  pipe says it needs a terminal wherever it runs. `pando ls --all`
+  answers from a directory that was removed.
 
 ### Added
 

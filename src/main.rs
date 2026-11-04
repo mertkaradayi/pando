@@ -107,13 +107,20 @@ fn run(cli: Cli) -> Result<()> {
     if let Some(pando::cli::Command::Update { check }) = cli.command {
         return pando::cli::update(check, &mut pando::cli::Stdout);
     }
+    // The home before the current directory: `ls --all` and the grove
+    // need only the home, and a shell left in a directory that was
+    // removed — a worktree `rm`'d from another pane — still lists what is
+    // left. A relative `PANDO_HOME` is resolved against the current
+    // directory rather than compared as-is: `.pando` looks like it is
+    // outside the repository until the moment it is created inside it.
+    let configured = default_home();
     let cwd = std::env::current_dir().context(
         "cannot read the current directory — it may have been deleted; cd somewhere that exists",
-    )?;
-    // A relative `PANDO_HOME` is resolved here rather than compared as-is:
-    // `.pando` looks like it is outside the repository until the moment it
-    // is created inside it.
-    let home = cwd.join(default_home());
+    );
+    let home = match &cwd {
+        Ok(cwd) => cwd.join(&configured),
+        Err(_) => configured,
+    };
     // Every project on the machine is about the home, not about any
     // repository: from anywhere, and with nothing to load or guard.
     if let Some(pando::cli::Command::Ls {
@@ -122,9 +129,11 @@ fn run(cli: Cli) -> Result<()> {
         long,
         ..
     }) = cli.command
+        && home.is_absolute()
     {
         return pando::cli::ls_machine(&home, json, long, &mut pando::cli::Stdout);
     }
+    let cwd = cwd?;
     // `pando` alone outside any repository opens the grove: every project
     // this machine's pando knows, with none in front. A folder of
     // repositories pando does not know opens it too: the TUI would make
@@ -156,6 +165,12 @@ fn run(cli: Cli) -> Result<()> {
                 None => format!("{e:#}"),
             };
             return tui::run_home(home, Some(why));
+        }
+        // Into a pipe the TUI would draw for nobody: said as such, rather
+        // than as the reason it would have opened the grove.
+        Err(_) if cli.command.is_none() => return Err(no_terminal().into()),
+        Err(e) if format!("{e:#}").starts_with("not inside a git repository") => {
+            return Err(anyhow::anyhow!("{e:#}{}", way_in(&cwd)));
         }
         Err(e) => return Err(e),
     };
@@ -206,12 +221,31 @@ fn run(cli: Cli) -> Result<()> {
         }
         // The TUI draws on stdout. Into a pipe it drew for nobody, and
         // waited for keys nobody would press.
-        None if !std::io::stdout().is_terminal() => Err(pando::cli::UsageError(
-            "`pando` with no command opens the TUI, which needs a terminal — `pando --help` \
-             lists the commands, and `pando ls` the worktrees"
-                .to_string(),
-        )
-        .into()),
+        None if !std::io::stdout().is_terminal() => Err(no_terminal().into()),
         None => tui::run(paths, loaded.config),
     }
+}
+
+/// What `pando` with no command says into a pipe.
+fn no_terminal() -> pando::cli::UsageError {
+    pando::cli::UsageError(
+        "`pando` with no command opens the TUI, which needs a terminal — `pando --help` lists \
+         the commands, `pando ls` the worktrees, and `pando ls --all` every project pando knows"
+            .to_string(),
+    )
+}
+
+/// Where to go from `cwd`, which is in no project: the repository in it
+/// when there is one, and `ls --all`, which works from anywhere.
+fn way_in(cwd: &std::path::Path) -> String {
+    let repos = project::repos_in(cwd);
+    let into = match repos.as_slice() {
+        [] => String::new(),
+        [one] => format!("; `cd {one}` for its project"),
+        many => format!(
+            "; `cd` into one of the {} repositories here for its project",
+            many.len()
+        ),
+    };
+    format!("{into} — `pando ls --all` lists every project pando knows, from anywhere")
 }
