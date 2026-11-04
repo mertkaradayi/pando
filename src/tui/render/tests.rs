@@ -5660,3 +5660,44 @@ fn a_twin_folder_cut_to_its_room_keeps_where_it_differs() {
     // The same folder twice is never told apart by it.
     assert_eq!(fit_folder(&twin("work", 4, &["work"]), 10), None);
 }
+
+/// A twin's folder as the fixtures name them: long, alike to the end.
+fn fixture_twin() -> crate::actions::TwinFolder {
+    crate::actions::TwinFolder {
+        folder: "pando-fixture-1793791398151457000".into(),
+        shared: 19,
+        others: vec!["pando-fixture-1793791398157240000".into()],
+    }
+}
+
+// The header gives a twin's folder up first: at 80 columns it is cut to
+// where it differs and what runs is still said; whole only where all of
+// it fits.
+#[test]
+fn a_twins_folder_in_the_header_gives_way_to_what_runs() {
+    let mut app = test_app(&["up"]);
+    app.main = Some(wt("main"));
+    with_process(&mut app, "up", running_phase());
+    app.twin_folder = Some(fixture_twin());
+    let header = |app: &mut App, width: u16| {
+        text_of(&draw(app, width, 20))
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let narrow = header(&mut app, 80);
+    assert!(narrow.contains("● 1 running"), "{narrow}");
+    assert!(narrow.contains(" · main"), "{narrow}");
+    assert!(
+        !narrow.contains("pando-fixture-1793791398151457000"),
+        "{narrow}"
+    );
+    assert!(narrow.contains("…"), "{narrow}");
+    let wide = header(&mut app, 160);
+    assert!(
+        wide.contains("pando-fixture-1793791398151457000 · main"),
+        "{wide}"
+    );
+    assert!(wide.contains("● 1 running"), "{wide}");
+}

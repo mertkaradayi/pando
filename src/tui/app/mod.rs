@@ -409,8 +409,9 @@ pub struct App {
     pub grove_chrome: bool,
     /// The folder its repository is in, when another project in the
     /// grove has its name: the header says it after the name, as the
-    /// column does. Set by the grove before each frame.
-    pub twin_folder: Option<String>,
+    /// column does, cut to the room the header leaves it. Set by the
+    /// grove before each frame.
+    pub twin_folder: Option<crate::actions::TwinFolder>,
     /// Where the detail pane sits and how much it takes: `[ui] detail`
     /// and `detail_size`, which the grove changes for every project.
     pub detail: DetailLayout,

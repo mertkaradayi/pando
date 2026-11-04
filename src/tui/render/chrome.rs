@@ -208,7 +208,6 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, screen_height: u16, app: 
         .map(|span| text_width(&span.content))
         .sum::<usize>()
         + text_width(project)
-        + app.twin_folder.as_ref().map_or(0, |f| 1 + text_width(f))
         + text_width(" · ")
         + text_width(&branch)
         + text_width(" · ")
@@ -226,14 +225,9 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, screen_height: u16, app: 
     }
     let mut spans = lead;
     spans.push(Span::styled(project.clone(), Style::new().fg(text())));
-    // Another project in the grove has its name: its folder, dimmed, as
-    // the column says it, so the one in front reads as the one it is.
-    if let Some(folder) = &app.twin_folder {
-        spans.push(Span::styled(
-            format!(" {folder}"),
-            Style::new().fg(text_muted()),
-        ));
-    }
+    // Another project in the grove has its name: its folder goes here,
+    // once the rest is known, since it gives way before all of it.
+    let folder_at = spans.len();
     spans.extend([
         Span::styled(" · ", Style::new().fg(text_muted())),
         Span::styled(branch, Style::new().fg(blue())),
@@ -260,6 +254,7 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, screen_height: u16, app: 
             Style::new().fg(red()).add_modifier(Modifier::BOLD),
         ));
     }
+    let core_width: usize = spans.iter().map(|s| text_width(&s.content)).sum();
     // One chip per shared service, so a dev server that will not connect
     // says whose fault it is before the developer reads a stack trace —
     // under a label that says what the dots are: the project's own
@@ -287,6 +282,22 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, screen_height: u16, app: 
             " · reading git",
             Style::new().fg(text_muted()),
         ));
+    }
+    // The folder, dimmed, as the column says it, so the one in front
+    // reads as the one it is: whole where everything fits beside it, and
+    // otherwise only where it differs, in what the project, its branch
+    // and what runs leave, so it never pushes those off the bar.
+    if let Some(twin) = &app.twin_folder {
+        let width = area.width as usize;
+        let all_width: usize = spans.iter().map(|s| text_width(&s.content)).sum();
+        let whole_room = width.saturating_sub(all_width + 1);
+        let room = width.saturating_sub(core_width + 1);
+        if let Some(folder) = super::twins::header_folder(twin, whole_room, room) {
+            spans.insert(
+                folder_at,
+                Span::styled(format!(" {folder}"), Style::new().fg(text_muted())),
+            );
+        }
     }
     f.render_widget(
         Paragraph::new(truncate_line(Line::from(spans), area.width as usize))

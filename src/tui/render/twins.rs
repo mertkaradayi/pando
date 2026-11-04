@@ -266,3 +266,16 @@ pub(crate) fn fit_folder(twin: &TwinFolder, room: usize) -> Option<String> {
         .find(|(from, to, _)| apart(*from, *to))
         .map(|(_, _, cut)| cut)
 }
+
+/// A twin's folder in a header: whole where `whole_room` holds it,
+/// which is the room left once everything else the header says is in;
+/// otherwise cut to where it differs, in no more than
+/// [`FOLDER_WANT`] cells of `room`, what the header's more useful parts
+/// leave; `None` when not even that shows where it differs. The folder
+/// is what a header gives up first.
+pub(crate) fn header_folder(twin: &TwinFolder, whole_room: usize, room: usize) -> Option<String> {
+    if text_width(&twin.folder) <= whole_room {
+        return fit_folder(twin, whole_room);
+    }
+    fit_folder(twin, room.min(FOLDER_WANT))
+}

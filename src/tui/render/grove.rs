@@ -79,8 +79,7 @@ pub fn render_grove(f: &mut Frame, grove: &mut Grove) {
     let twin_folder = front
         .as_deref()
         .and_then(|id| grove.summaries.iter().find(|s| s.id == id))
-        .and_then(|s| s.twin_folder(&grove.summaries))
-        .map(|t| t.folder);
+        .and_then(|s| s.twin_folder(&grove.summaries));
     match front.and_then(|id| grove.open.get_mut(&id)) {
         Some(opened) => {
             opened.app.grove_chrome = shown && wide;
