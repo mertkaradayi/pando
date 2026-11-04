@@ -45,6 +45,23 @@ impl Grove {
             }
             return;
         }
+        // The setup screen of a project in front answers none of the
+        // grove's keys: they move away from it, which leaves its setup for
+        // later rather than skipping it, and its `q` goes back to where the
+        // grove was, unless pando was started in that very project.
+        if self.on_setup_screen() {
+            if self.focus == Focus::Column {
+                self.column_key(key);
+                return;
+            }
+            if self.grove_key(key) {
+                return;
+            }
+            if key.code == KeyCode::Char('q') && self.front != self.started_in {
+                self.close_front_setup();
+                return;
+            }
+        }
         // A question, a dialog, the log viewer or a filter on the front
         // app has the keyboard, wherever the focus was.
         if self.front_app().is_some_and(|app| !app.idle_on_list()) {
@@ -105,6 +122,10 @@ impl Grove {
                     app.modal = Some(Modal::Help);
                 }
             }
+            // A setup screen in front was only being looked at.
+            KeyCode::Char('q') if self.on_setup_screen() && self.front != self.started_in => {
+                self.close_front_setup();
+            }
             // The front app's own `q`, which asks first about its own
             // work in flight; with none in front, the grove's.
             KeyCode::Char('q') if self.front.is_some() => {
@@ -115,6 +136,30 @@ impl Grove {
                 self.grove_key(key);
             }
         }
+    }
+
+    /// Whether the project in front shows its setup screen, with nothing
+    /// open over it.
+    fn on_setup_screen(&self) -> bool {
+        self.front_app()
+            .is_some_and(|app| app.setup_screen.is_some() && app.modal.is_none())
+    }
+
+    /// `q` on the setup screen of a project opened from the grove: back to
+    /// the home pane, the column's cursor on it. Kept open behind while
+    /// it has work in flight, and nothing recorded, so its setup screen is
+    /// there again the next time it is opened.
+    fn close_front_setup(&mut self) {
+        let Some(id) = self.front.take() else {
+            return;
+        };
+        if self.open.get(&id).is_some_and(|o| o.app.pending.is_empty()) {
+            self.open.remove(&id);
+        }
+        if let Some(i) = self.summaries.iter().position(|s| s.id == id) {
+            self.cursor = i;
+        }
+        self.focus = Focus::Column;
     }
 
     pub(super) fn move_cursor(&mut self, delta: isize) {

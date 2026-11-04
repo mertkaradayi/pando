@@ -130,6 +130,9 @@ pub struct Grove {
     /// The project in front, by id; none outside a repository until one
     /// is opened.
     pub front: Option<String>,
+    /// The project pando was started in, by id; none outside a
+    /// repository. Its setup screen's `q` quits, as it does alone.
+    pub started_in: Option<String>,
     /// Every project opened, by id.
     pub open: BTreeMap<String, Opened>,
     /// Projects being opened on a worker.
@@ -200,6 +203,7 @@ impl Grove {
             summaries,
             cursor: 0,
             front: None,
+            started_in: None,
             open: BTreeMap::new(),
             opening: Vec::new(),
             stop_after_open: BTreeMap::new(),

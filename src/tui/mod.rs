@@ -73,6 +73,7 @@ pub fn run(paths: PandoPaths, config: Config) -> Result<()> {
     let (summaries, unread) = summaries_or_why(&home);
     let mut grove = Grove::new(home.clone(), ui, summaries);
     let watched = grove.take_theme(resolved);
+    grove.started_in = Some(app.paths.project.id.clone());
     grove.adopt(app, true);
     if let Some(why) = unread {
         grove.say(why, true);

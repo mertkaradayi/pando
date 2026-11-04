@@ -138,16 +138,15 @@ pub fn render_modal(f: &mut Frame, area: Rect, modal: &Modal, app: &App) -> Pain
                 (true, true) => LOG_MOUSE,
                 (true, false) => LIST_MOUSE,
             };
-            // Inside the grove, from the list: its keys too, which reach
-            // every project from this one.
-            let grove: &[(&str, &[KeyHelp])] =
-                match app.in_grove && app.setup_screen.is_none() && app.log_view().is_none() {
-                    true => &[
-                        ("across projects", GROVE_KEYS),
-                        ("in the project column", COLUMN_KEYS),
-                    ],
-                    false => &[],
-                };
+            // Inside the grove, from the list or the setup screen: its keys
+            // too, which reach every project from this one.
+            let grove: &[(&str, &[KeyHelp])] = match app.in_grove && app.log_view().is_none() {
+                true => &[
+                    ("across projects", GROVE_KEYS),
+                    ("in the project column", COLUMN_KEYS),
+                ],
+                false => &[],
+            };
             let bottom = render_help(
                 f,
                 area,

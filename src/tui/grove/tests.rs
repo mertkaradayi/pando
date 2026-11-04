@@ -1425,3 +1425,77 @@ fn enter_on_a_project_nothing_locates_says_how_to_find_it() {
     assert!(note.starts_with("lost is not located — "), "{note}");
     assert!(!note.contains("any more"), "{note}");
 }
+
+/// `name`'s app on its setup screen: a real repository, a real home,
+/// nothing configured.
+fn setup_app_for(dir: &std::path::Path, name: &str) -> crate::tui::app::App {
+    let root = dir.join(name);
+    crate::testutil::init_repo(&root);
+    let paths = PandoPaths::new(
+        dir.join("pando-home"),
+        ProjectRef::from_root(&root).unwrap(),
+    );
+    let mut app = crate::tui::app::App::new_for_test(
+        paths,
+        Config::default(),
+        vec![crate::tui::app::tests::wt("feat+one")],
+    );
+    app.open_setup_if_new();
+    assert!(app.setup_screen.is_some());
+    app
+}
+
+// From the home pane to a project with no settings: the grove's keys move
+// away from its setup screen, and its `q` goes back, skipping nothing.
+#[test]
+fn a_setup_screen_opened_from_the_grove_gives_its_keys_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = setup_app_for(dir.path(), "fresh");
+    let id = app.paths.project.id.clone();
+    let mut fresh = summary("fresh", 0, 0);
+    fresh.id = id.clone();
+    let mut grove = Grove::new_for_test(vec![summary("shop", 1, 0), fresh]);
+    grove.adopt(app_for("shop"), false);
+    grove.adopt(app, true);
+    assert_eq!(grove.front.as_deref(), Some(id.as_str()));
+
+    // `[` brings the other project; `]` the setup screen again, still up.
+    press(&mut grove, KeyCode::Char('['));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    press(&mut grove, KeyCode::Char(']'));
+    assert_eq!(grove.front.as_deref(), Some(id.as_str()));
+    assert!(grove.front_app().unwrap().setup_screen.is_some());
+    // `←` to the column, which takes `j` `k`; `tab` back.
+    press(&mut grove, KeyCode::Left);
+    assert_eq!(grove.focus, Focus::Column);
+    press(&mut grove, KeyCode::Char('k'));
+    assert_eq!(grove.cursor, 0);
+    press(&mut grove, KeyCode::Char('j'));
+    press(&mut grove, KeyCode::Tab);
+    assert_eq!(grove.focus, Focus::List);
+    // `q`: back to the home pane, nothing quit, nothing skipped.
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit);
+    assert_eq!(grove.front, None);
+    assert_eq!(grove.focus, Focus::Column);
+    assert_eq!(grove.selected().unwrap().id, id);
+    let paths = PandoPaths::new(
+        dir.path().join("pando-home"),
+        ProjectRef::from_root(dir.path().join("fresh")).unwrap(),
+    );
+    assert!(crate::setup::SetupMemory::load(&paths).skipped_at.is_none());
+}
+
+// Started in that project, its setup screen's `q` quits as it does alone.
+#[test]
+fn the_setup_screen_of_the_project_pando_started_in_quits_on_q() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = setup_app_for(dir.path(), "fresh");
+    let mut fresh = summary("fresh", 0, 0);
+    fresh.id = app.paths.project.id.clone();
+    let mut grove = Grove::new_for_test(vec![fresh]);
+    grove.started_in = Some(app.paths.project.id.clone());
+    grove.adopt(app, true);
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit);
+}
