@@ -186,11 +186,29 @@ impl Grove {
             return;
         };
         if summary.moved {
-            let name = summary.name.clone();
-            self.say(
-                format!("{name} has moved — nothing of it is acted on"),
-                true,
-            );
+            // Never stopped from here, but what still runs is named, with
+            // the way to end it.
+            let up: Vec<&crate::actions::LiveWorktree> =
+                summary.worktrees.iter().filter(|w| w.is_up()).collect();
+            let text = match up.is_empty() {
+                true => format!("{} has moved — nothing of it is acted on", summary.name),
+                false => {
+                    let names: Vec<&str> = up.iter().map(|w| w.name.as_str()).collect();
+                    let pids: Vec<String> = up
+                        .iter()
+                        .flat_map(|w| w.processes.values().map(|p| p.pid.to_string()))
+                        .collect();
+                    format!(
+                        "{} has moved, and {} of it still {} (pid {}) — pando acts on nothing \
+                         of a moved project; `kill` ends them",
+                        summary.name,
+                        names.join(", "),
+                        if names.len() == 1 { "runs" } else { "run" },
+                        pids.join(", ")
+                    )
+                }
+            };
+            self.say(text, true);
             return;
         }
         // What is up or coming up, as the project's own `X` stops: a

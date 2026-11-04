@@ -18,8 +18,8 @@ pub struct ProjectSummary {
     pub root: PathBuf,
     /// A multi-repo project's repositories; empty for one repository.
     pub repos: Vec<String>,
-    /// Its repository is gone or now another project's: shown, never
-    /// acted on.
+    /// Its repository is gone or now another project's: never opened or
+    /// acted on, though what of it still runs is counted as running.
     pub moved: bool,
     /// Worktrees whose every process is running.
     pub up: usize,
@@ -44,12 +44,13 @@ impl ProjectSummary {
         self.up + self.starting > 0
     }
 
-    /// Where it sits in a list of every project: live, then failed, then
-    /// idle, then moved.
+    /// Where it sits in a list of every project: live, moved or not, then
+    /// failed, then idle, then moved. A moved project's processes run on
+    /// in its worktrees, which are under pando's home, not its repository.
     pub fn rank(&self) -> u8 {
         match () {
-            _ if self.moved => 3,
             _ if self.is_live() => 0,
+            _ if self.moved => 3,
             _ if self.failed > 0 => 1,
             _ => 2,
         }
@@ -87,7 +88,8 @@ pub struct LiveProcess {
 }
 
 /// Every project under `home`, each with what it has up, in the order a
-/// list of them is shown: live first, then failed, then idle, then moved;
+/// list of them is shown: live first (moved or not), then failed, then
+/// idle, then moved;
 /// within each the most recently used first, then by id.
 ///
 /// The live process groups of every project are scanned in one pass.
@@ -195,10 +197,12 @@ fn summarise(
 }
 
 /// The ports live worktrees of two or more projects claim, each with
-/// every `(project id, worktree)` claiming it. Shown, never resolved.
+/// every `(project id, worktree)` claiming it. Shown, never resolved. A
+/// moved project's live worktrees count: a process holds its port
+/// wherever its repository went.
 pub fn port_clashes(summaries: &[ProjectSummary]) -> BTreeMap<u16, Vec<(String, String)>> {
     let mut claims: BTreeMap<u16, Vec<(String, String)>> = BTreeMap::new();
-    for summary in summaries.iter().filter(|s| !s.moved) {
+    for summary in summaries {
         for worktree in summary.worktrees.iter().filter(|w| w.is_up()) {
             for port in &worktree.claimed {
                 claims

@@ -59,7 +59,9 @@ may change behaviour.
   repository is, in `project.json`, written when pando runs there,
   whatever the command, a read-only one included. A
   project pando ran in before is recovered from the checkouts its state
-  records, and one whose repository has moved is listed as moved.
+  records, and one whose repository has moved is listed as moved;
+  what of it still runs is listed as running, with the live projects,
+  and its ports count in a clash.
 
 ## 0.11.2 — 2026-10-31
 

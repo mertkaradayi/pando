@@ -687,7 +687,8 @@ is listed as moved with an empty `root` and the name its id carries;
 any pando command run in its repository registers it again.
 
 Projects come in a fixed order: those with something up or starting
-first, then those with only failures, then idle ones, then moved ones;
+first, moved or not, then those with only failures, then idle ones, then
+moved ones;
 within each, the most recently used first (`last_used`, when pando last
 wrote the project's state, `null` when it never did), then by `id`.
 

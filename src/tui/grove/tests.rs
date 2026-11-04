@@ -1381,3 +1381,32 @@ fn auto_gives_the_project_its_width_before_the_column() {
     grove.front = None;
     assert!(column(&draw(&mut grove, 80, 24)));
 }
+
+// A repository moved while its server runs: the row reads as running,
+// and `X` names what still runs rather than saying nothing is acted on.
+#[test]
+fn a_moved_project_still_running_reads_live_and_x_names_what_runs() {
+    let mut moved = summary("old", 1, 0);
+    moved.moved = true;
+    moved.worktrees[0].processes.insert(
+        "dev".into(),
+        crate::actions::LiveProcess {
+            pid: 4242,
+            phase: crate::state::Phase::Running {
+                since: chrono::Utc::now(),
+            },
+        },
+    );
+    let mut grove = Grove::new_for_test(vec![moved]);
+    grove.shown = Shown::On;
+    let text = text_of(&draw(&mut grove, 100, 24));
+    assert!(text.contains("● old"), "{text}");
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('X'));
+    assert!(grove.confirm.is_none());
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(
+        note.contains("feat+up0 of it still runs (pid 4242)"),
+        "{note}"
+    );
+}

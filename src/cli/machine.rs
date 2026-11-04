@@ -194,7 +194,9 @@ fn write_worktree<W: Write>(
 /// The mark a project's line opens with, in the list's glyphs.
 fn project_mark(summary: &ProjectSummary) -> (&'static str, Paint) {
     match () {
-        _ if summary.moved => (" ", Paint::Faint),
+        _ if summary.moved && summary.up + summary.starting + summary.failed == 0 => {
+            (" ", Paint::Faint)
+        }
         _ if summary.up > 0 && summary.failed == 0 && summary.starting == 0 => ("●", Paint::Good),
         _ if summary.failed > 0 => ("✗", Paint::Bad),
         _ if summary.starting > 0 => ("◌", Paint::Warn),
@@ -203,12 +205,10 @@ fn project_mark(summary: &ProjectSummary) -> (&'static str, Paint) {
 }
 
 /// What a project has, in words: `2 up · 1 starting · 1 failed · 3
-/// stopped`, `moved`, or `nothing recorded`.
+/// stopped`, with `· moved` after it for a moved project, `moved` alone,
+/// or `nothing recorded`.
 fn counts_word(summary: &ProjectSummary) -> String {
-    if summary.moved {
-        return "moved".to_string();
-    }
-    let parts: Vec<String> = [
+    let mut parts: Vec<String> = [
         (summary.up, "up"),
         (summary.starting, "starting"),
         (summary.failed, "failed"),
@@ -218,6 +218,9 @@ fn counts_word(summary: &ProjectSummary) -> String {
     .filter(|(n, _)| *n > 0)
     .map(|(n, word)| format!("{n} {word}"))
     .collect();
+    if summary.moved {
+        parts.push("moved".to_string());
+    }
     match parts.is_empty() {
         true => "nothing recorded".to_string(),
         false => parts.join(" · "),

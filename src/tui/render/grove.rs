@@ -122,9 +122,12 @@ struct RowLook {
 
 fn row_look(grove: &Grove, summary: &ProjectSummary) -> RowLook {
     let live = summary.is_live();
+    // Moved and running nothing: only the dashed stem says anything of
+    // it. What of a moved project still runs is drawn as running.
+    let gone = summary.moved && !live;
     let open = grove.open.get(&summary.id).map(|o| &o.app);
     let glyph = match () {
-        _ if summary.moved => ("  ", text_muted()),
+        _ if gone && summary.failed == 0 => ("  ", text_muted()),
         _ if open.is_some_and(|app| app.awaiting_answer()) => ("? ", orange()),
         _ if open.is_some_and(|app| !app.pending.is_empty()) => ("◌ ", yellow()),
         _ if grove.opening.contains(&summary.id) => ("◌ ", yellow()),
@@ -134,7 +137,7 @@ fn row_look(grove: &Grove, summary: &ProjectSummary) -> RowLook {
         _ => ("  ", text_muted()),
     };
     let stem = match () {
-        _ if summary.moved => ('╎', text_muted()),
+        _ if gone => ('╎', text_muted()),
         _ if live => ('┃', text()),
         // As the home pane draws a failed project's trunk.
         _ if summary.failed > 0 => ('┃', red()),
@@ -142,12 +145,12 @@ fn row_look(grove: &Grove, summary: &ProjectSummary) -> RowLook {
     };
     let name = match () {
         _ if grove.front.as_deref() == Some(summary.id.as_str()) => blue(),
-        _ if summary.moved => text_muted(),
+        _ if gone => text_muted(),
         _ if live || summary.failed > 0 => text(),
         _ => text_dim(),
     };
     let mut count = Vec::new();
-    if summary.moved {
+    if gone {
         count.push(Span::styled("moved", Style::new().fg(text_muted())));
     } else {
         let up = summary.up + summary.starting;
@@ -168,7 +171,7 @@ fn row_look(grove: &Grove, summary: &ProjectSummary) -> RowLook {
         stem,
         glyph,
         name,
-        bold: !summary.moved && (live || summary.failed > 0),
+        bold: !gone && (live || summary.failed > 0),
         count,
     }
 }
@@ -419,12 +422,15 @@ fn render_strip(f: &mut Frame, area: Rect, grove: &mut Grove) {
         Some((i, summary)) => {
             let look = row_look(grove, summary);
             middle.push(Span::styled(look.glyph.0, Style::new().fg(look.glyph.1)));
-            let state = match () {
-                _ if summary.moved => " · moved".to_string(),
+            let mut state = match () {
                 _ if summary.is_live() => format!(" · {} up", summary.up + summary.starting),
+                _ if summary.moved => String::new(),
                 _ if summary.failed > 0 => format!(" · ✗{} failed", summary.failed),
                 _ => " · idle".to_string(),
             };
+            if summary.moved {
+                state.push_str(" · moved");
+            }
             let place = format!(" · {}/{}", i + 1, grove.summaries.len());
             let fixed: usize = lead
                 .iter()
@@ -531,7 +537,12 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
     let height = inner.height as usize;
     let art_width = width.saturating_sub(4).min(HOME_GROVE_WIDTH);
     let left = (width - art_width) / 2;
-    let projects: Vec<&ProjectSummary> = grove.summaries.iter().filter(|s| !s.moved).collect();
+    // A moved project is left out, unless something of it still runs.
+    let projects: Vec<&ProjectSummary> = grove
+        .summaries
+        .iter()
+        .filter(|s| !s.moved || s.is_live())
+        .collect();
     let stems = projects.len().min(crate::art::stems_that_fit(art_width));
     let more = projects.len() - stems;
     // Under the picture: the names, a `+n more` when some have no stem,

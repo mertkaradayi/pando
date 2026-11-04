@@ -465,3 +465,47 @@ fn a_project_nothing_locates_is_listed_moved_and_left_unregistered() {
     assert!(found[0].moved);
     assert_eq!(project::registered(&project_dir), None, "nothing written");
 }
+
+// A repository renamed while its server runs: the processes run on in
+// worktrees under the home, and still hold their ports.
+#[test]
+fn a_moved_project_still_running_ranks_live_and_its_ports_clash() {
+    let dir = tempdir().unwrap();
+    let home = dir.path().join("home");
+    let code = dir.path().join("code");
+    let logs = dir.path().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let a = crate::testutil::spawn_guarded("sleep 30", dir.path(), &logs.join("a.log"));
+    let b = crate::testutil::spawn_guarded("sleep 30", dir.path(), &logs.join("b.log"));
+    let live = |d: &crate::testutil::Detached| ProcessRecord {
+        pgid: d.pgid,
+        ..process(d.pid, running(), &logs)
+    };
+    let moved = project_with(
+        &home,
+        &code,
+        "renamed",
+        vec![("main", vec![("dev", live(&a))], vec![("web", 17_001)])],
+    );
+    let other = project_with(
+        &home,
+        &code,
+        "other",
+        vec![("main", vec![("dev", live(&b))], vec![("web", 17_001)])],
+    );
+    // An idle one, used more recently than either.
+    project_with(&home, &code, "idle", vec![("main", vec![], vec![])]);
+    std::fs::rename(code.join("renamed"), code.join("renamed-old")).unwrap();
+
+    let all = summaries(&home);
+    let at = |id: &str| all.iter().position(|s| s.id == id).unwrap();
+    assert!(all[at(&moved.id)].moved);
+    assert_eq!(all[at(&moved.id)].rank(), 0, "{:?}", all[at(&moved.id)]);
+    assert!(at(&moved.id) < 2, "with the live ones: {all:?}");
+    let clashes = port_clashes(&all);
+    let mut by: Vec<String> = clashes[&17_001].iter().map(|(id, _)| id.clone()).collect();
+    by.sort();
+    let mut want = vec![moved.id.clone(), other.id.clone()];
+    want.sort();
+    assert_eq!(by, want);
+}
