@@ -809,11 +809,11 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove, rest: TheRest) {
             usize::from(failed_only(s)) + text_width(&s.name) + twin + marks(s)
         })
         .collect();
-    let stems = stems_with_room(
-        &wants,
-        crate::art::stems_that_fit(art_width),
-        width.saturating_sub(2),
-    );
+    // No closer than a label and the two cells between labels, so each
+    // label can sit centred under its own stem rather than drift under a
+    // neighbour's: the rest are counted under the stems.
+    let fit = crate::art::stems_that_fit(art_width).min(art_width / (STEM_LABEL_MIN + 2));
+    let stems = stems_with_room(&wants, fit.max(1), width.saturating_sub(2));
     let more = projects.len() - stems;
     // A note takes the pane's whole width, not the picture's, and wraps
     // rather than losing its end, which is usually what to do.

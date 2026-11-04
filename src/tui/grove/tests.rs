@@ -2491,8 +2491,14 @@ fn the_home_pane_fits_its_lines_rather_than_cutting_them() {
 fn each_label_sits_under_its_own_stem() {
     use crate::tui::render::STEM_LABEL_MIN;
     let mut checked = 0;
-    for width in [80, 100, 120, 140, 180] {
-        let mut grove = shared_starts();
+    // Found in a real terminal with sixteen projects: stems seven to ten
+    // cells apart, every label pushed off its own.
+    let groves: [fn() -> Grove; 2] = [shared_starts, fourteen];
+    for (width, make) in [80, 100, 120, 140, 180]
+        .into_iter()
+        .flat_map(|w| groves.iter().map(move |g| (w, g)))
+    {
+        let mut grove = make();
         let text = text_of(&draw(&mut grove, width, 40));
         let rows: Vec<&str> = text
             .lines()
@@ -2529,10 +2535,10 @@ fn each_label_sits_under_its_own_stem() {
         assert_eq!(labels.len(), stems.len(), "{width}: {labels:?}\n{text}");
         // The room allows it where the stems are further apart than the
         // fewest cells a label has and the two between labels.
-        let room = stems.windows(2).all(|w| w[1] - w[0] >= STEM_LABEL_MIN + 2);
-        if !room {
-            continue;
-        }
+        assert!(
+            stems.windows(2).all(|w| w[1] - w[0] >= STEM_LABEL_MIN + 2),
+            "{width}: stems closer than a label: {stems:?}\n{text}"
+        );
         checked += 1;
         for (&(from, cells), &stem) in labels.iter().zip(&stems) {
             let centre = from + cells / 2;
@@ -2543,5 +2549,5 @@ fn each_label_sits_under_its_own_stem() {
             );
         }
     }
-    assert!(checked >= 2, "{checked}");
+    assert_eq!(checked, 10, "{checked}");
 }
