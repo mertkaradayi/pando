@@ -269,26 +269,29 @@ fn a_grove_of_projects_has_a_stem_each_and_crowns_only_where_leafed() {
     assert_eq!(stems_that_fit(60), 60 / STEM_SPACING_MIN);
 }
 
-// Each name under its own stem, cut to fit rather than moved on: a name
-// under another project's stem would be a lie.
+// Each label of a row has its whole where all fit, and otherwise the
+// short ones keep theirs and the long ones share the rest alike, the
+// last no shorter than the first.
 #[test]
-fn each_stem_keeps_its_own_label_cut_to_the_room() {
-    let labels: Vec<String> = ["shop", "a-very-long-project-name", "api"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    let placed = label_each_stem(&[2, 10, 20], &labels, 30);
-    assert_eq!(
-        placed,
-        vec![
-            (2, "shop".to_string()),
-            (10, "a-very-…".to_string()),
-            (20, "api".to_string()),
-        ]
-    );
-    assert!(
-        label_each_stem(&[0, 1], &labels, 30)
-            .iter()
-            .all(|(x, _)| *x == 1)
-    );
+fn a_row_of_labels_shares_its_room_evenly_among_the_long() {
+    assert_eq!(share_room(&[4, 20, 3], 40), vec![4, 20, 3]);
+    assert_eq!(share_room(&[30, 4, 30], 40), vec![16, 4, 16]);
+    let given = share_room(&[40, 40, 40, 40], 46);
+    assert_eq!(given, vec![10, 10, 10, 10]);
+    assert!(share_room(&[5, 5], 3).iter().all(|&g| g <= 1));
+}
+
+// Centred under its stem, moved only to keep two cells from a neighbour
+// and one from either edge.
+#[test]
+fn labels_sit_centred_under_their_stems_and_never_touch() {
+    assert_eq!(spread_labels(&[10, 30], &[4, 6], 50), vec![8, 27]);
+    // Long labels pushed apart, inside the row.
+    let widths = share_room(&[30, 30, 30], 58);
+    let at = spread_labels(&[20, 30, 40], &widths, 60);
+    assert!(at[0] >= 1, "{at:?}");
+    for i in 1..at.len() {
+        assert!(at[i] >= at[i - 1] + widths[i - 1] + 2, "{at:?} {widths:?}");
+    }
+    assert!(at[2] + widths[2] < 60, "{at:?} {widths:?}");
 }

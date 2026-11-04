@@ -7,7 +7,7 @@ use crate::state::Aggregate;
 use crate::tui::app::{
     AppEvent, COLUMN_KEYS, GROVE_KEYS, LIST_KEYS, Modal, PendingAction, PendingKind,
 };
-use crate::tui::render::{render, render_grove};
+use crate::tui::render::{render, render_grove, text_width};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -1829,4 +1829,59 @@ fn the_home_help_explains_the_clash_mark_and_a_twins_folder() {
         "{all}"
     );
     assert!(all.contains("another project has this name"), "{all}");
+}
+
+/// Each label in the row of the home pane that names `name` `count`
+/// times, from one `name` to the next.
+fn labels_under_stems(text: &str, name: &str, count: usize) -> Vec<String> {
+    let row = text
+        .lines()
+        .filter(|l| !l.contains('◀'))
+        .map(|l| l.rsplit("││").next().unwrap_or(l))
+        .find(|l| l.matches(name).count() == count)
+        .unwrap_or_default();
+    let starts: Vec<usize> = row.match_indices(name).map(|(i, _)| i).collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(k, &from)| {
+            let to = starts.get(k + 1).copied().unwrap_or(row.len());
+            row[from..to].trim_end_matches(['│', ' ']).to_string()
+        })
+        .collect()
+}
+
+// A label takes the room the pane has around its stem, not a fixed share
+// of the tree: on a wide pane every long name is whole, the rightmost no
+// shorter than the leftmost when they must be cut, and two labels never
+// touch.
+#[test]
+fn stem_labels_take_the_room_the_pane_has() {
+    let names = [
+        "mono-web-storefront",
+        "mono-web-admin-console",
+        "mono-api-gateway-service",
+        "mono-worker-queue",
+    ];
+    for width in [180, 220] {
+        let mut grove = Grove::new_for_test(names.iter().map(|n| summary(n, 1, 0)).collect());
+        let text = text_of(&draw(&mut grove, width, 40));
+        let labels = labels_under_stems(&text, "mono-", names.len());
+        assert_eq!(labels, names, "{width}:\n{text}");
+    }
+    for width in [100, 120, 140] {
+        let mut grove = long_twins();
+        let text = text_of(&draw(&mut grove, width, 40));
+        let labels = labels_under_stems(&text, "plain", 2);
+        let (a, b) = (text_width(&labels[0]), text_width(&labels[1]));
+        assert!(b + 1 >= a, "{width}: {labels:?}\n{text}");
+        let row = text
+            .lines()
+            .find(|l| l.matches("plain").count() == 2 && !l.contains('◀'))
+            .unwrap();
+        assert!(
+            row.contains("!  ") && !row.contains("! plain"),
+            "{width}:\n{text}"
+        );
+    }
 }

@@ -761,20 +761,37 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
             })
         }));
         // Each label is its name, the folder when another project has the
-        // name, and `!` when a port of it is another project's too, fitted
-        // to the room under its stem: the folder gives way first, then the
-        // name, and the mark never does.
+        // name, and `!` when a port of it is another project's too, in
+        // the room the pane has around its stem: the whole row is shared,
+        // the short labels whole and the long alike, the folder gives way
+        // first, then the name, and the mark never does.
         let clashing = crate::actions::clashing_projects(&grove.summaries);
+        let named: Vec<String> = shown
+            .iter()
+            .map(|s| match s.failed > 0 && !s.is_live() {
+                true => format!("✗{}", s.name),
+                false => s.name.clone(),
+            })
+            .collect();
+        let wants: Vec<usize> = shown
+            .iter()
+            .zip(&named)
+            .map(|(s, name)| {
+                let twin = s
+                    .twin_folder(&grove.summaries)
+                    .map_or(0, |t| 1 + text_width(&t.folder));
+                let mark = 2 * usize::from(clashing.contains(&s.id));
+                text_width(name) + twin + mark
+            })
+            .collect();
+        let rooms = crate::art::share_room(&wants, width.saturating_sub(2));
         let parts: Vec<(String, String, bool)> = shown
             .iter()
-            .zip(crate::art::stem_rooms(&picture.stems, art_width))
-            .map(|(s, room)| {
-                let name = match s.failed > 0 && !s.is_live() {
-                    true => format!("✗{}", s.name),
-                    false => s.name.clone(),
-                };
+            .zip(&named)
+            .zip(&rooms)
+            .map(|((s, name), &room)| {
                 let twin = s.twin_folder(&grove.summaries);
-                fit_stem_label(&name, twin.as_ref(), clashing.contains(&s.id), room)
+                fit_stem_label(name, twin.as_ref(), clashing.contains(&s.id), room)
             })
             .collect();
         let labels: Vec<String> = parts
@@ -785,12 +802,15 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
                 (false, _) => format!("{name}{twin}"),
             })
             .collect();
-        let mut spans = vec![Span::raw(" ".repeat(left))];
+        let widths: Vec<usize> = labels.iter().map(|l| text_width(l)).collect();
+        let stems_at: Vec<usize> = picture.stems.iter().map(|&x| left + x).collect();
+        let starts = crate::art::spread_labels(&stems_at, &widths, width);
+        let mut spans = Vec::new();
         let mut at = 0;
-        for (x, label) in crate::art::label_each_stem(&picture.stems, &labels, art_width) {
-            let Some(i) = picture.stems.iter().position(|&s| s == x) else {
+        for (i, label) in labels.iter().enumerate() {
+            if label.is_empty() {
                 continue;
-            };
+            }
             let summary = shown[i];
             let style = match () {
                 _ if Some(summary.id.as_str()) == selected => {
@@ -800,9 +820,9 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
                 _ if summary.failed > 0 => Style::new().fg(red()),
                 _ => Style::new().fg(text_dim()),
             };
-            spans.push(Span::raw(" ".repeat(x.saturating_sub(at))));
-            at = x + text_width(&label);
-            spans.extend(label_spans(&label, &parts[i], style));
+            spans.push(Span::raw(" ".repeat(starts[i].saturating_sub(at))));
+            at = starts[i] + widths[i];
+            spans.extend(label_spans(label, &parts[i], style));
         }
         lines.push(Line::from(spans));
     }

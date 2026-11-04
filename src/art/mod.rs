@@ -117,45 +117,45 @@ pub fn label_stems(stems: &[usize], labels: &[String], width: usize) -> Vec<(usi
     placed
 }
 
-/// The cells a label under each stem may take: up to two cells short of
-/// the next stem, or to the grove's edge for the last.
-pub fn stem_rooms(stems: &[usize], width: usize) -> Vec<usize> {
-    stems
-        .iter()
-        .enumerate()
-        .map(|(i, &x)| {
-            let end = stems
-                .get(i + 1)
-                .map_or(width, |&next| next.saturating_sub(2));
-            end.saturating_sub(x)
-        })
-        .collect()
+/// The cells each of a row of labels gets of `room`, wanting `wants`
+/// cells each, two cells kept between neighbours: each its whole where
+/// all fit, and otherwise the short ones whole and what is left shared
+/// evenly among the long, so no label has less than another for being
+/// further right.
+pub fn share_room(wants: &[usize], room: usize) -> Vec<usize> {
+    let mut left = room.saturating_sub(2 * wants.len().saturating_sub(1));
+    let mut given = vec![0; wants.len()];
+    let mut order: Vec<usize> = (0..wants.len()).collect();
+    order.sort_by_key(|&i| wants[i]);
+    for (taken, i) in order.into_iter().enumerate() {
+        let share = left / (wants.len() - taken);
+        given[i] = wants[i].min(share);
+        left -= given[i];
+    }
+    given
 }
 
-/// One label under each stem, in order, left-aligned there and cut with
-/// `…` to the room before the next stem, two cells short of it so two
-/// names never read as one: label `i` is always stem `i`'s,
-/// unlike [`label_stems`], which moves a long label to a later stem. A
-/// stem with no room for one character and the `…` gets no label.
-pub fn label_each_stem(stems: &[usize], labels: &[String], width: usize) -> Vec<(usize, String)> {
-    stems
+/// Where each label of a row starts, `widths[i]` cells for the stem at
+/// `stems[i]`, in a row `width` wide: centred under its stem, and moved
+/// as little as it takes to keep a cell from either edge and two from its
+/// neighbours, in order. Labels whose widths [`share_room`] gave of
+/// `width - 2` never touch.
+pub fn spread_labels(stems: &[usize], widths: &[usize], width: usize) -> Vec<usize> {
+    let (lo, hi) = (1, width.saturating_sub(1));
+    let mut at: Vec<usize> = stems
         .iter()
-        .zip(stem_rooms(stems, width))
-        .zip(labels)
-        .filter_map(|((&x, room), label)| {
-            let length = label.chars().count();
-            let fitted = match () {
-                _ if length <= room => label.clone(),
-                _ if room >= 2 => {
-                    let mut cut: String = label.chars().take(room - 1).collect();
-                    cut.push('…');
-                    cut
-                }
-                _ => return None,
-            };
-            Some((x, fitted))
-        })
-        .collect()
+        .zip(widths)
+        .map(|(&x, &w)| x.saturating_sub(w / 2).min(hi.saturating_sub(w)).max(lo))
+        .collect();
+    for i in 1..at.len() {
+        at[i] = at[i].max(at[i - 1] + widths[i - 1] + 2);
+    }
+    let mut limit = hi;
+    for i in (0..at.len()).rev() {
+        at[i] = at[i].min(limit.saturating_sub(widths[i]));
+        limit = at[i].saturating_sub(2);
+    }
+    at
 }
 
 /// The dithered shade of `value` (0 to 1) at a cell: an index into
