@@ -52,8 +52,9 @@
 //! advances phases on that copy and returns it; `actions::removals` reads
 //! every removal mark in it as under way; `actions::summaries`, the reader
 //! of every project on the machine, advances each project's copy as
-//! `refresh` does and never saves it, even with the lock free, and asks no
-//! lock whose file is not already there. A reader shows the copy and does
+//! `refresh` does — read again while it holds a lock it found free, since
+//! a mutation may have saved since its first read — and never saves it,
+//! and asks no lock whose file is not already there. A reader shows the copy and does
 //! nothing else with it: it never saves it — the holder's save is the one
 //! that counts, and the next read to find the lock free does this one's
 //! work again and saves it — never signals, since the sweeps that signal

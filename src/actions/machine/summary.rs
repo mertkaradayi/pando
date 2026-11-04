@@ -153,7 +153,7 @@ fn summarise(
         }
         Some(Ok(seen)) => seen,
     };
-    let observed = observe(seen, &project.lock_file(), scans);
+    let observed = observe(seen, &project.state_file(), &project.lock_file(), scans);
     for (name, record) in observed.state.worktrees {
         // `pando check`'s throwaway worktree is no worktree of the
         // project's.

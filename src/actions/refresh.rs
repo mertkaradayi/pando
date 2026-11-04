@@ -175,15 +175,42 @@ pub fn scan_all(stores: &[&state::State]) -> Scans {
 /// saved and never signalled — the reader rules of `state`'s module doc.
 ///
 /// While another pando holds `lock_file` a death keeps the phase it was
-/// recorded in, as [`refresh`] answers then. A lock file that is not there
-/// is free, and is not made: a reader of every project writes no lock into
-/// any of them.
-pub fn observe(seen: state::State, lock_file: &Path, scans: &Scans) -> Refreshed {
+/// recorded in, as [`refresh`] answers then. Found free, the lock is held
+/// for the moment of a second read of `state_file`, as [`refresh`] reads
+/// under it: `seen` was read before, and a restart that saved and let go
+/// in between replaced the process `seen` names, which would read as a
+/// crash. A lock file that is not there is free, and is not made: a
+/// reader of every project writes no lock into any of them, and with no
+/// lock file nothing has saved since `seen` was read.
+pub fn observe(
+    seen: state::State,
+    state_file: &Path,
+    lock_file: &Path,
+    scans: &Scans,
+) -> Refreshed {
     if !lock_file.exists() {
         return advanced(seen, scans);
     }
     match state::try_lock(lock_file) {
-        Ok(Some(_free)) => advanced(seen, scans),
+        Ok(Some(_free)) => {
+            let store = match state::load(state_file) {
+                Ok(store) => store,
+                Err(_) => return advanced_while_held(seen, scans),
+            };
+            // A group the save brought in was not in the one scan of
+            // every project: scanned now, alone.
+            let unscanned: Vec<proc::Group> = live_groups(&store)
+                .filter(|g| !scans.contains_key(g))
+                .collect();
+            match unscanned.is_empty() {
+                true => advanced(store, scans),
+                false => {
+                    let mut scans = scans.clone();
+                    scans.extend(crate::platform::process::ports_by_group(&unscanned));
+                    advanced(store, &scans)
+                }
+            }
+        }
         // Held, or not to be asked: either way nothing is called dead.
         Ok(None) | Err(_) => advanced_while_held(seen, scans),
     }

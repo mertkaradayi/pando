@@ -509,3 +509,39 @@ fn a_moved_project_still_running_ranks_live_and_its_ports_clash() {
     want.sort();
     assert_eq!(by, want);
 }
+
+// A restart that saved and let go between the summary's read and its
+// lock: the copy names the replaced process, and the file the new one.
+#[test]
+fn a_copy_read_before_a_restart_saved_is_read_again_under_the_free_lock() {
+    let dir = tempdir().unwrap();
+    let logs = dir.path().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let new = crate::testutil::spawn_guarded("sleep 30", dir.path(), &logs.join("new.log"));
+    let tree = dir.path().join("trees").join("feat+one");
+    let with = |p: ProcessRecord| {
+        let mut store = state::State::new();
+        let mut record = WorktreeRecord::new(tree.clone(), true);
+        record.processes.insert("dev".into(), p);
+        store.worktrees.insert("feat+one".into(), record);
+        store
+    };
+    let seen = with(process(dead_pid(), running(), &logs));
+    let state_file = dir.path().join("state.json");
+    let saved = with(ProcessRecord {
+        pgid: new.pgid,
+        ..process(new.pid, running(), &logs)
+    });
+    state::save(&state_file, &saved).unwrap();
+    let lock_file = dir.path().join("state.lock");
+    std::fs::write(&lock_file, "").unwrap();
+
+    let observed = crate::actions::observe(seen, &state_file, &lock_file, &Default::default());
+    let record = &observed.state.worktrees["feat+one"];
+    assert_eq!(record.processes["dev"].pid, new.pid);
+    assert!(
+        !matches!(record.processes["dev"].phase, Phase::Failed { .. }),
+        "{:?}",
+        record.processes["dev"].phase
+    );
+}
