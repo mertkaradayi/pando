@@ -40,7 +40,9 @@ impl KnownProject {
 /// registry written then, once. One whose root cannot be worked out —
 /// every checkout it records is gone — is still listed, as moved, under
 /// the name its directory carries and an empty root, and nothing is
-/// written: running pando in its repository once registers it again.
+/// written: running pando in its repository registers it again while the
+/// repository is where it was, and `pando doctor` in its new place adopts
+/// it once it moved, under the same folder name.
 pub fn known(home: &Path) -> Vec<KnownProject> {
     project::project_dirs(home)
         .into_iter()

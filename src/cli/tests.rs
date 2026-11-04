@@ -6419,7 +6419,9 @@ fn ls_all_says_how_to_locate_a_project_nothing_records_the_place_of() {
     let text = capture(|b| ls_machine_text_with(dir.path(), b, &LsView::plain(120)));
     assert!(text.contains("acme-shop"), "{text}");
     assert!(
-        text.contains("not located · run pando in its repository once"),
+        text.contains(
+            "not located · run pando in its repository, or `pando doctor` there if it moved"
+        ),
         "{text}"
     );
     let json = capture(|b| ls_machine_json(dir.path(), b));

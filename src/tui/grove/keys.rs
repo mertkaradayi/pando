@@ -162,14 +162,19 @@ impl Grove {
             return;
         };
         if summary.moved {
-            self.say(
-                format!(
+            let text = match summary.located() {
+                true => format!(
                     "{} is not at {} any more — run pando in it where it is now",
                     summary.name,
                     summary.root.display()
                 ),
-                true,
-            );
+                false => format!(
+                    "{} is not located — {}",
+                    summary.name,
+                    crate::actions::ProjectSummary::FIND_AGAIN
+                ),
+            };
+            self.say(text, true);
             return;
         }
         if self.open.contains_key(&summary.id) {

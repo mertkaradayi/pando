@@ -684,7 +684,9 @@ listed so it can be found, and is not one to act on — `pando doctor`
 in the repository's new place offers to adopt it. A project whose
 state records no checkout that is still there, and that has no registry,
 is listed as moved with an empty `root` and the name its id carries;
-any pando command run in its repository registers it again.
+any pando command run in its repository registers it again while the
+repository is where it was, and `pando doctor` in its new place offers
+to adopt it once it moved, under the same folder name.
 
 Projects come in a fixed order: those with something up or starting
 first, moved or not, then those with only failures, then idle ones, then

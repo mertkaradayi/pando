@@ -1410,3 +1410,18 @@ fn a_moved_project_still_running_reads_live_and_x_names_what_runs() {
         "{note}"
     );
 }
+
+// A project nothing locates has no root to name: ⏎ says how it is found
+// again, never "is not at  any more".
+#[test]
+fn enter_on_a_project_nothing_locates_says_how_to_find_it() {
+    let mut lost = summary("lost", 0, 0);
+    lost.moved = true;
+    lost.root = std::path::PathBuf::new();
+    let mut grove = Grove::new_for_test(vec![lost]);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Enter);
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(note.starts_with("lost is not located — "), "{note}");
+    assert!(!note.contains("any more"), "{note}");
+}

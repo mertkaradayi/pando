@@ -39,6 +39,17 @@ pub struct ProjectSummary {
 }
 
 impl ProjectSummary {
+    /// Whether pando knows where its repository is, or was: a project
+    /// recovered from a state whose every checkout is gone has no root.
+    pub fn located(&self) -> bool {
+        !self.root.as_os_str().is_empty()
+    }
+
+    /// What finds a project nothing locates again: its repository is
+    /// registered by any pando run there while it is where it was, and
+    /// adopted by `doctor` in its new place once it moved.
+    pub const FIND_AGAIN: &str = "run pando in its repository, or `pando doctor` there if it moved";
+
     /// Whether anything of it is up or coming up.
     pub fn is_live(&self) -> bool {
         self.up + self.starting > 0
