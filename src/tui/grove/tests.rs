@@ -2137,3 +2137,31 @@ fn begun_in_a_project_q_on_its_list_quits() {
     press(&mut grove, KeyCode::Esc);
     assert!(grove.should_quit);
 }
+
+// With two projects of one name open, the header of the one in front
+// says its folder after its name, dimmed, as the column does; a name of
+// its own is left alone.
+#[test]
+fn a_twins_header_says_which_of_its_name_is_in_front() {
+    let clone = |folder: &str| {
+        let mut s = summary("shop", 0, 0);
+        s.id = format!("shop-{folder}");
+        s.root = std::path::PathBuf::from("/tmp").join(folder).join("shop");
+        s
+    };
+    let mut first = clone("work");
+    first.id = id_of("shop");
+    let mut grove = Grove::new_for_test(vec![first, clone("personal"), summary("docs", 0, 0)]);
+    grove.adopt(app_for("shop"), true);
+    for width in [120, 160] {
+        let buf = draw(&mut grove, width, 30);
+        let header = cells(&buf, 0, COLUMN_WIDTH, width);
+        assert!(header.trim_start().starts_with("shop work · "), "{header}");
+        let at = COLUMN_WIDTH + header.find("work").unwrap() as u16;
+        assert_eq!(buf[(at, 0)].fg, crate::theme::text_muted(), "{header}");
+    }
+    let mut grove = a_grove();
+    let buf = draw(&mut grove, 120, 30);
+    let header = cells(&buf, 0, COLUMN_WIDTH, 120);
+    assert!(header.trim_start().starts_with("shop · "), "{header}");
+}

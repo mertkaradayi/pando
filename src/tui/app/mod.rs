@@ -407,6 +407,10 @@ pub struct App {
     /// build, so the header starts at the project. Set by the grove
     /// before each frame.
     pub grove_chrome: bool,
+    /// The folder its repository is in, when another project in the
+    /// grove has its name: the header says it after the name, as the
+    /// column does. Set by the grove before each frame.
+    pub twin_folder: Option<String>,
     /// Where the detail pane sits and how much it takes: `[ui] detail`
     /// and `detail_size`, which the grove changes for every project.
     pub detail: DetailLayout,
@@ -511,6 +515,7 @@ impl App {
             home_behind: false,
             wants_home: false,
             grove_chrome: false,
+            twin_folder: None,
             detail,
             detail_stacked: false,
             #[cfg(test)]
@@ -1939,6 +1944,7 @@ impl App {
             home_behind: false,
             wants_home: false,
             grove_chrome: false,
+            twin_folder: None,
             detail,
             detail_stacked: false,
             checks_started: 0,

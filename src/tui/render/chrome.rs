@@ -208,6 +208,7 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, screen_height: u16, app: 
         .map(|span| text_width(&span.content))
         .sum::<usize>()
         + text_width(project)
+        + app.twin_folder.as_ref().map_or(0, |f| 1 + text_width(f))
         + text_width(" · ")
         + text_width(&branch)
         + text_width(" · ")
@@ -224,8 +225,16 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, screen_height: u16, app: 
         }
     }
     let mut spans = lead;
+    spans.push(Span::styled(project.clone(), Style::new().fg(text())));
+    // Another project in the grove has its name: its folder, dimmed, as
+    // the column says it, so the one in front reads as the one it is.
+    if let Some(folder) = &app.twin_folder {
+        spans.push(Span::styled(
+            format!(" {folder}"),
+            Style::new().fg(text_muted()),
+        ));
+    }
     spans.extend([
-        Span::styled(project.clone(), Style::new().fg(text())),
         Span::styled(" · ", Style::new().fg(text_muted())),
         Span::styled(branch, Style::new().fg(blue())),
     ]);

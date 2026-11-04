@@ -483,7 +483,8 @@ runs:
 The folder is cut to the part that differs, and a long name gives way
 to a short head of itself so that part still shows. Where not one
 character of it fits, each carries its place in the column instead,
-`·1` and `·2`, so no two projects ever read alike.
+`·1` and `·2`, so no two projects ever read alike. The header of the
+one in front says its folder after its name too.
 
 Right of it is the TUI of the project in front, exactly as it is when
 pando runs in that project alone. A project opened stays open while
