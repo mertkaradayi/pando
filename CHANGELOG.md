@@ -61,7 +61,9 @@ may change behaviour.
   project pando ran in before is recovered from the checkouts its state
   records, and one whose repository has moved is listed as moved;
   what of it still runs is listed as running, with the live projects,
-  and its ports count in a clash.
+  and its ports count in a clash. A home whose projects cannot be read
+  is an error, never an empty list, and a project directory that cannot
+  be is listed with why.
 
 ## 0.11.2 — 2026-10-31
 

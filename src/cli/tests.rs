@@ -6399,7 +6399,8 @@ fn ls_all_text_groups_by_project_and_marks_a_clash() {
 fn ls_all_says_so_when_pando_knows_no_project() {
     let dir = tempdir().unwrap();
     let text = capture(|b| ls_machine_text_with(dir.path(), b, &LsView::plain(80)));
-    assert!(text.contains("pando knows no project yet"), "{text}");
+    assert!(text.contains("pando knows no project yet in "), "{text}");
+    assert!(text.contains(&dir.path().display().to_string()), "{text}");
     let json = capture(|b| ls_machine_json(dir.path(), b));
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["projects"], serde_json::json!([]));
@@ -6490,4 +6491,15 @@ fn ls_all_long_fits_a_worktrees_path_and_reason_in_the_width() {
     }
     let failed = text.lines().find(|l| l.contains("feat+two")).unwrap();
     assert!(failed.contains('…'), "{failed}");
+}
+
+#[test]
+fn ls_all_fails_on_a_home_it_cannot_read_rather_than_listing_none() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("projects"), "").unwrap();
+    let mut out = Vec::new();
+    assert!(ls_machine_json(dir.path(), &mut out).is_err());
+    assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
+    let mut out = Vec::new();
+    assert!(ls_machine_text_with(dir.path(), &mut out, &LsView::plain(80)).is_err());
 }

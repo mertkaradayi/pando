@@ -99,9 +99,17 @@ pub fn remember_as(project_dir: &Path, entry: &Registered) -> Result<bool> {
 
 /// Every project directory under `home`, as `(id, directory)`, sorted by
 /// id. Directories only: whatever else sits in `projects/` is no project.
-pub fn project_dirs(home: &Path) -> Vec<(String, PathBuf)> {
-    let Ok(entries) = std::fs::read_dir(home.join(super::PROJECTS_DIR)) else {
-        return Vec::new();
+///
+/// None when the home or its `projects/` is not there yet. Any other
+/// reason it cannot be read — a directory pando may not read, a
+/// `PANDO_HOME` that names a file — is an error: read as none, it would
+/// say nothing runs while projects do.
+pub fn project_dirs(home: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let dir = home.join(super::PROJECTS_DIR);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e).with_context(|| format!("cannot read {}", dir.display())),
     };
     let mut out: Vec<(String, PathBuf)> = entries
         .flatten()
@@ -109,5 +117,5 @@ pub fn project_dirs(home: &Path) -> Vec<(String, PathBuf)> {
         .filter_map(|entry| Some((entry.file_name().into_string().ok()?, entry.path())))
         .collect();
     out.sort();
-    out
+    Ok(out)
 }

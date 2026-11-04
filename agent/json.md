@@ -701,7 +701,9 @@ among them once it was started: `up` with every process running,
 stopped, by name, `status` and `reason` as `status --json` gives them for
 the whole worktree, and `processes` each process by name as there.
 `warning` says why the project's state could not be read; its counts
-are then all zero.
+are then all zero. A project directory pando may not read is listed so,
+moved and with its `warning`; a home whose `projects/` it may not read
+is an error, exit 1, never an empty `projects`.
 
 `ports` are the ports pando gave the worktree, by role. `claimed` is
 every port it holds: those, what its processes were seen listening on,

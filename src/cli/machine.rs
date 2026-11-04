@@ -44,11 +44,14 @@ fn clashing(summaries: &[ProjectSummary]) -> BTreeMap<(String, String), BTreeSet
 
 /// The text listing: a line per project, its live worktrees under it.
 pub fn ls_machine_text_with<W: Write>(home: &Path, out: &mut W, view: &LsView) -> Result<()> {
-    let summaries = actions::summaries(home);
+    let summaries = actions::summaries(home)?;
     if summaries.is_empty() {
+        // The home named: a mistyped `PANDO_HOME` shows here.
         writeln!(
             out,
-            "pando knows no project yet — `pando new <branch>` in a repository makes its first"
+            "pando knows no project yet in {} — `pando new <branch>` in a repository makes its \
+             first",
+            view.style.tilde(&home.display().to_string())
         )?;
         return Ok(());
     }
@@ -318,7 +321,7 @@ struct MachineProcessOut {
 
 /// The documented shape of `ls --all --json`.
 pub fn ls_machine_json<W: Write>(home: &Path, out: &mut W) -> Result<()> {
-    let summaries = actions::summaries(home);
+    let summaries = actions::summaries(home)?;
     let clashes = clashing(&summaries);
     let projects = summaries
         .iter()

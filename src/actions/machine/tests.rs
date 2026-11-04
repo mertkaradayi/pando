@@ -284,7 +284,7 @@ fn summaries_list_every_project_live_first_and_write_nothing() {
     std::fs::create_dir_all(home.join("projects").join("empty-00000000")).unwrap();
 
     let before = snapshot(&home);
-    let all = summaries(&home);
+    let all = summaries(&home).unwrap();
     assert_eq!(snapshot(&home), before, "a summary wrote into the home");
 
     let ids: Vec<&str> = all.iter().map(|s| s.id.as_str()).collect();
@@ -351,12 +351,12 @@ fn a_death_under_a_held_lock_keeps_its_recorded_phase() {
     let lock_file = home.join("projects").join(&shop.id).join("state.lock");
     let held = state::lock(&lock_file).unwrap();
     let before = snapshot(&home);
-    let all = summaries(&home);
+    let all = summaries(&home).unwrap();
     assert_eq!(snapshot(&home), before);
     assert_eq!((all[0].up, all[0].failed), (1, 0), "{all:?}");
 
     drop(held);
-    let all = summaries(&home);
+    let all = summaries(&home).unwrap();
     assert_eq!((all[0].up, all[0].failed), (0, 1), "{all:?}");
 }
 
@@ -370,7 +370,7 @@ fn known_recovers_an_unregistered_project_and_registers_it_once() {
     let project_dir = unregistered_dir(&home, &project);
     record(&project_dir, &[("acme-shop", &project.root)]);
 
-    let found = known(&home);
+    let found = known(&home).unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].id, project.id);
     assert_eq!(found[0].registered, Registered::of(&project));
@@ -381,7 +381,7 @@ fn known_recovers_an_unregistered_project_and_registers_it_once() {
     );
     let file = project_dir.join(project::PROJECT_FILE);
     let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
-    assert_eq!(known(&home), found);
+    assert_eq!(known(&home).unwrap(), found);
     assert_eq!(
         std::fs::metadata(&file).unwrap().modified().unwrap(),
         modified
@@ -434,7 +434,7 @@ fn a_port_two_projects_claim_is_a_clash_and_one_project_twice_is_not() {
         vec![("feat+d", vec![], vec![("web", 17_002)])],
     );
 
-    let clashes = port_clashes(&summaries(&home));
+    let clashes = port_clashes(&summaries(&home).unwrap());
     assert_eq!(clashes.len(), 1, "{clashes:?}");
     let mut by = clashes[&17_001].clone();
     by.sort();
@@ -457,7 +457,7 @@ fn a_project_nothing_locates_is_listed_moved_and_left_unregistered() {
     let project_dir = unregistered_dir(&home, &project);
     record(&project_dir, &[("feat+old", &gone)]);
 
-    let found = known(&home);
+    let found = known(&home).unwrap();
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].id, project.id);
     assert_eq!(found[0].registered.name, "acme-shop");
@@ -497,7 +497,7 @@ fn a_moved_project_still_running_ranks_live_and_its_ports_clash() {
     project_with(&home, &code, "idle", vec![("main", vec![], vec![])]);
     std::fs::rename(code.join("renamed"), code.join("renamed-old")).unwrap();
 
-    let all = summaries(&home);
+    let all = summaries(&home).unwrap();
     let at = |id: &str| all.iter().position(|s| s.id == id).unwrap();
     assert!(all[at(&moved.id)].moved);
     assert_eq!(all[at(&moved.id)].rank(), 0, "{:?}", all[at(&moved.id)]);
@@ -544,4 +544,28 @@ fn a_copy_read_before_a_restart_saved_is_read_again_under_the_free_lock() {
         "{:?}",
         record.processes["dev"].phase
     );
+}
+
+// A project directory pando may not read (made by a run under sudo):
+// listed, with why, rather than dropped with the ports it holds.
+#[test]
+fn a_project_dir_that_cannot_be_read_is_listed_with_why() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempdir().unwrap();
+    let home = dir.path().join("home");
+    let code = dir.path().join("code");
+    let shop = project_with(&home, &code, "shop", vec![("main", vec![], vec![])]);
+    let shop_dir = home.join("projects").join(&shop.id);
+    std::fs::set_permissions(&shop_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // Root reads it all the same: nothing to prove then.
+    let readable = std::fs::read_dir(&shop_dir).is_ok();
+    let all = summaries(&home);
+    std::fs::set_permissions(&shop_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    if readable {
+        return;
+    }
+    let all = all.unwrap();
+    assert_eq!(all.len(), 1, "{all:?}");
+    assert_eq!(all[0].id, shop.id);
+    assert!(all[0].warning.is_some(), "{all:?}");
 }

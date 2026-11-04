@@ -69,6 +69,8 @@ pub enum GroveEvent {
     Project(String, AppEvent),
     /// The layout could not be saved, and why.
     NotSaved(String),
+    /// The projects could not be read again, and why.
+    Unread(String),
 }
 
 /// Where the keys go: the column, or the list of the project in front.

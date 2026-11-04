@@ -103,16 +103,22 @@ pub struct LiveProcess {
 /// idle, then moved;
 /// within each the most recently used first, then by id.
 ///
-/// The live process groups of every project are scanned in one pass.
-pub fn summaries(home: &std::path::Path) -> Vec<ProjectSummary> {
-    let projects = known(home);
+/// The live process groups of every project are scanned in one pass. An
+/// error when the home's `projects/` cannot be read; a project that cannot
+/// be is listed with a warning.
+pub fn summaries(home: &std::path::Path) -> anyhow::Result<Vec<ProjectSummary>> {
+    let projects = known(home)?;
     let loaded: Vec<(KnownProject, Option<Result<state::State, String>>)> = projects
         .into_iter()
         .map(|project| {
             let file = project.state_file();
-            let store = file
-                .is_file()
-                .then(|| state::load(&file).map_err(|e| format!("{e:#}")));
+            // Not there is nothing recorded; anything else, a file that
+            // cannot be read, is said.
+            let store = match std::fs::metadata(&file) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Ok(meta) if !meta.is_file() => None,
+                _ => Some(state::load(&file).map_err(|e| format!("{e:#}"))),
+            };
             (project, store)
         })
         .collect();
@@ -131,7 +137,7 @@ pub fn summaries(home: &std::path::Path) -> Vec<ProjectSummary> {
             .then(b.last_used.cmp(&a.last_used))
             .then(a.id.cmp(&b.id))
     });
-    out
+    Ok(out)
 }
 
 fn summarise(

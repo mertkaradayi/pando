@@ -42,18 +42,32 @@ impl KnownProject {
 /// the name its directory carries and an empty root, and nothing is
 /// written: running pando in its repository registers it again while the
 /// repository is where it was, and `pando doctor` in its new place adopts
-/// it once it moved, under the same folder name.
-pub fn known(home: &Path) -> Vec<KnownProject> {
-    project::project_dirs(home)
+/// it once it moved, under the same folder name. A directory pando cannot
+/// read is listed the same way, and its summary says why: its processes
+/// may hold ports all the same.
+///
+/// An error when the home's `projects/` cannot be read, which is not the
+/// same as none.
+pub fn known(home: &Path) -> anyhow::Result<Vec<KnownProject>> {
+    Ok(project::project_dirs(home)?
         .into_iter()
         .filter_map(|(id, dir)| known_at(id, dir))
-        .collect()
+        .collect())
+}
+
+/// Whether `dir` may hold a state file: it does, or pando cannot tell
+/// because it may not look.
+fn state_file_may_exist(dir: &Path) -> bool {
+    match std::fs::metadata(dir.join("state.json")) {
+        Ok(meta) => meta.is_file(),
+        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+    }
 }
 
 fn known_at(id: String, dir: PathBuf) -> Option<KnownProject> {
     let registered = match project::registered(&dir) {
         Some(registered) => registered,
-        None if dir.join("state.json").is_file() => match recover_registry(&id, &dir) {
+        None if state_file_may_exist(&dir) => match recover_registry(&id, &dir) {
             Some(recovered) => {
                 // Not worth failing a listing over: the next one recovers
                 // it again.

@@ -159,7 +159,8 @@ where
     if !home.is_dir() {
         anyhow::bail!("there is no pando home at {} yet", home.display());
     }
-    let roots: Vec<PathBuf> = crate::project::project_dirs(home)
+    // Never written past a project it could not read the root of.
+    let roots: Vec<PathBuf> = crate::project::project_dirs(home)?
         .into_iter()
         .filter_map(|(_, dir)| crate::project::registered(&dir))
         .map(|registered| registered.root)

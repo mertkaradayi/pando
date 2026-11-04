@@ -70,9 +70,13 @@ pub fn run(paths: PandoPaths, config: Config) -> Result<()> {
     let app = app::App::new(paths, config)?;
     // Every project the column lists, read once so the first frame has
     // them; a worker reads them again from then on.
-    let mut grove = Grove::new(home.clone(), ui, crate::actions::summaries(&home));
+    let (summaries, unread) = summaries_or_why(&home);
+    let mut grove = Grove::new(home.clone(), ui, summaries);
     let watched = grove.take_theme(resolved);
     grove.adopt(app, true);
+    if let Some(why) = unread {
+        grove.say(why, true);
+    }
     run_grove(grove, themes_dir, watched)
 }
 
@@ -85,13 +89,26 @@ pub fn run_home(home: std::path::PathBuf, why: Option<String>) -> Result<()> {
     let ui = crate::config::user_ui(&home);
     let themes_dir = home.join("themes");
     let resolved = crate::theme::resolve(&ui.theme_settings(), Some(&themes_dir));
-    let summaries = crate::actions::summaries(&home);
+    let (summaries, unread) = summaries_or_why(&home);
     let mut grove = Grove::new(home, ui, summaries);
     let watched = grove.take_theme(resolved);
-    if let Some(why) = why {
-        grove.say(why, false);
+    match (unread, why) {
+        (Some(unread), _) => grove.say(unread, true),
+        (None, Some(why)) => grove.say(why, false),
+        (None, None) => {}
     }
     run_grove(grove, themes_dir, watched)
+}
+
+/// Every project for the grove's first frame, or none and why: a home
+/// that cannot be read is said on the screen rather than ending pando.
+fn summaries_or_why(
+    home: &std::path::Path,
+) -> (Vec<crate::actions::ProjectSummary>, Option<String>) {
+    match crate::actions::summaries(home) {
+        Ok(summaries) => (summaries, None),
+        Err(e) => (Vec::new(), Some(format!("{e:#}"))),
+    }
 }
 
 fn run_grove(

@@ -37,7 +37,7 @@ impl Grove {
                 true
             }
             GroveEvent::Opened(id, result) => self.opened(id, *result),
-            GroveEvent::NotSaved(why) => {
+            GroveEvent::NotSaved(why) | GroveEvent::Unread(why) => {
                 self.say(why, true);
                 true
             }

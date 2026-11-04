@@ -502,9 +502,24 @@ fn project_dirs_lists_directories_by_id() {
     }
     std::fs::write(projects.join("stray.txt"), "").unwrap();
     let ids: Vec<String> = project_dirs(dir.path())
+        .unwrap()
         .into_iter()
         .map(|(id, _)| id)
         .collect();
     assert_eq!(ids, ["a-00000001", "b-00000002"]);
-    assert!(project_dirs(&dir.path().join("none")).is_empty());
+    assert!(project_dirs(&dir.path().join("none")).unwrap().is_empty());
+}
+
+// A home whose `projects` cannot be read is not a home with none: a
+// script told "no projects" would start more on ports that are taken.
+#[test]
+fn a_projects_dir_that_cannot_be_read_is_an_error_not_none() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join(PROJECTS_DIR), "").unwrap();
+    let err = project_dirs(dir.path()).unwrap_err();
+    assert!(format!("{err:#}").contains("cannot read"), "{err:#}");
+    // A `PANDO_HOME` that names a file.
+    let file = dir.path().join("home-file");
+    std::fs::write(&file, "").unwrap();
+    assert!(project_dirs(&file).is_err());
 }

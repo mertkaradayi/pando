@@ -80,8 +80,12 @@ pub fn spawn_summaries(home: PathBuf, tx: Sender<GroveEvent>) -> Sender<()> {
             }
             // A burst of pokes is one read.
             while poked.try_recv().is_ok() {}
-            let summaries = actions::summaries(&home);
-            if tx.send(GroveEvent::Summaries(summaries)).is_err() {
+            // Unread, what was read last stays, and the reason is said.
+            let event = match actions::summaries(&home) {
+                Ok(summaries) => GroveEvent::Summaries(summaries),
+                Err(e) => GroveEvent::Unread(format!("{e:#}")),
+            };
+            if tx.send(event).is_err() {
                 return;
             }
         }
