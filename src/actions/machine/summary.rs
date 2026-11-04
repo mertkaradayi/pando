@@ -21,6 +21,9 @@ pub struct ProjectSummary {
     /// Its repository is gone or now another project's: never opened or
     /// acted on, though what of it still runs is counted as running.
     pub moved: bool,
+    /// pando may not read its directory under the home: `moved` too, so
+    /// never acted on, and said as unreadable, since it may not have moved.
+    pub unreadable: bool,
     /// Worktrees whose every process is running.
     pub up: usize,
     /// Worktrees with a process still coming up, none failed.
@@ -49,6 +52,28 @@ impl ProjectSummary {
     /// registered by any pando run there while it is where it was, and
     /// adopted by `doctor` in its new place once it moved.
     pub const FIND_AGAIN: &str = "run pando in its repository, or `pando doctor` there if it moved";
+
+    /// What gives an unreadable project back: its directory under the
+    /// home made the developer's again — a run under `sudo` leaves it
+    /// root's.
+    pub const READ_AGAIN: &str =
+        "pando may not read its folder under pando's home — `chown` it back to you";
+
+    /// What its line says instead of where it is: why it is not located.
+    pub fn not_located(&self) -> String {
+        match self.unreadable {
+            true => format!("cannot be read · {}", Self::READ_AGAIN),
+            false => format!("not located · {}", Self::FIND_AGAIN),
+        }
+    }
+
+    /// The word for a project nothing is done to: `unreadable`, or `moved`.
+    pub fn hands_off_word(&self) -> &'static str {
+        match self.unreadable {
+            true => "unreadable",
+            false => "moved",
+        }
+    }
 
     /// Whether anything of it is up or coming up.
     pub fn is_live(&self) -> bool {
@@ -153,6 +178,7 @@ fn summarise(
         root: project.registered.root.clone(),
         repos: project.registered.repos.clone(),
         moved: project.moved,
+        unreadable: project.unreadable,
         up: 0,
         starting: 0,
         failed: 0,

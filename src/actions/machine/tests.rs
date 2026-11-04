@@ -568,4 +568,13 @@ fn a_project_dir_that_cannot_be_read_is_listed_with_why() {
     assert_eq!(all.len(), 1, "{all:?}");
     assert_eq!(all[0].id, shop.id);
     assert!(all[0].warning.is_some(), "{all:?}");
+    // Never acted on, and said to be unreadable rather than moved: it is
+    // where it was.
+    assert!(all[0].moved && all[0].unreadable, "{all:?}");
+    assert_eq!(all[0].hands_off_word(), "unreadable");
+    assert!(
+        all[0].not_located().starts_with("cannot be read · "),
+        "{}",
+        all[0].not_located()
+    );
 }

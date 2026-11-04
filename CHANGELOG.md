@@ -35,6 +35,8 @@ may change behaviour.
   marked. `--json` is a published shape, documented in `agent/json.md`.
   It reads each project's state the way `status` does and saves none
   of it.
+  A project whose folder pando may not read is listed as unreadable,
+  with why, and never acted on.
 - The TUI's grove: a column left of the worktrees lists every project
   pando knows, the ones with something up first, each a stem in the
   list's glyphs, all standing on one root line that lights while

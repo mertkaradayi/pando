@@ -78,7 +78,7 @@ pub fn ls_machine_text_with<W: Write>(home: &Path, out: &mut W, view: &LsView) -
         // No record says where it is: the place of a path is how to
         // bring it back.
         let root = match summary.located() {
-            false => format!("not located · {}", ProjectSummary::FIND_AGAIN),
+            false => summary.not_located(),
             true => style.tilde(&summary.root.display().to_string()),
         };
         let room = view.width.saturating_sub(text_width(&lead) + 2);
@@ -258,7 +258,7 @@ fn counts_word(summary: &ProjectSummary) -> String {
     .map(|(n, word)| format!("{n} {word}"))
     .collect();
     if summary.moved {
-        parts.push("moved".to_string());
+        parts.push(summary.hands_off_word().to_string());
     }
     match parts.is_empty() {
         true => "nothing recorded".to_string(),
@@ -284,6 +284,7 @@ struct MachineProjectOut {
     #[serde(flatten)]
     project: ProjectOut,
     moved: bool,
+    unreadable: bool,
     last_used: Option<DateTime<Utc>>,
     counts: CountsOut,
     /// Why its state could not be read; `null` when it could.
@@ -333,6 +334,7 @@ pub fn ls_machine_json<W: Write>(home: &Path, out: &mut W) -> Result<()> {
                 repos: summary.repos.clone(),
             },
             moved: summary.moved,
+            unreadable: summary.unreadable,
             last_used: summary.last_used.map(DateTime::<Utc>::from),
             counts: CountsOut {
                 up: summary.up,

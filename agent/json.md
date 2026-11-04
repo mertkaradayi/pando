@@ -662,7 +662,7 @@ nothing.
   "version": 2,
   "projects": [
     { "id": "shop-1fb718a9", "root": "...", "name": "shop", "repos": ["backend", "frontend"],
-      "moved": false, "last_used": "2026-11-03T09:12:00Z",
+      "moved": false, "unreadable": false, "last_used": "2026-11-03T09:12:00Z",
       "counts": { "up": 1, "starting": 0, "failed": 0, "stopped": 2 },
       "warning": null,
       "worktrees": [
@@ -702,7 +702,9 @@ stopped, by name, `status` and `reason` as `status --json` gives them for
 the whole worktree, and `processes` each process by name as there.
 `warning` says why the project's state could not be read; its counts
 are then all zero. A project directory pando may not read is listed so,
-moved and with its `warning`; a home whose `projects/` it may not read
+moved, `unreadable` true and with its `warning`: it may be where it was,
+and making that directory the developer's again (a run under `sudo`
+leaves it root's) gives it back. A home whose `projects/` it may not read
 is an error, exit 1, never an empty `projects`.
 
 `ports` are the ports pando gave the worktree, by role. `claimed` is

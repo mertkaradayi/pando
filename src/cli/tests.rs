@@ -6441,6 +6441,7 @@ fn a_clash_between_two_projects_of_one_name_names_where_each_is() {
         root: PathBuf::from(root),
         repos: Vec::new(),
         moved: false,
+        unreadable: false,
         up: 1,
         starting: 0,
         failed: 0,

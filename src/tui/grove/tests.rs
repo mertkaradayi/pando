@@ -39,6 +39,7 @@ fn summary(name: &str, up: usize, failed: usize) -> ProjectSummary {
         root: std::path::PathBuf::from("/pando-test-does-not-exist").join(name),
         repos: Vec::new(),
         moved: false,
+        unreadable: false,
         up,
         starting: 0,
         failed,
@@ -1417,6 +1418,31 @@ fn a_moved_project_still_running_reads_live_and_x_names_what_runs() {
 
 // A project nothing locates has no root to name: ⏎ says how it is found
 // again, never "is not at  any more".
+#[test]
+fn a_project_pando_may_not_read_says_so_rather_than_moved() {
+    let mut unreadable = summary("locked", 0, 0);
+    unreadable.moved = true;
+    unreadable.unreadable = true;
+    unreadable.root = std::path::PathBuf::new();
+    let mut grove = Grove::new_for_test(vec![summary("shop", 1, 0), unreadable]);
+    grove.shown = Shown::On;
+    let text = text_of(&draw(&mut grove, 120, 30));
+    let row = text
+        .lines()
+        .find(|l| l.contains("locked"))
+        .unwrap_or_default();
+    assert!(row.contains("unreadable"), "{text}");
+    assert!(!text.contains("moved"), "{text}");
+    grove.cursor = 1;
+    press(&mut grove, KeyCode::Enter);
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(note.starts_with("locked cannot be read — "), "{note}");
+    assert!(!note.contains("moved"), "{note}");
+    press(&mut grove, KeyCode::Char('X'));
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(note.starts_with("locked cannot be read — "), "{note}");
+}
+
 #[test]
 fn enter_on_a_project_nothing_locates_says_how_to_find_it() {
     let mut lost = summary("lost", 0, 0);

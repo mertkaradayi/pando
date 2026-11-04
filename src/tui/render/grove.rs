@@ -154,7 +154,10 @@ fn row_look(grove: &Grove, summary: &ProjectSummary) -> RowLook {
     };
     let mut count = Vec::new();
     if gone {
-        count.push(Span::styled("moved", Style::new().fg(text_muted())));
+        count.push(Span::styled(
+            summary.hands_off_word(),
+            Style::new().fg(text_muted()),
+        ));
     } else {
         let up = summary.up + summary.starting;
         if up > 0 {
@@ -449,7 +452,8 @@ fn render_strip(f: &mut Frame, area: Rect, grove: &mut Grove) {
                 _ => " · idle".to_string(),
             };
             if summary.moved {
-                state.push_str(" · moved");
+                state.push_str(" · ");
+                state.push_str(summary.hands_off_word());
             }
             let place = format!(" · {}/{}", i + 1, grove.summaries.len());
             let fixed: usize = lead

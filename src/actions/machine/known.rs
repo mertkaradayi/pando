@@ -19,6 +19,9 @@ pub struct KnownProject {
     /// Whether that repository is gone, or now hashes to another id: a
     /// project shown and never acted on.
     pub moved: bool,
+    /// Whether pando may not read its directory: listed as moved, never
+    /// acted on, and said to be unreadable rather than to have moved.
+    pub unreadable: bool,
 }
 
 impl KnownProject {
@@ -64,7 +67,15 @@ fn state_file_may_exist(dir: &Path) -> bool {
     }
 }
 
+/// Whether pando may not read `dir` or the registry in it.
+fn unreadable(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_err()
+        || std::fs::File::open(dir.join(project::PROJECT_FILE))
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+}
+
 fn known_at(id: String, dir: PathBuf) -> Option<KnownProject> {
+    let unreadable = unreadable(&dir);
     let registered = match project::registered(&dir) {
         Some(registered) => registered,
         None if state_file_may_exist(&dir) => match recover_registry(&id, &dir) {
@@ -82,12 +93,14 @@ fn known_at(id: String, dir: PathBuf) -> Option<KnownProject> {
         },
         None => return None,
     };
-    let moved = registered.moved_from(&id);
+    // Never acted on, whether it is where it was or not.
+    let moved = unreadable || registered.moved_from(&id);
     Some(KnownProject {
         id,
         dir,
         registered,
         moved,
+        unreadable,
     })
 }
 
