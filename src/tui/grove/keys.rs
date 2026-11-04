@@ -290,14 +290,19 @@ impl Grove {
             .filter(|w| w.is_up())
             .map(|w| w.name.clone())
             .collect();
+        // Which of two projects of one name, as the column tells them
+        // apart: by the folder each is in.
+        let name = match summary.twin_folder(&self.summaries) {
+            Some(twin) => format!("{} ({})", summary.name, twin.folder),
+            None => summary.name.clone(),
+        };
         if worktrees.is_empty() {
-            let name = summary.name.clone();
             self.say(format!("nothing is up in {name}"), false);
             return;
         }
         self.confirm = Some(StopConfirm {
             id: summary.id.clone(),
-            name: summary.name.clone(),
+            name,
             worktrees,
         });
     }

@@ -1799,3 +1799,22 @@ fn enter_on_a_moved_project_names_the_command_that_adopts_it() {
     assert!(!note.contains("--adopt"), "{note}");
     assert!(note.contains("starts it afresh"), "{note}");
 }
+
+#[test]
+fn the_stop_confirmation_says_which_of_two_projects_of_one_name() {
+    let mut grove = long_twins();
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('j'));
+    press(&mut grove, KeyCode::Char('X'));
+    assert!(grove.confirm.is_some());
+    let all = text_of(&draw(&mut grove, 120, 30));
+    let flat: String = all
+        .lines()
+        .map(|l| l.trim_matches(|c: char| c == '│' || c == ' '))
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        flat.contains("stop the one worktree up in plain (pando-fixture-1793784766837094000)?"),
+        "{all}"
+    );
+}

@@ -1314,10 +1314,12 @@ pub(super) fn render_stop_project(
         1 => format!("stop the one worktree up in {project}?"),
         n => format!("stop all {n} worktrees up in {project}?"),
     };
-    let title = Line::styled(
-        truncate(&asked, cap),
-        Style::new().fg(text()).add_modifier(Modifier::BOLD),
-    );
+    // Wrapped, never cut: a twin's folder makes the question long, and
+    // its end is the question.
+    let title: Vec<Line> = wrap_text(&asked, cap)
+        .into_iter()
+        .map(|row| Line::styled(row, Style::new().fg(text()).add_modifier(Modifier::BOLD)))
+        .collect();
     let (warned, stop) = match worktrees.len() {
         1 => ("its services and public URL go down too", " stop it"),
         _ => ("their services and public URLs go down too", " stop them"),
@@ -1333,12 +1335,13 @@ pub(super) fn render_stop_project(
         ],
         cap,
     );
-    let room = (area.height as usize).saturating_sub(2 + 1 + warning.len() + 1 + keys.len());
+    let room =
+        (area.height as usize).saturating_sub(2 + title.len() + warning.len() + 1 + keys.len());
     let shown = match worktrees.len() <= room.min(MAX_ROWS) {
         true => worktrees.len(),
         false => room.saturating_sub(1).min(MAX_ROWS),
     };
-    let mut lines = vec![title];
+    let mut lines = title;
     for (name, phase) in worktrees.iter().take(shown) {
         let (glyph, color) = super::render::run_marker(phase.as_ref());
         lines.push(Line::from(vec![
