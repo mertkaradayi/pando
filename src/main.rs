@@ -148,10 +148,11 @@ fn run(cli: Cli) -> Result<()> {
         Err(e) if cli.command.is_none() && std::io::stdout().is_terminal() => {
             let style = pando::term::Style::with(false, pando::platform::dirs::home());
             let why = match e.downcast_ref::<project::UnknownFolder>() {
+                // The reason first, so a narrow screen cuts the names
+                // rather than it; the folder is where pando was run.
                 Some(folder) => format!(
-                    "{} holds {} repositories ({}) · `pando init` or `pando new <branch>` here \
-                     makes them one project",
-                    style.tilde(&folder.dir.display().to_string()),
+                    "{} repositories here, no project of them yet · `pando init` or `pando new \
+                     <branch>` here makes them one ({})",
                     folder.repos.len(),
                     folder.names()
                 ),
