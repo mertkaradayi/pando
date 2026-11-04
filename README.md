@@ -475,9 +475,9 @@ runs:
 │▸ ┃● shop              2│   ● up, with how many    ✗ failed
 │  ┃✗ api              ✗1│   │ idle                 ╎ moved: its repository
 │  │  docs               │                            is not where it was
-│  ╎  old           moved│
-│╺━┻━━━━━━━━━━━━━━━━━━━━╸│
-╰────────────────────────╯
+│  ╎  old           moved│   ! a port another project claims too
+│╺━┻━━━━━━━━━━━━━━━━━━━━╸│   a name two projects share is followed,
+╰────────────────────────╯   dimmed, by the folder each is in
 ```
 
 Right of it is the TUI of the project in front, exactly as it is when

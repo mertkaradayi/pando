@@ -1687,6 +1687,11 @@ pub(super) fn render_grove_help(f: &mut Frame, area: Rect, scroll: usize) -> usi
                 ("◌", "coming up"),
                 ("✗", "a worktree failed"),
                 ("╎", "moved, or unreadable: never acted on from here"),
+                ("!", "a port of it another project claims too"),
+                (
+                    "folder",
+                    "dimmed after a name: another project has this name",
+                ),
             ],
         ),
     )

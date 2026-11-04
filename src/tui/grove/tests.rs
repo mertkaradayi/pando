@@ -1818,3 +1818,15 @@ fn the_stop_confirmation_says_which_of_two_projects_of_one_name() {
         "{all}"
     );
 }
+
+#[test]
+fn the_home_help_explains_the_clash_mark_and_a_twins_folder() {
+    let mut grove = long_twins();
+    press(&mut grove, KeyCode::Char('?'));
+    let all = text_of(&draw(&mut grove, 120, 60));
+    assert!(
+        all.contains("a port of it another project claims too"),
+        "{all}"
+    );
+    assert!(all.contains("another project has this name"), "{all}");
+}
