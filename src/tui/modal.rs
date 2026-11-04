@@ -1318,13 +1318,17 @@ pub(super) fn render_stop_project(
         truncate(&asked, cap),
         Style::new().fg(text()).add_modifier(Modifier::BOLD),
     );
-    let warning: Vec<Line> = wrap_text("their services and public URLs go down too", cap)
+    let (warned, stop) = match worktrees.len() {
+        1 => ("its services and public URL go down too", " stop it"),
+        _ => ("their services and public URLs go down too", " stop them"),
+    };
+    let warning: Vec<Line> = wrap_text(warned, cap)
         .into_iter()
         .map(|row| Line::styled(row, Style::new().fg(yellow())))
         .collect();
     let keys = key_rows(
         vec![
-            (key_span("y"), hint_span(" stop them")),
+            (key_span("y"), hint_span(stop)),
             (key_span("esc"), hint_span(" cancel")),
         ],
         cap,
@@ -1661,16 +1665,17 @@ fn marked_removal_row(label: &str, verdict: &MarkedRemoval, cap: usize) -> Vec<L
     lines
 }
 
-/// The grove's own help, over the home pane: the column's keys, the ones
-/// that reach across projects, and what the column's marks mean. Returns
-/// the furthest it can scroll.
+/// The grove's own help, over the home pane: the column's keys, and what
+/// the column's marks mean. The keys a project's list reaches the other
+/// projects with are the column's own here, so they are listed once.
+/// Returns the furthest it can scroll.
 pub(super) fn render_grove_help(f: &mut Frame, area: Rect, scroll: usize) -> usize {
     render_help(
         f,
         area,
         scroll,
         COLUMN_KEYS,
-        &[("across projects", GROVE_KEYS)],
+        &[],
         &[],
         (
             "in the project column",
@@ -1678,7 +1683,7 @@ pub(super) fn render_grove_help(f: &mut Frame, area: Rect, scroll: usize) -> usi
                 ("●", "something of it up"),
                 ("◌", "coming up"),
                 ("✗", "a worktree failed"),
-                ("╎", "moved: its repository is not where it was"),
+                ("╎", "moved, or unreadable: never acted on from here"),
             ],
         ),
     )

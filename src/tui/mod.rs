@@ -85,7 +85,7 @@ pub fn run(paths: PandoPaths, config: Config) -> Result<()> {
 /// its home pane naming every project pando knows. Nothing is written to
 /// the home until a project is opened. `why` is what finding a project
 /// here said, for the pane to show.
-pub fn run_home(home: std::path::PathBuf, why: Option<String>) -> Result<()> {
+pub fn run_home(home: std::path::PathBuf, why: String) -> Result<()> {
     crate::hooks::detach_from_terminal();
     let ui = crate::config::user_ui(&home);
     let themes_dir = home.join("themes");
@@ -93,12 +93,23 @@ pub fn run_home(home: std::path::PathBuf, why: Option<String>) -> Result<()> {
     let (summaries, unread) = summaries_or_why(&home);
     let mut grove = Grove::new(home, ui, summaries);
     let watched = grove.take_theme(resolved);
-    match (unread, why) {
-        (Some(unread), _) => grove.say(unread, true),
-        (None, Some(why)) => grove.say(why, false),
-        (None, None) => {}
+    match unread {
+        Some(unread) => grove.say(unread, true),
+        None => {
+            let note = home_note(why, !grove.summaries.is_empty());
+            grove.say(note, false);
+        }
     }
     run_grove(grove, themes_dir, watched)
+}
+
+/// Why the home pane opened, and what it is while it lists projects:
+/// with none, the pane itself says how one grows.
+pub(crate) fn home_note(why: String, any: bool) -> String {
+    match any {
+        true => format!("{why} · here is every project pando knows"),
+        false => why,
+    }
 }
 
 /// Every project for the grove's first frame, or none and why: a home

@@ -170,14 +170,11 @@ fn run(cli: Cli) -> Result<()> {
                 // a fault: said as where pando is, the reason first so a
                 // narrow screen cuts the path rather than it.
                 (None, None) if format!("{e:#}").starts_with("not inside a git repository") => {
-                    format!(
-                        "no repository here ({}) · here is every project pando knows",
-                        tilde(&cwd)
-                    )
+                    format!("no repository here ({})", tilde(&cwd))
                 }
                 (None, None) => format!("{e:#}"),
             };
-            return tui::run_home(home, Some(why));
+            return tui::run_home(home, why);
         }
         // Into a pipe the TUI would draw for nobody: said as such, rather
         // than as the reason it would have opened the grove.

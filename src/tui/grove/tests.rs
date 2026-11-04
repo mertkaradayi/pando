@@ -311,6 +311,16 @@ fn outside_a_repository_the_home_pane_names_a_stem_for_each_project() {
 
 // No projects at all: an empty grove that says how one gets there.
 #[test]
+fn the_home_note_says_it_lists_every_project_only_when_there_are_some() {
+    let why = "no repository here (~)".to_string();
+    assert_eq!(
+        crate::tui::home_note(why.clone(), true),
+        "no repository here (~) · here is every project pando knows"
+    );
+    assert_eq!(crate::tui::home_note(why, false), "no repository here (~)");
+}
+
+#[test]
 fn a_home_with_no_project_says_how_one_grows() {
     let mut grove = Grove::new_for_test(Vec::new());
     let all = text_of(&draw(&mut grove, 100, 30));
@@ -481,6 +491,10 @@ fn x_in_the_column_asks_naming_each_worktree_then_stops_them() {
     let all = text_of(&draw(&mut grove, 120, 30));
     assert!(all.contains("stop the one worktree up in api?"), "{all}");
     assert!(all.contains("feat+up0"), "{all}");
+    // One worktree is "it", never "them".
+    assert!(all.contains("y stop it"), "{all}");
+    assert!(all.contains("its services and public URL go down"), "{all}");
+    assert!(!all.contains("stop them"), "{all}");
     // Any other key leaves it asking; esc takes it back.
     press(&mut grove, KeyCode::Char('j'));
     assert!(grove.confirm.is_some());
@@ -503,6 +517,7 @@ fn x_in_the_column_asks_naming_each_worktree_then_stops_them() {
     press(&mut grove, KeyCode::Char('X'));
     let all = text_of(&draw(&mut grove, 50, 20));
     assert!(all.contains("stop all 2 worktrees up in shop?"), "{all}");
+    assert!(all.contains("y stop them"), "{all}");
     assert!(
         all.contains("feat+up0") && all.contains("feat+up1"),
         "{all}"
@@ -1639,8 +1654,17 @@ fn question_mark_on_the_home_pane_opens_the_groves_help() {
     press(&mut grove, KeyCode::Char('?'));
     assert_eq!(grove.help, Some(0));
     let all = text_of(&draw(&mut grove, 120, 60));
-    assert!(all.contains("across projects"), "{all}");
     assert!(all.contains("stop everything up in the project"), "{all}");
+    // Each key once: the keys a list reaches across projects with are
+    // the column's own here.
+    assert!(!all.contains("across projects"), "{all}");
+    for what in [
+        "hide the column",
+        "narrow / widen the column",
+        "next project",
+    ] {
+        assert_eq!(all.matches(what).count(), 1, "{what}:\n{all}");
+    }
     press(&mut grove, KeyCode::Char('j'));
     assert!(grove.help.is_some());
     press(&mut grove, KeyCode::Esc);
