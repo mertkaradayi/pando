@@ -2370,3 +2370,42 @@ fn a_name_cut_alike_is_cut_where_it_differs() {
         }
     }
 }
+
+// The count of the projects with no stem says where they are: the
+// column beside the home pane, the strip it is folded to, where `j` `k`
+// step through them, or nowhere, where `w` brings the column back.
+#[test]
+fn the_home_says_where_the_projects_with_no_stem_are() {
+    let more = |text: &str| {
+        text.lines().find(|l| l.contains(" more")).map(|l| {
+            l.rsplit("││")
+                .next()
+                .unwrap_or(l)
+                .trim_matches(['│', ' '])
+                .to_string()
+        })
+    };
+    let mut grove = shared_starts();
+    let text = text_of(&draw(&mut grove, 80, 40));
+    assert_eq!(
+        more(&text).as_deref(),
+        Some("+2 more in the column"),
+        "{text}"
+    );
+    let mut grove = shared_starts();
+    let text = text_of(&draw(&mut grove, 60, 40));
+    assert!(text.contains("[ ◀"), "the strip: {text}");
+    assert_eq!(
+        more(&text).as_deref(),
+        Some("+2 more · j k steps through them"),
+        "{text}"
+    );
+    let mut grove = shared_starts();
+    grove.shown = Shown::Off;
+    let text = text_of(&draw(&mut grove, 60, 40));
+    assert_eq!(
+        more(&text).as_deref(),
+        Some("+2 more · w shows the column"),
+        "{text}"
+    );
+}

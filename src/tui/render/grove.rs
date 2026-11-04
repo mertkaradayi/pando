@@ -87,7 +87,14 @@ pub fn render_grove(f: &mut Frame, grove: &mut Grove) {
             opened.app.detail = grove.detail;
             render_in(f, rest, &mut opened.app);
         }
-        None => render_home(f, rest, grove),
+        None => {
+            let rest_of = match (shown, wide) {
+                (true, true) => TheRest::Column,
+                (true, false) => TheRest::Strip,
+                (false, _) => TheRest::Hidden,
+            };
+            render_home(f, rest, grove, rest_of)
+        }
     }
     if let Some(confirm) = &grove.confirm {
         let phases: Vec<(String, Option<Aggregate>)> = grove
@@ -653,10 +660,31 @@ pub(crate) fn stems_with_room(wants: &[usize], fit: usize, width: usize) -> usiz
     stems
 }
 
+/// Where the projects the home pane has no stem for are on screen.
+#[derive(Clone, Copy)]
+enum TheRest {
+    /// In the column beside it.
+    Column,
+    /// One at a time, in the strip the column is folded to.
+    Strip,
+    /// Nowhere: the column is hidden.
+    Hidden,
+}
+
+/// The line under the stems that counts the projects with none: where
+/// they are, or the key that reaches them when they are not on screen.
+fn more_line(more: usize, rest: TheRest) -> String {
+    match rest {
+        TheRest::Column => format!("+{more} more in the column"),
+        TheRest::Strip => format!("+{more} more · j k steps through them"),
+        TheRest::Hidden => format!("+{more} more · w shows the column"),
+    }
+}
+
 /// The home pane, with no project in front: the wordmark, then the grove
 /// with a stem for each project, its name under it and the ones with
 /// something up in leaf, and the keys that open one.
-fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
+fn render_home(f: &mut Frame, area: Rect, grove: &Grove, rest: TheRest) {
     use crate::art::{
         COMPACT_WIDTH, GROVE_MIN_HEIGHT, WORDMARK_HEIGHT, WORDMARK_WIDTH, WordmarkSize,
     };
@@ -839,7 +867,7 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
         lines.push(Line::from(vec![
             Span::raw(" ".repeat(left)),
             Span::styled(
-                format!("+{more} more in the column"),
+                truncate(&more_line(more, rest), width.saturating_sub(left)),
                 Style::new().fg(text_muted()),
             ),
         ]));

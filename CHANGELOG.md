@@ -69,7 +69,9 @@ may change behaviour.
   every project pando knows, drawn as the brand's grove with a stem for
   each, in leaf when something of it is up. Where the pane cannot name
   them all readably, the first in the column's order get a stem and the
-  rest are counted under them, so no label is cut to a mark alone. Begun there, `q` or esc on
+  rest are counted under them, so no label is cut to a mark alone, with
+  where to find them: the column, `j` `k` in the strip it folds to, or
+  `w` where it is hidden. Begun there, `q` or esc on
   a project's list goes back to it, leaving the project open with what
   is in flight in it, and `q` on the home pane quits.
 - Each project's directory under pando's home records where its
