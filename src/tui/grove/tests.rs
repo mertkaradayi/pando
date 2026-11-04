@@ -1733,3 +1733,39 @@ fn a_stem_label_cut_to_its_room_keeps_the_clash_mark() {
         assert_eq!(labels.matches('!').count(), 2, "{width}:\n{text}");
     }
 }
+
+#[test]
+fn twins_in_folders_that_share_their_start_show_where_the_folders_differ() {
+    for width in [120, 140, 220] {
+        let mut grove = long_twins();
+        let text = text_of(&draw(&mut grove, width, 40));
+        // The column: two rows, each with its own part of the folder.
+        let rows: Vec<String> = text
+            .lines()
+            .filter(|l| l.contains("plain") && l.contains("││"))
+            .map(|l| l.split("││").next().unwrap_or(l).to_string())
+            .filter(|l| l.contains("plain"))
+            .collect();
+        assert_eq!(rows.len(), 2, "{width}:\n{text}");
+        assert_ne!(rows[0].replace('▸', " "), rows[1], "{width}:\n{text}");
+        assert!(
+            rows[0].contains("375") && rows[1].contains("837"),
+            "{width}:\n{text}"
+        );
+        // Under the stems, the same.
+        let labels = stem_labels(&text);
+        assert!(
+            labels.contains("375") && labels.contains("837"),
+            "{width}:\n{text}"
+        );
+    }
+    // The strip, on a narrow screen.
+    let mut grove = long_twins();
+    grove.cursor = 1;
+    let text = text_of(&draw(&mut grove, 60, 30));
+    let strip = text
+        .lines()
+        .find(|l| l.contains("plain"))
+        .unwrap_or_default();
+    assert!(strip.contains("837"), "{text}");
+}

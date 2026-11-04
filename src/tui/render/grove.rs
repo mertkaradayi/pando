@@ -326,7 +326,7 @@ pub(crate) fn column_title(
 /// repository is in when another project has its name, and whether a
 /// port of it is one another project claims too.
 struct RowMarks {
-    twin: Option<String>,
+    twin: Option<crate::actions::TwinFolder>,
     clash: bool,
 }
 
@@ -358,11 +358,12 @@ fn column_row(
     let room = width.saturating_sub(ROW_LEAD + count_width + usize::from(count_width > 0));
     let name = truncate(&summary.name, room);
     // The folder in what the name leaves, never at the name's cost.
+    let left = room.saturating_sub(text_width(&name) + 1);
     let twin = marks
         .twin
-        .as_deref()
-        .map(|folder| truncate(folder, room.saturating_sub(text_width(&name) + 1)))
-        .filter(|folder| !folder.is_empty());
+        .as_ref()
+        .filter(|_| left >= 2)
+        .map(|twin| fit_folder(twin, left));
     let twin_width = twin.as_ref().map_or(0, |t| 1 + text_width(t));
     let gap = width.saturating_sub(ROW_LEAD + text_width(&name) + twin_width + count_width);
     let mut spans = vec![
@@ -495,10 +496,6 @@ fn render_strip(f: &mut Frame, area: Rect, grove: &mut Grove) {
                 state.push_str(summary.hands_off_word());
             }
             let place = format!(" · {}/{}", i + 1, grove.summaries.len());
-            let twin = summary
-                .twin_folder(&grove.summaries)
-                .map(|folder| format!(" {folder}"))
-                .unwrap_or_default();
             let fixed: usize = lead
                 .iter()
                 .chain(&tail)
@@ -506,9 +503,16 @@ fn render_strip(f: &mut Frame, area: Rect, grove: &mut Grove) {
                 .sum::<usize>()
                 + 2
                 + text_width(&state)
-                + text_width(&twin)
                 + text_width(&place);
-            let name = truncate(&summary.name, (area.width as usize).saturating_sub(fixed));
+            let room = (area.width as usize).saturating_sub(fixed);
+            let name = truncate(&summary.name, room);
+            // The folder in what the name leaves, never at the name's cost.
+            let left = room.saturating_sub(text_width(&name) + 1);
+            let twin = summary
+                .twin_folder(&grove.summaries)
+                .filter(|_| left >= 2)
+                .map(|twin| format!(" {}", fit_folder(&twin, left)))
+                .unwrap_or_default();
             middle.push(Span::styled(
                 name,
                 Style::new().fg(look.name).add_modifier(Modifier::BOLD),
@@ -586,13 +590,36 @@ fn strip_hints(room: usize) -> Vec<Span<'static>> {
     spans
 }
 
+/// A twin's folder in `room` cells, cut so that what tells it from the
+/// others' survives: at its end, as any label, when the cut keeps where
+/// it differs; at its front otherwise — `client-project-a` and
+/// `client-project-b` read `…ect-a` and `…ect-b` — and at both ends when
+/// even what differs is longer than the room.
+pub(crate) fn fit_folder(twin: &crate::actions::TwinFolder, room: usize) -> String {
+    let folder = &twin.folder;
+    let len = folder.chars().count();
+    // The offsets are in characters, a cell apiece only when nothing in
+    // the folder is wide: a folder that is not is cut plainly.
+    if text_width(folder) <= room || room < 2 || twin.shared + 1 < room || text_width(folder) != len
+    {
+        return truncate(folder, room);
+    }
+    let keep = room - 1;
+    let start = match len - twin.shared.min(len) <= keep {
+        true => len - keep,
+        false => twin.shared,
+    };
+    let rest: String = folder.chars().skip(start).collect();
+    format!("…{}", truncate(&rest, keep))
+}
+
 /// A stem's label in `room` cells, as its name, its folder with the
 /// space before it, and whether the clash's ` !` follows: the name cut
 /// only when the mark leaves it too little, the folder only in what the
 /// name leaves, and gone when that is not two cells.
 fn fit_stem_label(
     name: &str,
-    twin: Option<&str>,
+    twin: Option<&crate::actions::TwinFolder>,
     clash: bool,
     room: usize,
 ) -> (String, String, bool) {
@@ -603,7 +630,7 @@ fn fit_stem_label(
     let name = truncate(name, room.saturating_sub(mark));
     let left = room.saturating_sub(mark + text_width(&name) + 1);
     let twin = match twin {
-        Some(folder) if left >= 2 => format!(" {}", truncate(folder, left)),
+        Some(twin) if left >= 2 => format!(" {}", fit_folder(twin, left)),
         _ => String::new(),
     };
     (name, twin, clash)
@@ -747,7 +774,7 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
                     false => s.name.clone(),
                 };
                 let twin = s.twin_folder(&grove.summaries);
-                fit_stem_label(&name, twin.as_deref(), clashing.contains(&s.id), room)
+                fit_stem_label(&name, twin.as_ref(), clashing.contains(&s.id), room)
             })
             .collect();
         let labels: Vec<String> = parts

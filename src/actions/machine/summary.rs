@@ -79,17 +79,31 @@ impl ProjectSummary {
     /// name: two clones of one repository, told apart in a list too
     /// narrow for their paths. `None` when its name is its own, or
     /// nothing locates it.
-    pub fn twin_folder(&self, all: &[ProjectSummary]) -> Option<String> {
-        all.iter()
-            .any(|other| other.id != self.id && other.name == self.name)
-            .then_some(())?;
-        Some(
-            self.root
-                .parent()?
-                .file_name()?
-                .to_string_lossy()
-                .into_owned(),
-        )
+    pub fn twin_folder(&self, all: &[ProjectSummary]) -> Option<TwinFolder> {
+        let folder_of = |s: &ProjectSummary| -> Option<String> {
+            Some(s.root.parent()?.file_name()?.to_string_lossy().into_owned())
+        };
+        let twins: Vec<&ProjectSummary> = all
+            .iter()
+            .filter(|other| other.id != self.id && other.name == self.name)
+            .collect();
+        if twins.is_empty() {
+            return None;
+        }
+        let folder = folder_of(self)?;
+        let shared = twins
+            .iter()
+            .filter_map(|other| folder_of(other))
+            .map(|other| {
+                folder
+                    .chars()
+                    .zip(other.chars())
+                    .take_while(|(a, b)| a == b)
+                    .count()
+            })
+            .max()
+            .unwrap_or(0);
+        Some(TwinFolder { folder, shared })
     }
 
     /// Whether anything of it is up or coming up.
@@ -108,6 +122,16 @@ impl ProjectSummary {
             _ => 2,
         }
     }
+}
+
+/// The folder a project's repository sits in, where another project has
+/// its name, and how far it reads the same as theirs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TwinFolder {
+    pub folder: String,
+    /// The characters its start shares with the most alike of the other
+    /// projects' folders: where it first tells itself apart.
+    pub shared: usize,
 }
 
 /// A worktree with something recorded up, coming up, or failed.

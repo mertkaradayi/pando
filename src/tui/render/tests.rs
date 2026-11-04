@@ -5615,3 +5615,36 @@ fn a_narrow_header_says_a_folders_branches_differ_rather_than_cutting_them() {
     assert!(narrow.contains("acme-shop · mixed branches"), "{narrow}");
     assert!(narrow.contains("1 worktree"), "{narrow}");
 }
+
+#[test]
+fn a_twin_folder_cut_to_its_room_keeps_where_it_differs() {
+    use super::grove::fit_folder;
+    use crate::actions::TwinFolder;
+    let a = TwinFolder {
+        folder: "client-project-a".into(),
+        shared: 15,
+    };
+    let b = TwinFolder {
+        folder: "client-project-b".into(),
+        shared: 15,
+    };
+    // Whole where it fits.
+    assert_eq!(fit_folder(&a, 20), "client-project-a");
+    // Cut at the front where the end is what differs.
+    assert_eq!(fit_folder(&a, 8), "…oject-a");
+    assert_ne!(fit_folder(&a, 4), fit_folder(&b, 4));
+    assert_eq!(fit_folder(&b, 2), "…b");
+    // Where they differ early, cut at the end as any label is.
+    let early = TwinFolder {
+        folder: "alpha-workspace".into(),
+        shared: 0,
+    };
+    assert_eq!(fit_folder(&early, 6), "alpha…");
+    // Where the part that differs is long, from where it starts.
+    let long = TwinFolder {
+        folder: "pando-fixture-1793784766375615000".into(),
+        shared: 24,
+    };
+    assert_eq!(fit_folder(&long, 6), "…3756…");
+    assert_eq!(fit_folder(&long, 12), "…66375615000");
+}
