@@ -106,6 +106,9 @@ pub fn render_grove(f: &mut Frame, grove: &mut Grove) {
             .unwrap_or_default();
         crate::tui::modal::render_stop_project(f, area, &confirm.name, &phases);
     }
+    if let Some(scroll) = grove.help {
+        grove.help_bottom = crate::tui::modal::render_grove_help(f, area, scroll);
+    }
 }
 
 /// How a project's row reads: its stem, its glyph, the colour of its
@@ -198,7 +201,12 @@ fn render_column(f: &mut Frame, area: Rect, grove: &mut Grove) {
     }
     let width = inner.width as usize;
     let hints = match focused && inner.height >= 6 {
-        true => column_hint_lines(width, grove.front.is_some()),
+        true => column_hint_lines(
+            width,
+            grove.front.is_some(),
+            !grove.summaries.is_empty(),
+            grove.summaries.iter().any(|s| s.is_live()),
+        ),
         false => Vec::new(),
     };
     let footer = 1 + hints.len() as u16;
@@ -350,12 +358,24 @@ fn name_style(look: &RowLook) -> Style {
 
 /// The column's keys while it has them, as many rows as they take.
 /// `tab` goes to the list of the project in front, so with none in
-/// front it is not offered.
-fn column_hint_lines(width: usize, has_front: bool) -> Vec<Line<'static>> {
+/// front it is not offered; `⏎` with no project to open, nor `X` with
+/// nothing up to stop.
+fn column_hint_lines(
+    width: usize,
+    has_front: bool,
+    has_projects: bool,
+    has_live: bool,
+) -> Vec<Line<'static>> {
     let mut lines: Vec<Vec<Span<'static>>> = vec![Vec::new()];
     let mut used = 0;
     for (key, label) in COLUMN_HINTS {
-        if key == "tab" && !has_front {
+        let offered = match key {
+            "tab" => has_front,
+            "⏎" => has_projects,
+            "X" => has_live,
+            _ => true,
+        };
+        if !offered {
             continue;
         }
         let needs = 1 + text_width(key) + 1 + text_width(label);
@@ -671,16 +691,29 @@ fn render_home(f: &mut Frame, area: Rect, grove: &Grove) {
     let key =
         |k: &'static str| Span::styled(k, Style::new().fg(orange()).add_modifier(Modifier::BOLD));
     let said = |s: &'static str| Span::styled(s, Style::new().fg(text_dim()));
-    let keys = vec![
-        key("⏎"),
-        said(" open  "),
-        key("j k"),
-        said(" project  "),
-        key("w"),
-        said(" column  "),
-        key("q"),
-        said(" quit"),
-    ];
+    // With no project, only what does something.
+    let keys = match grove.summaries.is_empty() {
+        true => vec![
+            key("w"),
+            said(" column  "),
+            key("?"),
+            said(" help  "),
+            key("q"),
+            said(" quit"),
+        ],
+        false => vec![
+            key("⏎"),
+            said(" open  "),
+            key("j k"),
+            said(" project  "),
+            key("w"),
+            said(" column  "),
+            key("?"),
+            said(" help  "),
+            key("q"),
+            said(" quit"),
+        ],
+    };
     let keys_width: usize = keys.iter().map(|s| text_width(&s.content)).sum();
     let mut centred = vec![Span::raw(" ".repeat(width.saturating_sub(keys_width) / 2))];
     centred.extend(keys);

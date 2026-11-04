@@ -148,6 +148,11 @@ pub struct Grove {
     /// Saves each change of the layout, in order, on a worker.
     pub saver: Option<Sender<Saved>>,
     pub confirm: Option<StopConfirm>,
+    /// The grove's own help, open on the home pane, and how far it is
+    /// scrolled; a project in front has its own.
+    pub help: Option<usize>,
+    /// The furthest the last paint could scroll the help.
+    pub help_bottom: usize,
     /// What the grove itself has to say: a project that could not be
     /// opened, a moved one. Shown on the home pane or the front app's
     /// header.
@@ -213,6 +218,8 @@ impl Grove {
             detail,
             saver: None,
             confirm: None,
+            help: None,
+            help_bottom: 0,
             note: None,
             quit_armed: None,
             quitting: false,

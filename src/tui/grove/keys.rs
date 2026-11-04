@@ -32,6 +32,23 @@ impl Grove {
             }
             return;
         }
+        // The grove's help, over the home pane, as a project's own: the
+        // keys that scroll it scroll it, and any other closes it.
+        if let Some(scroll) = self.help {
+            let bottom = self.help_bottom;
+            let delta = match key.code {
+                KeyCode::Down | KeyCode::Char('j') => Some(1),
+                KeyCode::Up | KeyCode::Char('k') => Some(-1),
+                KeyCode::PageDown | KeyCode::Char(' ') => Some(10),
+                KeyCode::PageUp => Some(-10),
+                KeyCode::Char('g') | KeyCode::Home => Some(isize::MIN),
+                KeyCode::Char('G') | KeyCode::End => Some(isize::MAX),
+                _ => None,
+            };
+            self.help =
+                delta.map(|delta| scroll.min(bottom).saturating_add_signed(delta).min(bottom));
+            return;
+        }
         // The second `q` the grove asked for is the grove's, wherever the
         // focus is; given to the front app instead, it would ask its own
         // question again. A dialog on the front app keeps its `q`.
@@ -116,12 +133,13 @@ impl Grove {
             KeyCode::Esc if self.front.is_some() => self.focus = Focus::List,
             KeyCode::Esc => self.request_quit(None),
             KeyCode::Char('X') => self.confirm_stop(),
-            KeyCode::Char('?') => {
-                if let Some(app) = self.front_app_mut() {
+            KeyCode::Char('?') => match self.front_app_mut() {
+                Some(app) => {
                     app.help_scroll = 0;
                     app.modal = Some(Modal::Help);
                 }
-            }
+                None => self.help = Some(0),
+            },
             // A setup screen in front was only being looked at.
             KeyCode::Char('q') if self.on_setup_screen() && self.front != self.started_in => {
                 self.close_front_setup();

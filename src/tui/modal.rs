@@ -1661,6 +1661,29 @@ fn marked_removal_row(label: &str, verdict: &MarkedRemoval, cap: usize) -> Vec<L
     lines
 }
 
+/// The grove's own help, over the home pane: the column's keys, the ones
+/// that reach across projects, and what the column's marks mean. Returns
+/// the furthest it can scroll.
+pub(super) fn render_grove_help(f: &mut Frame, area: Rect, scroll: usize) -> usize {
+    render_help(
+        f,
+        area,
+        scroll,
+        COLUMN_KEYS,
+        &[("across projects", GROVE_KEYS)],
+        &[],
+        (
+            "in the project column",
+            &[
+                ("●", "something of it up"),
+                ("◌", "coming up"),
+                ("✗", "a worktree failed"),
+                ("╎", "moved: its repository is not where it was"),
+            ],
+        ),
+    )
+}
+
 /// Every key of the view it was opened from, then what the marks mean.
 /// Scrollable, because a tmux split is often shorter than the keymap.
 fn render_help(

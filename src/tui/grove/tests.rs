@@ -314,6 +314,10 @@ fn a_home_with_no_project_says_how_one_grows() {
     let mut grove = Grove::new_for_test(Vec::new());
     let all = text_of(&draw(&mut grove, 100, 30));
     assert!(all.contains("no project yet"), "{all}");
+    // Nothing offered that would do nothing.
+    assert!(!all.contains("open"), "{all}");
+    assert!(!all.contains("stop all"), "{all}");
+    assert!(all.contains("? help"), "{all}");
     // `q` on it quits, nothing in flight anywhere.
     press(&mut grove, KeyCode::Char('q'));
     assert!(grove.should_quit);
@@ -1519,4 +1523,23 @@ fn a_project_landing_never_takes_the_front_from_a_dialog() {
         Some(Modal::Help)
     ));
     assert!(grove.open.contains_key(&id_of("api")));
+}
+
+// `?` on the home pane, with no project in front to ask: the grove's own
+// help, scrolled by its keys and closed by any other, quitting nothing.
+#[test]
+fn question_mark_on_the_home_pane_opens_the_groves_help() {
+    let mut grove = Grove::new_for_test(vec![summary("shop", 1, 0), summary("api", 0, 0)]);
+    press(&mut grove, KeyCode::Char('?'));
+    assert_eq!(grove.help, Some(0));
+    let all = text_of(&draw(&mut grove, 120, 60));
+    assert!(all.contains("across projects"), "{all}");
+    assert!(all.contains("stop everything up in the project"), "{all}");
+    press(&mut grove, KeyCode::Char('j'));
+    assert!(grove.help.is_some());
+    press(&mut grove, KeyCode::Esc);
+    assert_eq!(grove.help, None);
+    assert!(!grove.should_quit);
+    let home = text_of(&draw(&mut grove, 120, 40));
+    assert!(home.contains("? help"), "{home}");
 }
