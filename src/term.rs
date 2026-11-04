@@ -47,6 +47,8 @@ impl Paint {
 pub struct Style {
     color: bool,
     home: Option<PathBuf>,
+    /// Where `home` resolves to, when a symlink makes that another path.
+    real_home: Option<PathBuf>,
 }
 
 impl Style {
@@ -82,16 +84,21 @@ impl Style {
         // NO_COLOR counts when it is set to anything but the empty string.
         let no_color = no_color.is_some_and(|v| !v.is_empty());
         let dumb = term == Some("dumb");
-        Self {
-            color: is_terminal && !no_color && !dumb,
-            home: crate::platform::dirs::home().filter(|h| h.is_absolute() && h != Path::new("/")),
-        }
+        Self::with(
+            is_terminal && !no_color && !dumb,
+            crate::platform::dirs::home().filter(|h| h.is_absolute() && h != Path::new("/")),
+        )
     }
 
     /// Colour forced on or off, with `home` as the directory `~` stands
-    /// for. For tests of the styled paths.
+    /// for.
     pub fn with(color: bool, home: Option<PathBuf>) -> Self {
-        Self { color, home }
+        let real_home = home.as_deref().and_then(real_home);
+        Self {
+            color,
+            home,
+            real_home,
+        }
     }
 
     pub fn color(&self) -> bool {
@@ -109,17 +116,40 @@ impl Style {
     /// A path with the home directory written as `~`, which is how a
     /// person reads and types it. Anything outside home is left alone.
     pub fn tilde(&self, path: &str) -> String {
-        let Some(home) = &self.home else {
-            return path.to_string();
-        };
-        let home = home.to_string_lossy();
-        let home = home.trim_end_matches('/');
-        match path.strip_prefix(home) {
-            Some("") => "~".to_string(),
-            Some(rest) if rest.starts_with('/') => format!("~{rest}"),
-            _ => path.to_string(),
-        }
+        [&self.home, &self.real_home]
+            .into_iter()
+            .flatten()
+            .find_map(|home| tilde_under(path, home))
+            .unwrap_or_else(|| path.to_string())
     }
+}
+
+/// `path` with `home` written as `~`, when it is under it.
+fn tilde_under(path: &str, home: &Path) -> Option<String> {
+    let home = home.to_string_lossy();
+    let home = home.trim_end_matches('/');
+    match path.strip_prefix(home) {
+        Some("") => Some("~".to_string()),
+        Some(rest) if rest.starts_with('/') => Some(format!("~{rest}")),
+        _ => None,
+    }
+}
+
+/// Where `home` resolves to, when that is another path: a home reached
+/// through a symlink (`/tmp` is `/private/tmp` on macOS), which a path
+/// read from the filesystem is written under. Resolved once per home and
+/// kept, so a screen that shortens paths every frame asks the disk once.
+pub fn real_home(home: &Path) -> Option<PathBuf> {
+    static SEEN: std::sync::Mutex<Option<(PathBuf, Option<PathBuf>)>> = std::sync::Mutex::new(None);
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, real)) = seen.as_ref()
+        && at == home
+    {
+        return real.clone();
+    }
+    let real = std::fs::canonicalize(home).ok().filter(|real| real != home);
+    *seen = Some((home.to_path_buf(), real.clone()));
+    real
 }
 
 /// How many columns `text` takes once any colour in it is ignored.
@@ -326,6 +356,22 @@ mod tests {
         assert_eq!(style.tilde("/Users/me"), "~");
         assert_eq!(style.tilde("/Users/meg/x"), "/Users/meg/x");
         assert_eq!(style.tilde("/tmp/x"), "/tmp/x");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_home_reached_through_a_symlink_shortens_its_resolved_paths_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(dir.path()).unwrap().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let style = Style::with(false, Some(link.clone()));
+        let under = |p: &Path| style.tilde(&p.display().to_string());
+        assert_eq!(under(&real.join("code")), "~/code");
+        assert_eq!(under(&real), "~");
+        assert_eq!(under(&link.join("code")), "~/code");
+        assert_eq!(under(dir.path()), dir.path().display().to_string());
     }
 
     #[test]

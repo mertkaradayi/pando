@@ -273,15 +273,21 @@ pub fn truncate_middle(s: &str, max: usize) -> String {
 }
 
 /// A path as a person writes it: `~` for the home directory.
+/// A home reached through a symlink is matched where it resolves too.
 pub fn home_relative(path: &std::path::Path) -> String {
     let shown = path.display().to_string();
     let Some(home) = crate::platform::dirs::home() else {
         return shown;
     };
-    match path.strip_prefix(&home) {
-        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Ok(rest) => format!("~/{}", rest.display()),
-        Err(_) => shown,
+    let real = crate::term::real_home(&home);
+    let rest = [Some(home.as_path()), real.as_deref()]
+        .into_iter()
+        .flatten()
+        .find_map(|home| path.strip_prefix(home).ok());
+    match rest {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => shown,
     }
 }
 
