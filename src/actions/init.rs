@@ -420,9 +420,16 @@ impl Drop for Scratch {
             let _ = std::fs::remove_dir(parent);
         }
         // Then whatever the home did not have before this preview. Only
-        // ever an empty directory: a concurrent real run that wrote into
-        // one of them keeps it.
+        // ever an empty directory, but for the registry `ensure_home`
+        // wrote into the project directory it made: a concurrent real run
+        // that wrote anything else into one of them keeps it.
         for dir in &self.created {
+            let registry = dir.join(crate::project::PROJECT_FILE);
+            if registry.is_file()
+                && std::fs::read_dir(dir).is_ok_and(|entries| entries.count() == 1)
+            {
+                let _ = std::fs::remove_file(registry);
+            }
             let _ = std::fs::remove_dir(dir);
         }
     }

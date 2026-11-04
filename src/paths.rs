@@ -50,6 +50,12 @@ impl PandoPaths {
         self.project_dir().join("pando.toml")
     }
 
+    /// Where the repository is: written by pando and read by the views of
+    /// every project, see [`crate::project::Registered`].
+    pub fn project_file(&self) -> PathBuf {
+        self.project_dir().join(crate::project::PROJECT_FILE)
+    }
+
     pub fn state_file(&self) -> PathBuf {
         self.project_dir().join("state.json")
     }
@@ -222,7 +228,7 @@ impl PandoPaths {
     /// what it holds is a property of the machine — which version manager
     /// this shell needs initialised — and not of any one repository.
     pub fn user_config_file(&self) -> PathBuf {
-        self.home.join("config.toml")
+        self.home.join(USER_CONFIG_FILE)
     }
 
     /// The developer's own service and language recipes, merged over the
@@ -242,18 +248,26 @@ impl PandoPaths {
         self.home.join("themes")
     }
 
-    /// Creates the home directory 0700 and the project directory under it.
-    /// Idempotent; called before the first write of any run.
+    /// Creates the home directory 0700 and the project directory under it,
+    /// and registers the project there (`project.json`). Idempotent;
+    /// called before the first write of any run.
     pub fn ensure_home(&self) -> Result<()> {
         // The last gate: whatever computed this home, nothing is created
         // until it is proven to sit outside the repository.
-        ensure_outside_repository("pando home", &self.home, self.root(), &[])?;
+        ensure_outside_project("pando home", &self.home, &self.project, &[])?;
         ensure_dir_private(&self.home)?;
         std::fs::create_dir_all(self.project_dir())
             .with_context(|| format!("create {}", self.project_dir().display()))?;
+        // Where the repository is, for the readers of every project. Not
+        // worth failing a run over: the next one writes it.
+        let _ = crate::project::remember(&self.project_dir(), &self.project);
         Ok(())
     }
 }
+
+/// The user layer's file, under the home: how this machine runs every
+/// project, and how its developer likes the TUI.
+pub const USER_CONFIG_FILE: &str = "config.toml";
 
 /// The longest name an engine is assumed to give a socket inside its
 /// socket directory. Postgres's is `.s.PGSQL.65535.lock`, nineteen
@@ -419,6 +433,29 @@ pub fn ensure_outside_repository(
     Ok(())
 }
 
+/// [`ensure_outside_repository`] for `project`'s main checkout, worded for
+/// what that is: a repository, or a plain folder of them, which no message
+/// should call a repository.
+pub fn ensure_outside_project(
+    label: &str,
+    path: &Path,
+    project: &ProjectRef,
+    worktrees: &[PathBuf],
+) -> Result<()> {
+    if project.is_multi_repo()
+        && resolve_for_compare(path).starts_with(resolve_for_compare(&project.root))
+    {
+        anyhow::bail!(
+            "{label} {} is inside the folder {}, which pando runs as one project of its \
+             repositories ({}) — pando never writes into it; move {label} outside it",
+            path.display(),
+            project.root.display(),
+            project.repos.join(", ")
+        );
+    }
+    ensure_outside_repository(label, path, &project.root, worktrees)
+}
+
 /// Canonicalises the deepest existing ancestor and re-appends the rest, so a
 /// not-yet-created path still compares correctly against a canonical root —
 /// on macOS `/var/...` and `/private/var/...` are the same directory.
@@ -452,6 +489,40 @@ fn ensure_dir_private(dir: &Path) -> Result<()> {
             .with_context(|| format!("chmod 0700 {}", dir.display()))?;
     }
     Ok(())
+}
+
+/// Writes `text` to `path` atomically, the file created with `mode`: the
+/// temp file is created with it, so there is never a moment where a file
+/// readable by more than `mode` allows exists at the final path.
+///
+/// The temp file is this writer's own, named for the process and a
+/// counter. With one shared name, a second writer truncated the file the
+/// first was about to rename, or renamed it away before the first could,
+/// and a command failed on a file nothing was wrong with.
+pub fn write_private_atomic(path: &Path, text: &str, mode: u32) -> Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = path.with_file_name(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let written = crate::platform::files::create_new(&tmp, mode)
+        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .with_context(|| format!("write {}", tmp.display()))
+        .and_then(|()| {
+            std::fs::rename(&tmp, path)
+                .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))
+        });
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 /// `$PANDO_HOME` when set and non-empty, else `~/.pando`. The only place in
@@ -696,6 +767,13 @@ mod tests {
         p.ensure_home().unwrap(); // idempotent
 
         assert!(p.project_dir().is_dir());
+        // Registered, for the readers of every project, 0600.
+        assert_eq!(
+            crate::project::registered(&p.project_dir()),
+            Some(crate::project::Registered::of(&p.project))
+        );
+        let file = std::fs::metadata(p.project_file()).unwrap();
+        assert_eq!(file.permissions().mode() & 0o777, 0o600);
         let mode = std::fs::metadata(&home).unwrap().permissions().mode() & 0o777;
         assert_eq!(
             mode, HOME_MODE,
@@ -724,6 +802,23 @@ mod tests {
             format!("{err:#}").contains("inside the repository"),
             "unexpected error: {err:#}"
         );
+        assert!(!home.exists(), "a refused home must not be created");
+    }
+
+    #[test]
+    fn a_home_inside_a_folder_of_repositories_is_refused_as_inside_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap().join("product");
+        std::fs::create_dir_all(&root).unwrap();
+        let project =
+            ProjectRef::multi_repo(&root, vec!["backend".into(), "frontend".into()]).unwrap();
+        let home = root.join("state").join(".pando");
+        let p = PandoPaths::new(&home, project);
+
+        let err = format!("{:#}", p.ensure_home().unwrap_err());
+        assert!(err.contains("inside the folder"), "{err}");
+        assert!(!err.contains("repository"), "{err}");
+        assert!(err.contains("backend, frontend"), "{err}");
         assert!(!home.exists(), "a refused home must not be created");
     }
 

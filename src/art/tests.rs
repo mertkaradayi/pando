@@ -230,3 +230,108 @@ fn names_go_under_stems_without_touching() {
     }
     assert!(label_stems(&stems, &labels, 3).is_empty());
 }
+
+// One stem per project, in leaf where something of it is up: the home
+// pane's grove names each one, so the count and the places are its.
+#[test]
+fn a_grove_of_projects_has_a_stem_each_and_crowns_only_where_leafed() {
+    let seed = seed_of("pando");
+    let leafed = [true, false, true, false];
+    let picture = grove_of(60, 10, 2, seed, &leafed);
+    assert_eq!(picture, grove_of(60, 10, 2, seed, &leafed));
+    assert_eq!(picture.stems, vec![7, 22, 37, 52]);
+    assert!(picture.cells.iter().all(|row| row.len() == 60));
+    // Leaves only within reach of a leafed stem.
+    for (x, _) in cells_where(&picture.cells, Material::Canopy) {
+        let nearest = picture
+            .stems
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, s)| s.abs_diff(x))
+            .map(|(i, _)| i)
+            .unwrap();
+        assert!(leafed[nearest], "a leaf at {x} by a bare stem");
+    }
+    // Every stem, bare or not, has its trunk and its tap root.
+    let roots = &picture.cells[picture.cells.len() - 1];
+    for &x in &picture.stems {
+        assert_eq!(roots[x].ch, '┻');
+        assert!(
+            picture
+                .cells
+                .iter()
+                .any(|row| row[x].material == Material::Trunk),
+            "no trunk at {x}"
+        );
+    }
+    assert!(grove_of(GROVE_MIN_WIDTH - 1, 10, 0, seed, &leafed).is_empty());
+    assert!(grove_of(60, 10, 0, seed, &[]).stems.is_empty());
+    assert_eq!(stems_that_fit(60), 60 / STEM_SPACING_MIN);
+}
+
+// Each label of a row has its whole where all fit, and otherwise the
+// short ones keep theirs and the long ones share the rest alike, the
+// last no shorter than the first.
+#[test]
+fn a_row_of_labels_shares_its_room_evenly_among_the_long() {
+    assert_eq!(share_room(&[4, 20, 3], 40), vec![4, 20, 3]);
+    assert_eq!(share_room(&[30, 4, 30], 40), vec![16, 4, 16]);
+    let given = share_room(&[40, 40, 40, 40], 46);
+    assert_eq!(given, vec![10, 10, 10, 10]);
+    assert!(share_room(&[5, 5], 3).iter().all(|&g| g <= 1));
+}
+
+// Centred under its stem, moved only to keep two cells from a neighbour
+// and one from either edge.
+#[test]
+fn labels_sit_centred_under_their_stems_and_never_touch() {
+    assert_eq!(spread_labels(&[10, 30], &[4, 6], 50), vec![8, 27]);
+    // Long labels pushed apart, inside the row.
+    let widths = share_room(&[30, 30, 30], 58);
+    let at = spread_labels(&[20, 30, 40], &widths, 60);
+    assert!(at[0] >= 1, "{at:?}");
+    for i in 1..at.len() {
+        assert!(at[i] >= at[i - 1] + widths[i - 1] + 2, "{at:?} {widths:?}");
+    }
+    assert!(at[2] + widths[2] < 60, "{at:?} {widths:?}");
+}
+
+// Each label is kept to what lets it sit centred under its own stem,
+// two cells from its neighbours, a short one's spare lent to the next,
+// and never below the fewest cells asked for.
+#[test]
+fn labels_are_given_what_keeps_them_under_their_stems() {
+    let stems = [14, 30, 46, 62, 78, 94];
+    let wants = [24, 23, 24, 26, 12, 14];
+    let rooms = label_rooms(&stems, &wants, 110, 10);
+    assert_eq!(rooms, vec![14, 14, 14, 15, 12, 14]);
+    let at = spread_labels(&stems, &rooms, 110);
+    for i in 0..stems.len() {
+        let centre = at[i] + rooms[i] / 2;
+        assert!(centre.abs_diff(stems[i]) <= 1, "{at:?} {rooms:?}");
+        if i > 0 {
+            assert!(at[i] >= at[i - 1] + rooms[i - 1] + 2, "{at:?} {rooms:?}");
+        }
+    }
+    // What fits whole stays whole.
+    assert_eq!(label_rooms(&[10, 30], &[4, 6], 50, 10), vec![4, 6]);
+    // Stems too close for the least: the least, moved apart instead.
+    let rooms = label_rooms(&[5, 10, 15], &[20, 20, 20], 40, 10);
+    assert_eq!(rooms, vec![10, 10, 10]);
+    let at = spread_labels(&[5, 10, 15], &rooms, 40);
+    assert!(
+        at[0] >= 1 && at[1] >= at[0] + 12 && at[2] >= at[1] + 12,
+        "{at:?}"
+    );
+    assert!(at[2] + rooms[2] < 40, "{at:?}");
+}
+
+// Labels that would touch are moved apart about their stems, not all
+// pushed to one side.
+#[test]
+fn labels_that_would_touch_move_apart_about_their_middle() {
+    let at = spread_labels(&[20, 24], &[6, 6], 60);
+    // Centred they would start at 17 and 21; four cells apart is too
+    // close, so each moves.
+    assert_eq!(at, vec![15, 23]);
+}

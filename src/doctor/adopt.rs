@@ -99,7 +99,7 @@ pub(super) fn adoptable(paths: &PandoPaths) -> Vec<Adoptable> {
             id,
             path: entry.path().display().to_string(),
             old_root: old_root.map(|p| p.display().to_string()),
-            worktrees: worktree_names(&entry.path()),
+            worktrees: crate::actions::worktrees_in_project_dir(&entry.path()),
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -108,14 +108,10 @@ pub(super) fn adoptable(paths: &PandoPaths) -> Vec<Adoptable> {
 
 /// The repository a project folder belonged to.
 ///
-/// Nothing writes `project.root`, so the honest sources are the checkouts
-/// the folder knows about: each worktree still inside it, and each one its
-/// state file records, which covers a worktree kept in a configured
-/// `worktrees_dir` and a main checkout that was started. A worktree's own
-/// `.git` file names the repository it was linked from; a main checkout's
-/// `.git` is a directory, and the checkout is the repository. A folder
-/// with none of these has nothing to say, and says `None` rather than a
-/// guess.
+/// The sources are `actions::recorded_roots`: the folder's registry, then
+/// the checkouts it knows about, each of which names its repository in its
+/// own `.git`. A folder with none of these has nothing to say, and says
+/// `None` rather than a guess.
 ///
 /// Where they name more than one, one that is still there wins: a folder
 /// a live checkout still points at is that checkout's own.
@@ -127,7 +123,7 @@ pub(super) fn adoptable(paths: &PandoPaths) -> Vec<Adoptable> {
 fn recorded_root(this_root: &Path, project_dir: &Path) -> (Option<PathBuf>, bool) {
     let mut first = None;
     let mut ours = false;
-    for root in candidate_roots(project_dir) {
+    for root in crate::actions::recorded_roots(project_dir) {
         if std::fs::canonicalize(&root).is_ok_and(|root| root == this_root) {
             ours = true;
             continue;
@@ -138,53 +134,6 @@ fn recorded_root(this_root: &Path, project_dir: &Path) -> (Option<PathBuf>, bool
         first.get_or_insert(root);
     }
     (first, ours)
-}
-
-/// Every repository a project folder's contents name, in the order
-/// [`recorded_root`] trusts them.
-fn candidate_roots(project_dir: &Path) -> Vec<PathBuf> {
-    let mut out: Vec<PathBuf> = std::fs::read_to_string(project_dir.join("pando.toml"))
-        .ok()
-        .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
-        .and_then(|doc| {
-            Some(PathBuf::from(
-                doc.get("project")?.get("root")?.as_str()?.to_string(),
-            ))
-        })
-        .into_iter()
-        .collect();
-    let mut checkouts: Vec<PathBuf> = worktree_names(project_dir)
-        .iter()
-        .map(|name| project_dir.join("worktrees").join(name))
-        .collect();
-    // A state file this build cannot read says nothing here; `adopt`
-    // refuses to move a folder that holds one.
-    if let Ok(store) = state::load(&project_dir.join("state.json")) {
-        checkouts.extend(store.worktrees.into_values().map(|record| record.path));
-    }
-    out.extend(
-        checkouts
-            .iter()
-            .filter_map(|checkout| checkout_root(checkout)),
-    );
-    out
-}
-
-/// The repository a checkout belongs to, read from its `.git`.
-fn checkout_root(checkout: &Path) -> Option<PathBuf> {
-    let marker = checkout.join(".git");
-    if marker.is_dir() {
-        return checkout.is_absolute().then(|| checkout.to_path_buf());
-    }
-    let gitdir = crate::project::linked_gitdir(checkout)?;
-    // `<root>/.git/worktrees/<name>` — three components back to the
-    // checkout it was linked from. A root whose own `.git` is a file is a
-    // linked checkout and not a repository: a relative
-    // `.git/worktrees/<name>` climbs back to the checkout itself, which
-    // git never writes, and that is no repository rather than one that is
-    // still there.
-    let root = gitdir.ancestors().nth(3)?;
-    (root.is_absolute() && !root.join(".git").is_file()).then(|| root.to_path_buf())
 }
 
 /// A process pando started from a project folder that is still running.
@@ -200,19 +149,6 @@ fn running_process(project_dir: &Path) -> Option<u32> {
         .flat_map(|record| record.processes.values())
         .find(|process| process.alive(proc::is_alive, proc::group_alive))
         .map(|process| process.pid)
-}
-
-fn worktree_names(project_dir: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(project_dir.join("worktrees")) else {
-        return Vec::new();
-    };
-    let mut out: Vec<String> = entries
-        .flatten()
-        .filter(|e| e.path().is_dir())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .collect();
-    out.sort();
-    out
 }
 
 /// Moves a project folder under this repository's current id.
@@ -309,7 +245,7 @@ pub fn adopt(
         from: from.clone(),
         to: to.clone(),
         old_root,
-        worktrees: worktree_names(&from),
+        worktrees: crate::actions::worktrees_in_project_dir(&from),
     };
     if !confirm(&plan)? {
         anyhow::bail!("nothing was moved");
@@ -339,6 +275,8 @@ pub fn adopt(
         }
     };
     notices.extend(repair_worktrees(paths, &to));
+    // The registry it brought names the root it was moved from.
+    let _ = crate::project::remember(&to, &paths.project);
     Ok(Adoption {
         from,
         to,
@@ -378,7 +316,9 @@ fn rebuildable(paths: &PandoPaths, path: &Path) -> bool {
     let Ok(meta) = std::fs::symlink_metadata(path) else {
         return false;
     };
-    if meta.is_dir() && path == paths.cache_dir() {
+    // The cache, which pando rebuilds, and the registry, which names
+    // this repository and is written again.
+    if (meta.is_dir() && path == paths.cache_dir()) || path == paths.project_file() {
         return true;
     }
     match meta.is_dir() {
@@ -490,7 +430,7 @@ fn moved(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
 /// A failure here is reported, never fatal: the folder has already moved,
 /// which is the part that cannot be done by hand.
 fn repair_worktrees(paths: &PandoPaths, project_dir: &Path) -> Vec<String> {
-    let names = worktree_names(project_dir);
+    let names = crate::actions::worktrees_in_project_dir(project_dir);
     if names.is_empty() {
         return Vec::new();
     }

@@ -26,7 +26,7 @@ pub fn validate(config: &Config, project: &ProjectRef) -> Result<()> {
     if let Some(dir) = config.configured_worktrees_dir(&project.root) {
         // Against the repository root only: the fuller check, which also
         // knows about linked worktrees, needs git and runs once at startup.
-        crate::paths::ensure_outside_repository("worktrees_dir", &dir, &project.root, &[])?;
+        crate::paths::ensure_outside_project("worktrees_dir", &dir, project, &[])?;
     }
     validate_processes(config)?;
     validate_services(config)?;
@@ -78,6 +78,7 @@ pub fn validate(config: &Config, project: &ProjectRef) -> Result<()> {
             super::schema::LIST_SORTS.join(", ")
         );
     }
+    validate_layout(&config.ui)?;
     if config.isolation.none && !config.services.is_empty() {
         bail!(
             "[isolation] none = true says this project runs no private services, and \
@@ -386,6 +387,48 @@ fn validate_cwd(process: &str, cwd: &str) -> Result<()> {
         .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
     {
         bail!("cwd {cwd:?} for process {process:?} must not escape the worktree");
+    }
+    Ok(())
+}
+
+/// The TUI's layout in `[ui]`: a spelling it knows, and a size within
+/// what it draws.
+pub(super) fn validate_layout(ui: &super::UiSection) -> Result<()> {
+    use super::schema::{
+        DETAIL_PLACEMENTS, DETAIL_SIZE_MAX, DETAIL_SIZE_MIN, GROVE_MODES, GROVE_WIDTH_MAX,
+        GROVE_WIDTH_MIN,
+    };
+    if let Some(grove) = &ui.grove
+        && !GROVE_MODES.contains(&grove.as_str())
+    {
+        bail!(
+            "[ui] grove = {grove:?} is not one pando knows — it is {}",
+            GROVE_MODES.join(", ")
+        );
+    }
+    if let Some(width) = ui.grove_width
+        && !(GROVE_WIDTH_MIN..=GROVE_WIDTH_MAX).contains(&width)
+    {
+        bail!(
+            "[ui] grove_width = {width} is not a width the column takes — it is \
+             {GROVE_WIDTH_MIN} to {GROVE_WIDTH_MAX} cells"
+        );
+    }
+    if let Some(detail) = &ui.detail
+        && !DETAIL_PLACEMENTS.contains(&detail.as_str())
+    {
+        bail!(
+            "[ui] detail = {detail:?} is not one pando knows — it is {}",
+            DETAIL_PLACEMENTS.join(", ")
+        );
+    }
+    if let Some(size) = ui.detail_size
+        && !(DETAIL_SIZE_MIN..=DETAIL_SIZE_MAX).contains(&size)
+    {
+        bail!(
+            "[ui] detail_size = {size} is not a size the detail pane takes — it is \
+             {DETAIL_SIZE_MIN} to {DETAIL_SIZE_MAX} percent"
+        );
     }
     Ok(())
 }

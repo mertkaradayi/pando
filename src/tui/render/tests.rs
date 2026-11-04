@@ -979,7 +979,8 @@ fn centered_rect_honours_the_minimum_width_and_never_escapes_the_area() {
 #[test]
 fn a_wide_body_puts_the_panes_side_by_side() {
     let body = Rect::new(0, 0, 120, 30);
-    let [list, detail] = body_layout(body);
+    let (list, detail, _) = body_layout(body, DetailLayout::default());
+    let detail = detail.unwrap();
     assert_eq!(list.y, detail.y, "same row means side by side");
     assert!(list.width > 20 && detail.width > 20);
     assert_eq!(list.width + detail.width, 120);
@@ -989,7 +990,8 @@ fn a_wide_body_puts_the_panes_side_by_side() {
 #[test]
 fn a_narrow_body_stacks_the_panes() {
     let body = Rect::new(0, 0, 50, 30);
-    let [list, detail] = body_layout(body);
+    let (list, detail, _) = body_layout(body, DetailLayout::default());
+    let detail = detail.unwrap();
     assert_eq!(list.x, detail.x);
     assert_eq!(list.width, detail.width, "stacked panes are full width");
     assert!(detail.y >= list.y + list.height);
@@ -1001,8 +1003,41 @@ fn a_narrow_body_stacks_the_panes() {
 // cramped side-by-side wins.
 #[test]
 fn a_narrow_and_short_body_stays_side_by_side() {
-    let [list, detail] = body_layout(Rect::new(0, 0, 50, 8));
+    let (list, detail, _) = body_layout(Rect::new(0, 0, 50, 8), DetailLayout::default());
+    let detail = detail.unwrap();
     assert_eq!(list.y, detail.y);
+}
+
+// `[ui] detail`: under the list at any width when there is height for
+// it, a cramped side-by-side when there is not, and the whole body to the
+// list when it is off. `detail_size` is its share either way.
+#[test]
+fn the_body_follows_where_the_detail_pane_was_put() {
+    let at = |placement, size| DetailLayout { placement, size };
+    let wide = Rect::new(0, 0, 120, 30);
+    let (list, detail, stacked) = body_layout(wide, at(DetailPlacement::Bottom, None));
+    let detail = detail.unwrap();
+    assert!(stacked);
+    assert_eq!((list.width, detail.width), (120, 120));
+    assert_eq!(detail.height, 30 - 12, "three fifths by default");
+    let (_, detail, _) = body_layout(wide, at(DetailPlacement::Bottom, Some(20)));
+    assert_eq!(detail.unwrap().height, 30 - 24);
+    let (_, detail, stacked) = body_layout(wide, at(DetailPlacement::Right, Some(70)));
+    assert!(!stacked);
+    assert_eq!(detail.unwrap().width, 84);
+    // Too short to stack: beside the list after all.
+    let short = Rect::new(0, 0, 120, 8);
+    let (list, detail, stacked) = body_layout(short, at(DetailPlacement::Bottom, None));
+    assert!(!stacked);
+    assert_eq!(list.y, detail.unwrap().y);
+    let (list, detail, _) = body_layout(wide, at(DetailPlacement::Off, Some(70)));
+    assert_eq!((list, detail), (wide, None));
+    // Nothing set is today's screen.
+    assert_eq!(
+        body_layout(wide, DetailLayout::default()).0.width,
+        72,
+        "three fifths of the width to the list"
+    );
 }
 
 #[test]
@@ -5579,4 +5614,115 @@ fn a_narrow_header_says_a_folders_branches_differ_rather_than_cutting_them() {
     let narrow = header(&mut app, 60);
     assert!(narrow.contains("acme-shop · mixed branches"), "{narrow}");
     assert!(narrow.contains("1 worktree"), "{narrow}");
+}
+
+#[test]
+fn a_twin_folder_cut_to_its_room_keeps_where_it_differs() {
+    use super::twins::fit_folder;
+    use crate::actions::TwinFolder;
+    let twin = |folder: &str, shared: usize, others: &[&str]| TwinFolder {
+        folder: folder.into(),
+        shared,
+        others: others.iter().map(|o| o.to_string()).collect(),
+    };
+    let a = twin("client-project-a", 15, &["client-project-b"]);
+    let b = twin("client-project-b", 15, &["client-project-a"]);
+    // Whole where it fits.
+    assert_eq!(fit_folder(&a, 20).unwrap(), "client-project-a");
+    // Cut at the front where the end is what differs.
+    assert_eq!(fit_folder(&a, 8).unwrap(), "…oject-a");
+    assert_ne!(fit_folder(&a, 4), fit_folder(&b, 4));
+    assert_eq!(fit_folder(&b, 2).unwrap(), "…b");
+    // Where they differ early, cut at the end as any label is.
+    let early = twin("alpha-workspace", 0, &["beta-workspace"]);
+    assert_eq!(fit_folder(&early, 6).unwrap(), "alpha…");
+    // Where the part that differs is long, from where it starts.
+    let long = twin(
+        "pando-fixture-1793784766375615000",
+        24,
+        &["pando-fixture-1793784766837094000"],
+    );
+    assert_eq!(fit_folder(&long, 6).unwrap(), "…3756…");
+    assert_eq!(fit_folder(&long, 12).unwrap(), "…66375615000");
+    // Never a cut that reads as another's: `x-alpha` beside `x-beta` and
+    // `y-alpha` differs from both only in its first character.
+    let x = twin("x-alpha", 2, &["x-beta", "y-alpha"]);
+    assert_eq!(fit_folder(&x, 4).unwrap(), "x-a…");
+    assert_eq!(fit_folder(&x, 3), None);
+    // Two cells show nothing of where four alike folders differ.
+    let four = twin(
+        "pando-twins-alpha",
+        12,
+        &["pando-twins-beta", "pando-twins-gamma", "pando-twins-delta"],
+    );
+    assert_eq!(fit_folder(&four, 2), None);
+    assert_eq!(fit_folder(&four, 4).unwrap(), "…al…");
+    // The same folder twice is never told apart by it.
+    assert_eq!(fit_folder(&twin("work", 4, &["work"]), 10), None);
+}
+
+/// A twin's folder as the fixtures name them: long, alike to the end.
+fn fixture_twin() -> crate::actions::TwinFolder {
+    crate::actions::TwinFolder {
+        folder: "pando-fixture-1793791398151457000".into(),
+        shared: 19,
+        others: vec!["pando-fixture-1793791398157240000".into()],
+    }
+}
+
+// The header gives a twin's folder up first: at 80 columns it is cut to
+// where it differs and what runs is still said; whole only where all of
+// it fits.
+#[test]
+fn a_twins_folder_in_the_header_gives_way_to_what_runs() {
+    let mut app = test_app(&["up"]);
+    app.main = Some(wt("main"));
+    with_process(&mut app, "up", running_phase());
+    app.twin_folder = Some(fixture_twin());
+    let header = |app: &mut App, width: u16| {
+        text_of(&draw(app, width, 20))
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let narrow = header(&mut app, 80);
+    assert!(narrow.contains("● 1 running"), "{narrow}");
+    assert!(narrow.contains(" · main"), "{narrow}");
+    assert!(
+        !narrow.contains("pando-fixture-1793791398151457000"),
+        "{narrow}"
+    );
+    assert!(narrow.contains("…"), "{narrow}");
+    let wide = header(&mut app, 160);
+    assert!(
+        wide.contains("pando-fixture-1793791398151457000 · main"),
+        "{wide}"
+    );
+    assert!(wide.contains("● 1 running"), "{wide}");
+}
+
+// The setup screen of a project another has the name of says its
+// folder after the name, as the list's header does: whole where it fits
+// beside what the screen is, cut to where it differs where it does not.
+#[test]
+fn a_twins_setup_screen_names_its_folder() {
+    let (_dir, mut app) = app_on_setup_screen(false);
+    app.twin_folder = Some(fixture_twin());
+    let header = |app: &mut App, width: u16| {
+        text_of(&draw(app, width, 30))
+            .lines()
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let wide = header(&mut app, 120);
+    assert!(
+        wide.contains("pando — acme-shop pando-fixture-1793791398151457000"),
+        "{wide}"
+    );
+    assert!(wide.contains("first time here"), "{wide}");
+    let narrow = header(&mut app, 60);
+    assert!(narrow.contains("pando — acme-shop …"), "{narrow}");
+    assert!(narrow.contains("first time here"), "{narrow}");
 }

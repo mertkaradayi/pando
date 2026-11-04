@@ -1,0 +1,2553 @@
+use super::*;
+use crate::actions::{LiveWorktree, ProjectSummary};
+use crate::config::Config;
+use crate::paths::PandoPaths;
+use crate::project::ProjectRef;
+use crate::state::Aggregate;
+use crate::tui::app::{
+    AppEvent, COLUMN_KEYS, GROVE_KEYS, LIST_KEYS, Modal, PendingAction, PendingKind,
+};
+use crate::tui::render::{render, render_grove, text_width};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
+use ratatui::crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// A project with `up` worktrees running and `failed` failed, under a
+/// path that cannot exist.
+fn summary(name: &str, up: usize, failed: usize) -> ProjectSummary {
+    let mut worktrees = Vec::new();
+    for i in 0..up {
+        worktrees.push(live(&format!("feat+up{i}"), running()));
+    }
+    for i in 0..failed {
+        worktrees.push(live(
+            &format!("feat+broken{i}"),
+            Aggregate::Failed {
+                process: "dev".into(),
+                at: chrono::Utc::now(),
+                reason: "exited".into(),
+            },
+        ));
+    }
+    ProjectSummary {
+        id: id_of(name),
+        name: name.to_string(),
+        root: std::path::PathBuf::from("/pando-test-does-not-exist").join(name),
+        repos: Vec::new(),
+        moved: false,
+        unreadable: false,
+        up,
+        starting: 0,
+        failed,
+        stopped: 1,
+        worktrees,
+        last_used: None,
+        warning: None,
+    }
+}
+
+fn running() -> Aggregate {
+    Aggregate::Running {
+        since: chrono::Utc::now(),
+    }
+}
+
+fn live(name: &str, phase: Aggregate) -> LiveWorktree {
+    LiveWorktree {
+        name: name.to_string(),
+        path: std::path::PathBuf::from("/trees").join(name),
+        phase,
+        processes: BTreeMap::new(),
+        ports: BTreeMap::new(),
+        claimed: BTreeSet::new(),
+    }
+}
+
+fn id_of(name: &str) -> String {
+    format!("{name}-0000abcd")
+}
+
+/// An app for `name`'s project, as `App::new_for_test` makes them: no
+/// workers, nothing on disk.
+fn app_for(name: &str) -> crate::tui::app::App {
+    let paths = PandoPaths::new(
+        "/pando-test-does-not-exist/home",
+        ProjectRef {
+            id: id_of(name),
+            root: std::path::PathBuf::from("/pando-test-does-not-exist").join(name),
+            display_name: name.into(),
+            ..Default::default()
+        },
+    );
+    let worktrees = vec![crate::tui::app::tests::wt("feat+one")];
+    crate::tui::app::App::new_for_test(paths, Config::default(), worktrees)
+}
+
+/// Four projects, the way the column orders them: one up, one failed,
+/// one idle, one moved; `shop` open and in front, pando started in it.
+fn a_grove() -> Grove {
+    let mut moved = summary("old", 0, 0);
+    moved.moved = true;
+    let summaries = vec![
+        summary("shop", 2, 0),
+        summary("api", 0, 1),
+        summary("docs", 0, 0),
+        moved,
+    ];
+    let mut grove = Grove::new_for_test(summaries);
+    grove.started_in = Some(id_of("shop"));
+    grove.adopt(app_for("shop"), true);
+    grove
+}
+
+fn draw(grove: &mut Grove, width: u16, height: u16) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|f| render_grove(f, grove)).unwrap();
+    terminal.backend().buffer().clone()
+}
+
+fn text_of(buf: &Buffer) -> String {
+    (0..buf.area().height)
+        .map(|y| row_of(buf, y))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn row_of(buf: &Buffer, y: u16) -> String {
+    cells(buf, y, 0, buf.area().width)
+}
+
+/// The cells `x0..x1` of row `y`.
+fn cells(buf: &Buffer, y: u16, x0: u16, x1: u16) -> String {
+    (x0..x1)
+        .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+        .collect()
+}
+
+fn press(grove: &mut Grove, code: KeyCode) {
+    grove.handle_event(GroveEvent::Input(Event::Key(KeyEvent::new(
+        code,
+        KeyModifiers::NONE,
+    ))));
+}
+
+fn click(grove: &mut Grove, x: u16, y: u16) {
+    grove.handle_event(GroveEvent::Input(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    })));
+}
+
+/// An action in flight that never lands.
+fn in_flight() -> PendingAction {
+    let (_tx, rx) = std::sync::mpsc::channel();
+    // Kept open, so the action stays in flight.
+    std::mem::forget(_tx);
+    PendingAction {
+        name: "feat+one".into(),
+        kind: PendingKind::Start,
+        covers: vec!["feat+one".into()],
+        rx,
+        started_at: std::time::Instant::now(),
+        spinner_frame: 0,
+        progress_rx: None,
+        stage: None,
+        said: Vec::new(),
+        label: "feat/one".into(),
+        refs_written: false,
+        cancel: None,
+    }
+}
+
+// ---- drawing ---------------------------------------------------------
+
+// Wide: the column on the left, a row per project in the list's glyphs,
+// pando's own name in its border, one root line under every stem; the
+// project in front drawn right of it, its header starting at the
+// project.
+#[test]
+fn the_column_lists_every_project_beside_the_one_in_front() {
+    let mut grove = a_grove();
+    let buf = draw(&mut grove, 120, 30);
+    let column = |y| cells(&buf, y, 0, COLUMN_WIDTH);
+    assert!(column(0).contains("pando"), "{}", column(0));
+    assert!(column(0).contains("● 2"), "{}", column(0));
+    assert!(column(0).contains("✗ 1"), "{}", column(0));
+    assert!(column(1).contains("┃● shop"), "{}", column(1));
+    assert!(column(1).trim_end_matches('│').trim_end().ends_with('2'));
+    assert!(column(2).contains("┃✗ api"), "{}", column(2));
+    assert!(column(2).contains("✗1"), "{}", column(2));
+    assert!(column(3).contains("│  docs"), "{}", column(3));
+    assert!(column(4).contains("╎  old"), "{}", column(4));
+    assert!(column(4).contains("moved"), "{}", column(4));
+    let root = column(28);
+    assert!(root.contains("╺━┻━"), "{root}");
+    assert_eq!(buf[(2, 28)].fg, crate::theme::green(), "lit: shop is up");
+    // The project in front, right of the column, its header without
+    // pando's name, which the column carries.
+    let right = cells(&buf, 0, COLUMN_WIDTH, 120);
+    assert!(right.trim_start().starts_with("shop"), "{right}");
+    assert!(!right.contains("pando"), "{right}");
+    assert_eq!(grove.hits.rows.len(), 4);
+    // The front project's name is the blue one.
+    let shop = column(1).find("shop").unwrap() as u16;
+    let shop_x = column(1)[..shop as usize].chars().count() as u16;
+    assert_eq!(buf[(shop_x, 1)].fg, crate::theme::blue());
+}
+
+// The border is blue only on the pane with the keys; the cursor's row is
+// on the band either way.
+#[test]
+fn focus_moves_the_blue_border_between_the_column_and_the_list() {
+    let mut grove = a_grove();
+    let buf = draw(&mut grove, 120, 30);
+    assert_eq!(grove.focus, Focus::List);
+    assert_eq!(buf[(0, 0)].fg, crate::theme::border());
+    assert!(!text_of(&buf).contains("⏎ open"));
+    press(&mut grove, KeyCode::Left);
+    assert_eq!(grove.focus, Focus::Column);
+    let buf = draw(&mut grove, 120, 30);
+    assert_eq!(buf[(0, 0)].fg, crate::theme::blue());
+    assert_eq!(buf[(1, 1)].bg, crate::theme::highlight_bg());
+    // The column's own keys while it has them.
+    assert!(text_of(&buf).contains("⏎ open"), "{}", text_of(&buf));
+    press(&mut grove, KeyCode::Tab);
+    assert_eq!(grove.focus, Focus::List);
+    press(&mut grove, KeyCode::Left);
+    press(&mut grove, KeyCode::Esc);
+    assert_eq!(grove.focus, Focus::List);
+}
+
+// Narrow: no column, one row above the list, the project in front between
+// `[` and `]`, which a click presses.
+#[test]
+fn under_the_side_by_side_width_the_column_is_a_strip() {
+    let mut grove = a_grove();
+    let buf = draw(&mut grove, 60, 24);
+    let strip = row_of(&buf, 0);
+    assert!(strip.starts_with(" [ ◀ ● shop · 2 up · 1/4 ▶ ]"), "{strip}");
+    assert!(
+        !strip.contains("tab list"),
+        "the list has the keys: {strip}"
+    );
+    assert!(row_of(&buf, 1).contains("shop"), "{}", row_of(&buf, 1));
+    assert_eq!(grove.hits.column, Rect::new(0, 0, 60, 1));
+    // With the keys, the strip follows the column's cursor.
+    press(&mut grove, KeyCode::Left);
+    press(&mut grove, KeyCode::Char('j'));
+    let strip = row_of(&draw(&mut grove, 60, 24), 0);
+    assert!(strip.contains("✗ api · ✗1 failed · 2/4"), "{strip}");
+    // And says what its keys do now, and how to give them back.
+    assert!(strip.trim_end().ends_with("⏎ open  tab list"), "{strip}");
+    // `]` on the strip: the next project, opened.
+    let next = grove.hits.next;
+    click(&mut grove, next.x + 1, next.y);
+    assert_eq!(grove.open_requests, vec![id_of("api")]);
+}
+
+// With the column hidden the project's TUI is exactly what it is without
+// the grove: nothing of today's screen moves for it.
+#[test]
+fn with_the_column_hidden_the_screen_is_the_project_alone() {
+    let mut grove = a_grove();
+    grove.shown = Shown::Off;
+    for (w, h) in [(100, 24), (60, 20)] {
+        let in_grove = draw(&mut grove, w, h);
+        let mut alone = app_for("shop");
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| render(f, &mut alone)).unwrap();
+        assert_eq!(text_of(&in_grove), text_of(terminal.backend().buffer()));
+    }
+    // One project and none other: the column does not show by itself.
+    let mut one = Grove::new_for_test(vec![summary("shop", 0, 0)]);
+    one.adopt(app_for("shop"), true);
+    assert!(!one.column_shown());
+}
+
+// Outside a repository: the brand's grove, a stem for each project with
+// its name under it, the column beside it, and nothing breaks on a
+// screen too small for the picture.
+#[test]
+fn outside_a_repository_the_home_pane_names_a_stem_for_each_project() {
+    let mut grove = a_grove();
+    grove.open.clear();
+    grove.front = None;
+    grove.focus = Focus::Column;
+    let buf = draw(&mut grove, 140, 40);
+    let all = text_of(&buf);
+    assert!(all.contains(" grove "), "{all}");
+    assert!(all.contains("one root, every project alive"), "{all}");
+    assert!(all.contains("⏎ open"), "{all}");
+    assert!(all.contains("┻"), "every stem on one root");
+    // A row naming every project that has not moved, in the column's
+    // order: the home pane's part of the screen only.
+    let names = (0..40)
+        .map(|y| cells(&buf, y, COLUMN_WIDTH, 140))
+        .find(|row| row.contains("shop") && row.contains("docs"))
+        .unwrap_or_else(|| panic!("no row names the stems:\n{all}"));
+    let at = |name: &str| names.find(name).unwrap();
+    assert!(
+        at("shop") < at("✗api") && at("✗api") < at("docs"),
+        "{names}"
+    );
+    assert!(!names.contains("old"), "a moved project has no stem");
+    // The cursor's project is named in blue.
+    let x = COLUMN_WIDTH + names[..at("shop")].chars().count() as u16;
+    let y = (0..40)
+        .find(|&y| cells(&buf, y, COLUMN_WIDTH, 140) == names)
+        .unwrap();
+    assert_eq!(buf[(x, y)].fg, crate::theme::blue());
+    // Small screens: no panic, and the brand still shows.
+    for (w, h) in [(24, 7), (40, 10), (10, 3), (1, 1)] {
+        draw(&mut grove, w, h);
+    }
+    assert!(text_of(&draw(&mut grove, 80, 24)).contains("pando"));
+}
+
+// No projects at all: an empty grove that says how one gets there.
+#[test]
+fn the_home_note_says_it_lists_every_project_only_when_there_are_some() {
+    let why = "no repository here (~)".to_string();
+    assert_eq!(
+        crate::tui::home_note(why.clone(), true),
+        "no repository here (~) · here is every project pando knows"
+    );
+    assert_eq!(crate::tui::home_note(why, false), "no repository here (~)");
+}
+
+#[test]
+fn a_home_with_no_project_says_how_one_grows() {
+    let mut grove = Grove::new_for_test(Vec::new());
+    let all = text_of(&draw(&mut grove, 100, 30));
+    assert!(all.contains("no project yet"), "{all}");
+    // Nothing offered that would do nothing.
+    assert!(!all.contains("open"), "{all}");
+    assert!(!all.contains("stop all"), "{all}");
+    assert!(all.contains("? help"), "{all}");
+    // `q` on it quits, nothing in flight anywhere.
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit);
+}
+
+// The front app's regions are where it was drawn: a click on its footer's
+// `? help`, right of the column, presses `?` in it; a click on a
+// project's row opens that project.
+#[test]
+fn a_click_right_of_the_column_lands_on_the_front_app() {
+    let mut grove = a_grove();
+    draw(&mut grove, 120, 30);
+    let hits = grove.front_app().unwrap().hits.keys.clone();
+    let (rect, _) = hits
+        .iter()
+        .find(|(_, key)| key == "?")
+        .expect("a ? hint in the footer");
+    assert!(
+        rect.x >= COLUMN_WIDTH,
+        "drawn right of the column: {rect:?}"
+    );
+    click(&mut grove, rect.x, rect.y);
+    assert!(matches!(
+        grove.front_app().unwrap().modal,
+        Some(Modal::Help)
+    ));
+    grove.front_app_mut().unwrap().modal = None;
+    let (row, i) = grove.hits.rows[2];
+    assert_eq!(grove.summaries[i].name, "docs");
+    click(&mut grove, row.x + 3, row.y);
+    assert_eq!(grove.open_requests, vec![id_of("docs")]);
+}
+
+// A click on the project in front gives its list the keys: `j` after
+// clicking a row moves the list, not the column's cursor.
+#[test]
+fn a_click_on_the_front_project_gives_it_the_keys() {
+    let mut grove = a_grove();
+    draw(&mut grove, 120, 30);
+    grove.focus = Focus::Column;
+    let (rect, _) = grove
+        .front_app()
+        .unwrap()
+        .hits
+        .list
+        .clone()
+        .expect("the list is drawn");
+    click(&mut grove, rect.x + 2, rect.y);
+    assert_eq!(grove.focus, Focus::List);
+    press(&mut grove, KeyCode::Char('j'));
+    assert_eq!(grove.cursor, 0, "the column's cursor stays");
+    // A press in the column keeps it there.
+    let (row, _) = grove.hits.rows[1];
+    click(&mut grove, row.x + 3, row.y);
+    assert_eq!(grove.focus, Focus::Column);
+}
+
+// ---- keys ------------------------------------------------------------
+
+#[test]
+fn w_hides_and_shows_the_column() {
+    let mut grove = a_grove();
+    assert!(grove.column_shown());
+    press(&mut grove, KeyCode::Char('w'));
+    assert!(!grove.column_shown());
+    let buf = draw(&mut grove, 120, 30);
+    assert!(
+        cells(&buf, 0, 0, 10).contains("pando"),
+        "the header has it back"
+    );
+    press(&mut grove, KeyCode::Char('w'));
+    assert!(grove.column_shown());
+}
+
+#[test]
+fn brackets_step_through_the_projects_that_can_be_opened() {
+    let mut grove = a_grove();
+    press(&mut grove, KeyCode::Char(']'));
+    assert_eq!(grove.open_requests, vec![id_of("api")]);
+    // Once it lands, it is in front, its list with the keys.
+    grove.handle_event(GroveEvent::Opened(
+        id_of("api"),
+        Box::new(Ok(app_for("api"))),
+    ));
+    assert_eq!(grove.front.as_deref(), Some(id_of("api").as_str()));
+    assert_eq!(grove.focus, Focus::List);
+    assert!(grove.front_app().unwrap().in_grove);
+    // `[` goes back to the one still open, at once.
+    press(&mut grove, KeyCode::Char('['));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    // Round the end, past the moved one: `[` from the first is `docs`.
+    press(&mut grove, KeyCode::Char('['));
+    assert_eq!(grove.open_requests.last(), Some(&id_of("docs")));
+    // One that could not be opened says why, and the front stays.
+    grove.handle_event(GroveEvent::Opened(
+        id_of("docs"),
+        Box::new(Err("no such repository".into())),
+    ));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert_eq!(status.message, "no such repository");
+}
+
+#[test]
+fn braces_narrow_and_widen_the_column_within_bounds() {
+    let mut grove = a_grove();
+    press(&mut grove, KeyCode::Char('}'));
+    assert_eq!(grove.width, COLUMN_WIDTH + COLUMN_STEP);
+    for _ in 0..40 {
+        press(&mut grove, KeyCode::Char('{'));
+    }
+    assert_eq!(grove.width, COLUMN_MIN_WIDTH);
+    for _ in 0..40 {
+        press(&mut grove, KeyCode::Char('}'));
+    }
+    assert_eq!(grove.width, COLUMN_MAX_WIDTH);
+    let buf = draw(&mut grove, 160, 30);
+    assert_eq!(buf[(COLUMN_MAX_WIDTH - 1, 0)].symbol(), "╮");
+}
+
+#[test]
+fn in_the_column_jk_move_and_enter_opens() {
+    let mut grove = a_grove();
+    press(&mut grove, KeyCode::Left);
+    press(&mut grove, KeyCode::Char('j'));
+    press(&mut grove, KeyCode::Char('j'));
+    assert_eq!(grove.selected().unwrap().name, "docs");
+    press(&mut grove, KeyCode::Char('G'));
+    assert_eq!(grove.selected().unwrap().name, "old");
+    // A moved project is never opened.
+    press(&mut grove, KeyCode::Enter);
+    assert!(grove.open_requests.is_empty());
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert!(status.message.contains("not at"), "{}", status.message);
+    press(&mut grove, KeyCode::Char('k'));
+    press(&mut grove, KeyCode::Enter);
+    assert_eq!(grove.open_requests, vec![id_of("docs")]);
+    press(&mut grove, KeyCode::Char('g'));
+    press(&mut grove, KeyCode::Right);
+    assert_eq!(grove.focus, Focus::List, "→ on the open one: its list");
+}
+
+// `X` names every worktree it would stop before `y` stops them, and a
+// project not open yet is opened to stop them.
+#[test]
+fn x_in_the_column_asks_naming_each_worktree_then_stops_them() {
+    let mut summaries = a_grove().summaries;
+    // api: one up beside the one that failed.
+    summaries[1]
+        .worktrees
+        .insert(0, live("feat+up0", running()));
+    summaries[1].up = 1;
+    let mut grove = Grove::new_for_test(summaries);
+    grove.adopt(app_for("shop"), true);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('j'));
+    press(&mut grove, KeyCode::Char('X'));
+    let confirm = grove.confirm.clone().expect("asks first");
+    assert_eq!(confirm.worktrees, vec!["feat+up0".to_string()]);
+    let all = text_of(&draw(&mut grove, 120, 30));
+    assert!(all.contains("stop the one worktree up in api?"), "{all}");
+    assert!(all.contains("feat+up0"), "{all}");
+    // One worktree is "it", never "them".
+    assert!(all.contains("y stop it"), "{all}");
+    assert!(all.contains("its services and public URL go down"), "{all}");
+    assert!(!all.contains("stop them"), "{all}");
+    // Any other key leaves it asking; esc takes it back.
+    press(&mut grove, KeyCode::Char('j'));
+    assert!(grove.confirm.is_some());
+    press(&mut grove, KeyCode::Esc);
+    assert!(grove.confirm.is_none());
+    press(&mut grove, KeyCode::Char('X'));
+    press(&mut grove, KeyCode::Char('y'));
+    assert_eq!(
+        grove.stop_after_open,
+        BTreeMap::from([(id_of("api"), vec!["feat+up0".to_string()])])
+    );
+    assert_eq!(grove.open_requests, vec![id_of("api")]);
+    // Nothing up, nothing to ask.
+    press(&mut grove, KeyCode::Char('j'));
+    press(&mut grove, KeyCode::Char('X'));
+    assert!(grove.confirm.is_none());
+    // Every worktree, named, at narrow widths too.
+    let mut grove = a_grove();
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('X'));
+    let all = text_of(&draw(&mut grove, 50, 20));
+    assert!(all.contains("stop all 2 worktrees up in shop?"), "{all}");
+    assert!(all.contains("y stop them"), "{all}");
+    assert!(
+        all.contains("feat+up0") && all.contains("feat+up1"),
+        "{all}"
+    );
+}
+
+// A project whose only worktree failed has nothing up: `X` says so, as
+// the project's own `X` does, rather than asking to stop a ✗ as "up".
+#[test]
+fn x_on_a_project_with_only_failures_has_nothing_to_stop() {
+    let mut grove = a_grove();
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('j'));
+    assert_eq!(grove.selected().unwrap().name, "api");
+    press(&mut grove, KeyCode::Char('X'));
+    assert!(grove.confirm.is_none(), "{:?}", grove.confirm);
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert_eq!(status.message, "nothing is up in api");
+}
+
+// Two stops confirmed for two projects still being opened: each carried
+// out in its own project once that one opens, neither dropped for the
+// other.
+#[test]
+fn stops_confirmed_for_two_projects_opening_each_land_in_their_own() {
+    let mut summaries = a_grove().summaries;
+    summaries[2] = summary("docs", 1, 0);
+    let mut grove = Grove::new_for_test(summaries);
+    grove.adopt(app_for("shop"), true);
+    grove.focus = Focus::Column;
+    for name in ["api", "docs"] {
+        grove.cursor = grove.summaries.iter().position(|s| s.name == name).unwrap();
+        if name == "api" {
+            grove.summaries[1]
+                .worktrees
+                .push(live("feat+up0", running()));
+        }
+        press(&mut grove, KeyCode::Char('X'));
+        press(&mut grove, KeyCode::Char('y'));
+    }
+    assert_eq!(grove.open_requests, vec![id_of("api"), id_of("docs")]);
+    assert_eq!(
+        grove.stop_after_open.len(),
+        2,
+        "{:?}",
+        grove.stop_after_open
+    );
+    // api opens first: its stop starts, and docs' still waits.
+    let mut api = app_for("api");
+    api.state.worktrees.clear();
+    grove.handle_event(GroveEvent::Opened(id_of("api"), Box::new(Ok(api))));
+    let api = &grove.open[&id_of("api")].app;
+    assert!(
+        api.pending.iter().any(|p| p.kind == PendingKind::StopAll),
+        "api stops what was confirmed"
+    );
+    assert_eq!(
+        grove.stop_after_open,
+        BTreeMap::from([(id_of("docs"), vec!["feat+up0".to_string()])])
+    );
+    // docs could not be opened: its stop goes with it.
+    grove.handle_event(GroveEvent::Opened(
+        id_of("docs"),
+        Box::new(Err("gone".into())),
+    ));
+    assert!(grove.stop_after_open.is_empty());
+}
+
+// A stop confirmed for a project open behind that its app refuses — an
+// action already covers the worktree — is said where it can be read, on
+// the front project's header, never only on the hidden app's.
+#[test]
+fn a_stop_refused_behind_says_so_in_front() {
+    let mut grove = a_grove();
+    let mut restart = in_flight();
+    restart.kind = PendingKind::Restart;
+    busy_behind(&mut grove, "api", restart);
+    grove.summaries[1].worktrees = vec![live("feat+one", running())];
+    grove.focus = Focus::Column;
+    grove.cursor = 1;
+    press(&mut grove, KeyCode::Char('X'));
+    press(&mut grove, KeyCode::Char('y'));
+    let api = &grove.open[&id_of("api")].app;
+    assert_eq!(api.pending.len(), 1, "the restart alone is in flight");
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert!(
+        status.message.contains("nothing was stopped in api")
+            && status.message.contains("already busy"),
+        "{}",
+        status.message
+    );
+}
+
+/// `name`'s app, open behind, with `pending` in flight.
+fn busy_behind(grove: &mut Grove, name: &str, pending: PendingAction) {
+    grove.adopt(app_for(name), false);
+    grove
+        .open
+        .get_mut(&id_of(name))
+        .unwrap()
+        .app
+        .pending
+        .push(pending);
+}
+
+/// A start in flight that a quit cancels, and the cancel it reads.
+fn cancellable() -> (PendingAction, crate::cancel::Cancel) {
+    let cancel = crate::cancel::Cancel::new();
+    let mut pending = in_flight();
+    pending.cancel = Some(cancel.clone());
+    (pending, cancel)
+}
+
+#[test]
+fn q_with_work_in_flight_elsewhere_asks_for_a_second() {
+    let mut grove = a_grove();
+    busy_behind(&mut grove, "api", in_flight());
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit);
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert!(
+        status.message.contains("in flight in api"),
+        "{}",
+        status.message
+    );
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit);
+    // ctrl-c, at once.
+    let mut grove = a_grove();
+    grove.handle_event(GroveEvent::Input(Event::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    ))));
+    assert!(grove.should_quit);
+}
+
+// Work in flight in front and behind: the front app's two presses for its
+// own, then one for the grove's — not a fourth, which the front app's own
+// question asked again would have taken, overwriting the grove's.
+#[test]
+fn work_in_front_and_behind_quits_on_the_third_q() {
+    let mut grove = a_grove();
+    grove.front_app_mut().unwrap().pending.push(in_flight());
+    busy_behind(&mut grove, "api", in_flight());
+    press(&mut grove, KeyCode::Char('q'));
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit, "the grove names api first");
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert!(status.message.contains("in api"), "{}", status.message);
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit, "the third q is the grove's second");
+}
+
+// The front app's `q` `q` cancelled its start and asks to quit once it is
+// undone; with work behind, the grove asks first. Its question is answered
+// only by a key: the front app asking again on the next tick is not one.
+#[test]
+fn a_front_app_asking_again_never_answers_the_groves_question() {
+    let mut grove = a_grove();
+    busy_behind(&mut grove, "api", in_flight());
+    // As the front app's second `q` leaves it once its undo has run.
+    grove.front_app_mut().unwrap().quitting = true;
+    grove.handle_event(GroveEvent::Tick);
+    assert!(!grove.should_quit, "the grove names api first");
+    assert!(grove.quit_armed.is_some());
+    for _ in 0..3 {
+        grove.handle_event(GroveEvent::Tick);
+    }
+    assert!(!grove.should_quit, "no tick answers for the developer");
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit, "the q the grove asked for does");
+}
+
+// The confirming `q` cancels a start in flight behind and waits for its
+// undo, as a project's own second `q` does, rather than abandoning it
+// half done; a `q` meanwhile quits at once.
+#[test]
+fn the_groves_second_q_cancels_the_starts_behind_and_waits() {
+    let mut grove = a_grove();
+    let (pending, cancel) = cancellable();
+    busy_behind(&mut grove, "api", pending);
+    press(&mut grove, KeyCode::Char('q'));
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(cancel.is_cancelled(), "the start behind is cancelled");
+    assert!(!grove.should_quit, "and its undo waited for");
+    let status = grove.front_app().unwrap().status.clone().unwrap();
+    assert!(
+        status.message.contains("cancelling feat/one in api"),
+        "{}",
+        status.message
+    );
+    grove.handle_event(GroveEvent::Tick);
+    assert!(!grove.should_quit, "still undoing");
+    // Its undo ran.
+    grove
+        .open
+        .get_mut(&id_of("api"))
+        .unwrap()
+        .app
+        .pending
+        .clear();
+    grove.handle_event(GroveEvent::Tick);
+    assert!(grove.should_quit, "pando goes once it is undone");
+    // A q while it is undone quits at once.
+    let mut grove = a_grove();
+    let (pending, _cancel) = cancellable();
+    busy_behind(&mut grove, "api", pending);
+    press(&mut grove, KeyCode::Char('q'));
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit);
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit);
+}
+
+// A dialog on the project in front has the keys, wherever the focus is:
+// `w` pressed into it is not the grove's.
+#[test]
+fn a_modal_on_the_front_app_keeps_the_keys() {
+    let mut grove = a_grove();
+    grove.front_app_mut().unwrap().modal = Some(Modal::Help);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('w'));
+    assert!(grove.column_shown());
+}
+
+/// What a grove key can change.
+fn grove_fingerprint(grove: &Grove) -> String {
+    format!(
+        "{:?}|{}|{:?}|{:?}|{}|{:?}|{:?}|{:?}|{}|{}",
+        grove.focus,
+        grove.column_shown(),
+        grove.front,
+        grove.open_requests,
+        grove.width,
+        grove.detail,
+        grove.confirm,
+        grove.front_app().map(|a| a.modal.is_some()),
+        grove.should_quit,
+        grove.cursor,
+    )
+}
+
+fn candidate_keys() -> Vec<KeyCode> {
+    let mut keys: Vec<KeyCode> = (' '..='~').map(KeyCode::Char).collect();
+    keys.extend([
+        KeyCode::Enter,
+        KeyCode::Tab,
+        KeyCode::BackTab,
+        KeyCode::Esc,
+        KeyCode::Up,
+        KeyCode::Down,
+        KeyCode::Left,
+        KeyCode::Right,
+        KeyCode::Home,
+        KeyCode::End,
+        KeyCode::PageUp,
+        KeyCode::PageDown,
+        KeyCode::Backspace,
+        KeyCode::Delete,
+    ]);
+    keys
+}
+
+// From the list the grove takes exactly the keys help lists for it, and
+// none the list itself answers.
+#[test]
+fn from_the_list_the_grove_takes_exactly_its_documented_keys() {
+    let documented: BTreeSet<String> = GROVE_KEYS
+        .iter()
+        .flat_map(|k| k.codes.iter().map(|c| format!("{c:?}")))
+        .collect();
+    let mut taken = BTreeSet::new();
+    for code in candidate_keys() {
+        let mut grove = a_grove();
+        if grove.grove_key(KeyEvent::new(code, KeyModifiers::NONE)) {
+            taken.insert(format!("{code:?}"));
+        }
+    }
+    assert_eq!(taken, documented);
+    for key in LIST_KEYS {
+        for code in key.codes {
+            assert!(
+                !documented.contains(&format!("{code:?}")),
+                "{code:?} is the list's and the grove's"
+            );
+        }
+    }
+}
+
+// The column's help lists exactly the keys it answers: each pressed on a
+// column with something for it to do.
+#[test]
+fn help_lists_exactly_the_keys_the_column_answers() {
+    let documented: BTreeSet<String> = COLUMN_KEYS
+        .iter()
+        .flat_map(|k| k.codes.iter().map(|c| format!("{c:?}")))
+        .collect();
+    let mut answered = BTreeSet::new();
+    for code in candidate_keys() {
+        let mut grove = a_grove();
+        grove.focus = Focus::Column;
+        grove.cursor = 1;
+        // Something up in it, which `X` stops.
+        grove.summaries[1]
+            .worktrees
+            .push(live("feat+up0", running()));
+        let before = grove_fingerprint(&grove);
+        press(&mut grove, code);
+        if grove_fingerprint(&grove) != before {
+            answered.insert(format!("{code:?}"));
+        }
+    }
+    assert_eq!(answered, documented);
+}
+
+#[test]
+fn every_column_hint_is_a_key_help_documents() {
+    for (key, _) in COLUMN_HINTS {
+        assert!(
+            COLUMN_KEYS
+                .iter()
+                .any(|k| k.keys.split(' ').any(|k| k == key)),
+            "{key} is hinted and not in help"
+        );
+    }
+}
+
+// Help in the grove says what reaches every project; the project alone
+// says nothing of it.
+#[test]
+fn help_in_the_grove_lists_its_keys() {
+    let mut grove = a_grove();
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('?'));
+    let all = text_of(&draw(&mut grove, 120, 80));
+    assert!(all.contains("across projects"), "{all}");
+    assert!(all.contains("in the project column"), "{all}");
+    let mut alone = app_for("shop");
+    alone.modal = Some(Modal::Help);
+    let mut terminal = Terminal::new(TestBackend::new(120, 80)).unwrap();
+    terminal.draw(|f| render(f, &mut alone)).unwrap();
+    assert!(!text_of(terminal.backend().buffer()).contains("across projects"));
+}
+
+// ---- events ----------------------------------------------------------
+
+// An app behind still gets its own events and time, and costs no frame.
+#[test]
+fn an_app_behind_gets_its_events_and_ticks() {
+    let mut grove = a_grove();
+    grove.adopt(app_for("api"), false);
+    let repaint = grove.handle_event(GroveEvent::Project(
+        id_of("api"),
+        AppEvent::Notice("from behind".into()),
+    ));
+    assert!(!repaint, "nothing of it is on screen");
+    let api = &grove.open[&id_of("api")].app;
+    assert_eq!(api.status.as_ref().unwrap().message, "from behind");
+    grove.handle_event(GroveEvent::Tick);
+    assert_eq!(grove.open[&id_of("api")].app.tick, 1);
+    assert_eq!(grove.front_app().unwrap().tick, 1);
+    // The front one's own events repaint.
+    assert!(grove.handle_event(GroveEvent::Project(
+        id_of("shop"),
+        AppEvent::Notice("in front".into()),
+    )));
+    // Work in flight behind shows on its row.
+    grove
+        .open
+        .get_mut(&id_of("api"))
+        .unwrap()
+        .app
+        .pending
+        .push(in_flight());
+    let buf = draw(&mut grove, 120, 30);
+    assert!(cells(&buf, 2, 0, COLUMN_WIDTH).contains("┃◌ api"));
+}
+
+// Read again, the projects move; the cursor stays on its project.
+#[test]
+fn new_summaries_keep_the_cursor_on_its_project() {
+    let mut grove = a_grove();
+    grove.cursor = 2;
+    let mut summaries = grove.summaries.clone();
+    summaries.rotate_left(1);
+    grove.handle_event(GroveEvent::Summaries(summaries));
+    assert_eq!(grove.selected().unwrap().name, "docs");
+    grove.handle_event(GroveEvent::Summaries(Vec::new()));
+    assert_eq!(grove.cursor, 0);
+}
+
+// What `main` does before the TUI, for a project opened from the grove:
+// found where it was registered, and refused when that is another
+// project now. On a fixture repository and a home of the test's own.
+#[test]
+fn a_project_opens_from_where_it_is_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("acme-shop");
+    crate::testutil::init_repo(&root);
+    let home = dir.path().join("pando-home");
+    let project = ProjectRef::from_root(&root).unwrap();
+    let mut summary = summary("acme-shop", 0, 0);
+    summary.id = project.id.clone();
+    summary.root = root.clone();
+    let app = open::open_project(&home, &summary).expect("opens");
+    assert_eq!(app.paths.project.id, project.id);
+    assert!(home.join("projects").join(&project.id).is_dir());
+    summary.id = "acme-shop-ffffffff".into();
+    let refused = open::open_project(&home, &summary).err().unwrap();
+    assert!(
+        format!("{refused:#}").contains("another project"),
+        "{refused:#}"
+    );
+}
+
+// ---- the layout ------------------------------------------------------
+
+/// The detail pane's top-left corner in `buf`, right of `x0`: where its
+/// rounded border starts, below the list or beside it.
+fn panes(buf: &Buffer, x0: u16) -> Vec<(u16, u16)> {
+    let mut corners = Vec::new();
+    for y in 1..buf.area().height {
+        for x in x0..buf.area().width {
+            if buf[(x, y)].symbol() == "╭" {
+                corners.push((x, y));
+            }
+        }
+    }
+    corners
+}
+
+// `[ui]` is where the grove starts: the column as it was left, its width,
+// and the detail pane, for every project it opens.
+#[test]
+fn the_grove_starts_as_the_user_layer_left_it() {
+    let ui = UiSection {
+        grove: Some("off".into()),
+        grove_width: Some(30),
+        detail: Some("bottom".into()),
+        detail_size: Some(55),
+        ..Default::default()
+    };
+    let mut grove = Grove::new(
+        std::path::PathBuf::from("/pando-test-does-not-exist/home"),
+        ui,
+        a_grove().summaries,
+    );
+    assert!(!grove.column_shown());
+    assert_eq!(grove.width, 30);
+    grove.adopt(app_for("shop"), true);
+    let app = grove.front_app().unwrap();
+    assert_eq!(
+        app.detail.placement,
+        crate::tui::app::DetailPlacement::Bottom
+    );
+    assert_eq!(app.detail.size, Some(55));
+    // A width the loader would have refused is still one it draws.
+    let wide = UiSection {
+        grove_width: Some(400),
+        ..Default::default()
+    };
+    let grove = Grove::new(std::path::PathBuf::from("/x"), wide, Vec::new());
+    assert_eq!(grove.width, COLUMN_MAX_WIDTH);
+}
+
+// Every key that changes the layout saves exactly what it changed, and a
+// key that changes nothing saves nothing.
+#[test]
+fn each_layout_key_saves_what_it_changed() {
+    use crate::tui::app::DetailPlacement;
+    let mut grove = a_grove();
+    draw(&mut grove, 120, 30);
+    for code in ['w', 'w', '}', '{', '|', '>', '<', '|', '|'] {
+        press(&mut grove, KeyCode::Char(code));
+    }
+    assert_eq!(
+        grove.saves,
+        vec![
+            Saved::Grove(Shown::Off),
+            Saved::Grove(Shown::On),
+            Saved::GroveWidth(COLUMN_WIDTH + COLUMN_STEP),
+            Saved::GroveWidth(COLUMN_WIDTH),
+            Saved::Detail(DetailPlacement::Bottom),
+            // Stacked by `|` on the last frame drawn: wide, side by side,
+            // so from its share there.
+            Saved::DetailSize(45),
+            Saved::DetailSize(40),
+            Saved::Detail(DetailPlacement::Off),
+            Saved::Detail(DetailPlacement::Right),
+        ]
+    );
+    // At the edges nothing moves and nothing is saved.
+    grove.saves.clear();
+    grove.width = COLUMN_MIN_WIDTH;
+    press(&mut grove, KeyCode::Char('{'));
+    grove.detail.size = Some(crate::config::DETAIL_SIZE_MAX);
+    press(&mut grove, KeyCode::Char('>'));
+    grove.detail.placement = DetailPlacement::Off;
+    press(&mut grove, KeyCode::Char('<'));
+    assert_eq!(grove.saves, vec![]);
+    // Every open project lays its detail pane out the same.
+    grove.adopt(app_for("api"), false);
+    press(&mut grove, KeyCode::Char('|'));
+    assert_eq!(
+        grove.open[&id_of("api")].app.detail,
+        grove.front_app().unwrap().detail
+    );
+}
+
+// The spellings `[ui]` takes are the ones the keys save.
+#[test]
+fn the_layouts_words_are_the_ones_config_takes() {
+    use crate::tui::app::DetailPlacement;
+    let modes: Vec<&str> = Shown::ALL.iter().map(|s| s.word()).collect();
+    assert_eq!(modes, crate::config::GROVE_MODES);
+    let placements: Vec<&str> = DetailPlacement::ALL.iter().map(|p| p.word()).collect();
+    assert_eq!(placements, crate::config::DETAIL_PLACEMENTS);
+    for word in modes {
+        assert_eq!(Shown::from_word(word).unwrap().word(), word);
+    }
+    assert_eq!(COLUMN_MIN_WIDTH, crate::config::GROVE_WIDTH_MIN);
+    assert_eq!(COLUMN_MAX_WIDTH, crate::config::GROVE_WIDTH_MAX);
+}
+
+// Written into `[ui]` beside what is there, whatever its form.
+#[test]
+fn a_saved_layout_keeps_the_rest_of_the_file() {
+    use crate::tui::app::DetailPlacement;
+    let mut doc: toml_edit::DocumentMut = "# mine\n[ui]\ntheme = \"gruvbox\"\n".parse().unwrap();
+    layout::set_layout(
+        &mut doc,
+        &[
+            Saved::Grove(Shown::Off),
+            Saved::GroveWidth(30),
+            Saved::Detail(DetailPlacement::Bottom),
+            Saved::DetailSize(55),
+        ],
+    );
+    assert_eq!(
+        doc.to_string(),
+        "# mine\n[ui]\ntheme = \"gruvbox\"\ngrove = \"off\"\ngrove_width = 30\ndetail = \"bottom\"\ndetail_size = 55\n"
+    );
+    let mut inline: toml_edit::DocumentMut = "ui = { sort = \"name\" }\n".parse().unwrap();
+    layout::set_layout(&mut inline, &[Saved::GroveWidth(20)]);
+    assert!(inline.to_string().contains("grove_width = 20"), "{inline}");
+    // What it writes, the loader reads back.
+    let ui: UiSection = toml::from_str::<toml::Table>(&doc.to_string()).unwrap()["ui"]
+        .clone()
+        .try_into()
+        .unwrap();
+    assert_eq!(ui.grove_width, Some(30));
+}
+
+// The worker writes in the order the keys came, so the last press wins;
+// into a home of the test's own.
+#[test]
+fn the_saver_writes_the_last_of_each_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("pando-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let saver = spawn_layout_saver(home.clone(), tx);
+    for width in [28, 30, 32, 22] {
+        saver.send(Saved::GroveWidth(width)).unwrap();
+    }
+    saver.send(Saved::Grove(Shown::On)).unwrap();
+    drop(saver);
+    let file = home.join("config.toml");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        if text.contains("grove_width = 22") && text.contains("grove = \"on\"") {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "never saved: {text}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(rx.try_recv().is_err(), "a save that worked said it failed");
+    // A home that is not there is said, not made.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let saver = spawn_layout_saver(dir.path().join("gone"), tx);
+    saver.send(Saved::GroveWidth(20)).unwrap();
+    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(GroveEvent::NotSaved(why)) => assert!(why.contains("no pando home"), "{why}"),
+        _ => panic!("a failed save said nothing"),
+    }
+    assert!(!dir.path().join("gone").exists());
+}
+
+// Each placement of the detail pane, drawn: right of the list, under it,
+// or not at all, the list then the whole body; and `<` `>` move its edge.
+#[test]
+fn the_detail_pane_sits_where_it_was_put() {
+    use crate::tui::app::{DetailLayout, DetailPlacement};
+    let mut grove = a_grove();
+    let x0 = COLUMN_WIDTH;
+    let at = |grove: &mut Grove, detail: DetailLayout| {
+        grove.detail = detail;
+        grove.share_detail();
+        let buf = draw(grove, 120, 30);
+        (panes(&buf, x0), buf)
+    };
+    let right = |size| DetailLayout {
+        placement: DetailPlacement::Right,
+        size,
+    };
+    // Right, by default two fifths of what is right of the column.
+    let (corners, _) = at(&mut grove, right(None));
+    assert_eq!(corners.len(), 2, "{corners:?}");
+    assert_eq!(corners[0].1, corners[1].1, "side by side");
+    let body = 120 - x0;
+    let edge = x0 + body - body * 40 / 100;
+    assert!(corners[1].0.abs_diff(edge) <= 1, "{corners:?}, {edge}");
+    // Bigger by `>`: the edge moves left.
+    let (wider, _) = at(&mut grove, right(Some(60)));
+    assert!(wider[1].0 < corners[1].0, "{wider:?} {corners:?}");
+    // Bottom: under the list, the same left edge.
+    let (stacked, _) = at(
+        &mut grove,
+        DetailLayout {
+            placement: DetailPlacement::Bottom,
+            size: None,
+        },
+    );
+    assert_eq!(stacked.len(), 2, "{stacked:?}");
+    assert_eq!(stacked[0].0, stacked[1].0, "stacked");
+    assert!(stacked[1].1 > stacked[0].1);
+    assert!(grove.front_app().unwrap().detail_stacked);
+    let (bigger, _) = at(
+        &mut grove,
+        DetailLayout {
+            placement: DetailPlacement::Bottom,
+            size: Some(80),
+        },
+    );
+    assert!(bigger[1].1 < stacked[1].1, "{bigger:?} {stacked:?}");
+    // Off: the list alone, as wide as the body.
+    let (alone, buf) = at(
+        &mut grove,
+        DetailLayout {
+            placement: DetailPlacement::Off,
+            size: Some(80),
+        },
+    );
+    assert_eq!(alone.len(), 1, "{alone:?}");
+    assert_eq!(buf[(119, alone[0].1)].symbol(), "╮", "the list to the edge");
+    assert!(grove.front_app().unwrap().hits.preview.is_none());
+}
+
+// `{` and `}` widen the column as drawn, within what the screen leaves the
+// project: never more than half of it.
+#[test]
+fn the_column_is_as_wide_as_it_was_set() {
+    let mut grove = a_grove();
+    for width in [COLUMN_MIN_WIDTH, COLUMN_WIDTH, COLUMN_MAX_WIDTH] {
+        grove.width = width;
+        let buf = draw(&mut grove, 160, 30);
+        assert_eq!(buf[(width - 1, 0)].symbol(), "╮", "width {width}");
+        assert_eq!(grove.hits.column.width, width);
+    }
+    // `on` keeps the whole column on a screen `auto` gives the strip.
+    grove.shown = Shown::On;
+    grove.width = COLUMN_MAX_WIDTH;
+    draw(&mut grove, 76, 24);
+    assert_eq!(grove.hits.column.width, 38, "half of a narrow screen");
+}
+
+// Every state of a row reads apart in every built-in theme, either half,
+// by more than a colour a theme may not keep apart: the cursor's band,
+// the stem's weight and glyph, and bold for a project that has something
+// to say. Tokyo Night's light half draws dim text in its text colour.
+/// Where a row's stem is drawn: inside the border, after the cursor.
+const STEM_X: u16 = 3;
+
+#[test]
+fn every_row_state_reads_apart_in_every_theme() {
+    use crate::theme::{Appearance, BUILT_IN, Source, Theme};
+    use ratatui::style::Modifier;
+    for (name, text) in BUILT_IN {
+        let theme = Theme::parse(name, text, Source::BuiltIn).unwrap();
+        for appearance in [Appearance::Dark, Appearance::Light] {
+            let palette = theme.palette(appearance);
+            crate::theme::set_palette(palette);
+            let mut grove = a_grove();
+            grove.focus = Focus::Column;
+            grove.cursor = 2; // docs, idle
+            let buf = draw(&mut grove, 140, 20);
+            let at = |name: &str| {
+                let y = (1..6)
+                    .find(|&y| cells(&buf, y, 0, COLUMN_WIDTH).contains(name))
+                    .unwrap();
+                let x = (0..COLUMN_WIDTH)
+                    .find(|&x| buf[(x, y)].symbol() == name.chars().next().unwrap().to_string())
+                    .unwrap();
+                (x, y)
+            };
+            let says = format!("{name} {appearance:?}");
+            // The cursor's band, and only its row.
+            let (docs_x, docs_y) = at("docs");
+            assert_eq!(buf[(docs_x, docs_y)].bg, palette.highlight_bg, "{says}");
+            let (shop_x, shop_y) = at("shop");
+            assert_ne!(buf[(shop_x, shop_y)].bg, palette.highlight_bg, "{says}");
+            // Something up or failed is bold; idle and moved are not.
+            let bold = |(x, y): (u16, u16)| buf[(x, y)].modifier.contains(Modifier::BOLD);
+            assert!(bold(at("shop")) && bold(at("api")), "{says}");
+            assert!(!bold(at("docs")) && !bold(at("old")), "{says}");
+            // Each state its own stem, and a failed one red, not the
+            // trunk's colour.
+            let stem = |y: u16| buf[(STEM_X, y)].clone();
+            let stems: Vec<String> = [shop_y, at("api").1, docs_y, at("old").1]
+                .iter()
+                .map(|&y| stem(y).symbol().to_string())
+                .collect();
+            assert_eq!(stems, ["┃", "┃", "│", "╎"], "{says}");
+            assert_eq!(stem(at("api").1).fg, palette.red, "{says}");
+            assert_ne!(palette.red, palette.text, "{says}");
+            assert_ne!(palette.red, palette.green, "{says}");
+            // The pane with the keys has the blue border and a blue
+            // cursor; without them, neither.
+            assert_eq!(buf[(0, 0)].fg, palette.blue, "{says}");
+            assert_eq!(buf[(1, docs_y)].fg, palette.blue, "{says}");
+            grove.focus = Focus::List;
+            let buf = draw(&mut grove, 140, 20);
+            assert_eq!(buf[(0, 0)].fg, palette.border, "{says}");
+            assert_ne!(buf[(1, docs_y)].fg, palette.blue, "{says}");
+            assert_eq!(buf[(docs_x, docs_y)].bg, palette.highlight_bg, "{says}");
+        }
+    }
+}
+
+// The column's border makes room for what is up before the build's
+// branch, which shortens and then goes.
+#[test]
+fn the_columns_title_keeps_the_tally_and_shortens_the_branch() {
+    let label = Some("feat/grove@abc1234");
+    let text = |line: &ratatui::text::Line| line.to_string();
+    let (title, tally) = crate::tui::render::column_title(40, label, 2, 1);
+    assert_eq!(text(&title), " pando ⎇ feat/grove@abc12… ");
+    assert_eq!(text(&tally), " ● 2 ✗ 1 ");
+    let (title, _) = crate::tui::render::column_title(26, label, 2, 1);
+    assert_eq!(text(&title), " pando ⎇ fe… ");
+    let (title, _) = crate::tui::render::column_title(COLUMN_MIN_WIDTH, label, 2, 1);
+    assert_eq!(text(&title), " pando ");
+    // Nothing up: the branch has the room, and no tally is drawn.
+    let (title, tally) = crate::tui::render::column_title(26, label, 0, 0);
+    assert_eq!(text(&title), " pando ⎇ feat/grove@… ");
+    assert_eq!(text(&tally), "");
+    // Tight when spaced out does not fit.
+    let (title, tally) = crate::tui::render::column_title(COLUMN_MIN_WIDTH, label, 12, 3);
+    assert_eq!(
+        (text(&title), text(&tally)),
+        (" pando ".into(), " ●12 ✗3 ".into())
+    );
+    // Every one fits its border: corners, title, a cell, tally.
+    for width in COLUMN_MIN_WIDTH..=COLUMN_MAX_WIDTH {
+        let (title, tally) = crate::tui::render::column_title(width, label, 12, 3);
+        assert!(
+            title.width() + tally.width() + 3 <= usize::from(width),
+            "{width}: {title} {tally}"
+        );
+    }
+}
+
+// The public docs say what the grove is: the layout keys it saves, in the
+// machine config's sample on the website as in the README, `ls --all` in
+// the verb list, and the grove's own section with its keys.
+#[test]
+fn the_website_documents_the_grove_and_its_layout() {
+    let read = |file: &str| {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file))
+            .unwrap()
+    };
+    let (site, readme) = (read("site/docs.html"), read("README.md"));
+    let saved = [
+        Saved::Grove(Shown::Auto),
+        Saved::GroveWidth(COLUMN_WIDTH),
+        Saved::Detail(crate::tui::app::DetailPlacement::Right),
+        Saved::DetailSize(40),
+    ];
+    let sample = site
+        .split("<figcaption class=\"code-h\">~/.pando/config.toml</figcaption>")
+        .nth(1)
+        .and_then(|rest| rest.split("</figure>").next())
+        .expect("the machine config's sample");
+    for change in saved {
+        let key = change.key();
+        assert!(sample.contains(&format!("# {key} = ")), "{key} on the site");
+        assert!(readme.contains(&format!("{key} = ")), "{key} in the README");
+    }
+    let ls = site
+        .lines()
+        .find(|line| line.contains("<div class=\"k\">pando ls</div>"))
+        .expect("the ls row");
+    assert!(ls.contains("<code>--all</code>"), "{ls}");
+    let grove = site
+        .split("<h3 id=\"tui-grove\">")
+        .nth(1)
+        .and_then(|rest| rest.split("<h3").next())
+        .expect("a section on the grove");
+    // Every key the grove takes from the list, and the column's `X`.
+    let keys = GROVE_KEYS
+        .iter()
+        .flat_map(|k| k.keys.split(' '))
+        .chain(["X"]);
+    for key in keys {
+        let kbd = format!(
+            "<kbd>{}</kbd>",
+            key.replace('<', "&lt;").replace('>', "&gt;")
+        );
+        assert!(grove.contains(&kbd), "{key} in the grove's section");
+    }
+}
+
+// Found in a real terminal: "opening api…" was said on `shop`, in front
+// when `]` began the open, and greeted the developer on coming back.
+#[test]
+fn the_opening_note_goes_once_the_project_has_opened() {
+    let mut grove = a_grove();
+    press(&mut grove, KeyCode::Char(']'));
+    let said = |g: &Grove, id: &str| g.open[id].app.status.as_ref().map(|s| s.message.clone());
+    assert_eq!(
+        said(&grove, &id_of("shop")).as_deref(),
+        Some("opening api…")
+    );
+    grove.handle_event(GroveEvent::Opened(
+        id_of("api"),
+        Box::new(Ok(app_for("api"))),
+    ));
+    press(&mut grove, KeyCode::Char('['));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    assert_ne!(
+        said(&grove, &id_of("shop")).as_deref(),
+        Some("opening api…")
+    );
+}
+
+// `tab` gives the keys to the list of the project in front: with none in
+// front there is no list, so the column does not offer it.
+#[test]
+fn the_column_offers_tab_only_with_a_project_in_front() {
+    let mut grove = a_grove();
+    grove.focus = Focus::Column;
+    let with = text_of(&draw(&mut grove, 140, 40));
+    assert!(with.contains("tab list"), "{with}");
+    grove.open.clear();
+    grove.front = None;
+    let home = text_of(&draw(&mut grove, 140, 40));
+    assert!(!home.contains("tab list"), "{home}");
+    assert!(home.contains("⏎ open"), "{home}");
+}
+
+// Found comparing the branch with the release in a real terminal: at 110
+// columns the whole column left the project 84, and its detail pane cut
+// the status line. `auto` puts the project first: the strip until the
+// project keeps PROJECT_ROOMY_WIDTH beside the column.
+#[test]
+fn auto_gives_the_project_its_width_before_the_column() {
+    use crate::tui::render::PROJECT_ROOMY_WIDTH;
+    let mut grove = a_grove();
+    let roomy = COLUMN_WIDTH + PROJECT_ROOMY_WIDTH;
+    let column = |buf: &Buffer| buf[(COLUMN_WIDTH - 1, 0)].symbol() == "╮";
+    let strip = |buf: &Buffer| row_of(buf, 0).contains('◀');
+    let buf = draw(&mut grove, roomy, 30);
+    assert!(
+        column(&buf) && !strip(&buf),
+        "room for both:\n{}",
+        text_of(&buf)
+    );
+    let buf = draw(&mut grove, roomy - 1, 30);
+    assert!(
+        strip(&buf) && !column(&buf),
+        "one cell short:\n{}",
+        text_of(&buf)
+    );
+    // `on` is the developer's word over the project's width.
+    grove.shown = Shown::On;
+    assert!(column(&draw(&mut grove, roomy - 1, 30)));
+    // With no project in front the column has nothing to crowd.
+    grove.shown = Shown::Auto;
+    grove.open.clear();
+    grove.front = None;
+    assert!(column(&draw(&mut grove, 80, 24)));
+}
+
+// A repository moved while its server runs: the row reads as running,
+// and `X` names what still runs rather than saying nothing is acted on.
+#[test]
+fn a_moved_project_still_running_reads_live_and_x_names_what_runs() {
+    let mut moved = summary("old", 1, 0);
+    moved.moved = true;
+    moved.worktrees[0].processes.insert(
+        "dev".into(),
+        crate::actions::LiveProcess {
+            pid: 4242,
+            phase: crate::state::Phase::Running {
+                since: chrono::Utc::now(),
+            },
+        },
+    );
+    let mut grove = Grove::new_for_test(vec![moved]);
+    grove.shown = Shown::On;
+    let text = text_of(&draw(&mut grove, 100, 24));
+    assert!(text.contains("● old"), "{text}");
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('X'));
+    assert!(grove.confirm.is_none());
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(
+        note.contains("feat+up0 of it still runs (pid 4242)"),
+        "{note}"
+    );
+}
+
+// A project nothing locates has no root to name: ⏎ says how it is found
+// again, never "is not at  any more".
+#[test]
+fn a_project_pando_may_not_read_says_so_rather_than_moved() {
+    let mut unreadable = summary("locked", 0, 0);
+    unreadable.moved = true;
+    unreadable.unreadable = true;
+    unreadable.root = std::path::PathBuf::new();
+    let mut grove = Grove::new_for_test(vec![summary("shop", 1, 0), unreadable]);
+    grove.shown = Shown::On;
+    let text = text_of(&draw(&mut grove, 120, 30));
+    let row = text
+        .lines()
+        .find(|l| l.contains("locked"))
+        .unwrap_or_default();
+    assert!(row.contains("unreadable"), "{text}");
+    assert!(!text.contains("moved"), "{text}");
+    grove.cursor = 1;
+    press(&mut grove, KeyCode::Enter);
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(note.starts_with("locked cannot be read — "), "{note}");
+    assert!(!note.contains("moved"), "{note}");
+    press(&mut grove, KeyCode::Char('X'));
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(note.starts_with("locked cannot be read — "), "{note}");
+}
+
+#[test]
+fn a_home_pane_note_keeps_its_end_on_any_width() {
+    // The end of a note is what to do: on a wide screen it takes the
+    // pane's width, past the picture's, and on a narrow one it wraps.
+    let mut moved = summary("plain", 1, 0);
+    moved.moved = true;
+    moved.worktrees[0].processes.insert(
+        "dev".into(),
+        crate::actions::LiveProcess {
+            pid: 4242,
+            phase: crate::state::Phase::Running {
+                since: chrono::Utc::now(),
+            },
+        },
+    );
+    for width in [200, 80] {
+        let mut grove = Grove::new_for_test(vec![moved.clone()]);
+        grove.shown = Shown::Off;
+        press(&mut grove, KeyCode::Char('X'));
+        let note = grove.fresh_note().unwrap_or_default().to_string();
+        assert!(note.ends_with("`kill` ends them"), "{note}");
+        let text = text_of(&draw(&mut grove, width, 40));
+        let flat_of = |text: &str| -> String {
+            text.lines()
+                .map(|l| l.trim_matches(|c: char| c == '│' || c == ' '))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert!(
+            flat_of(&text).contains("`kill` ends them"),
+            "{width}:\n{text}"
+        );
+        // ⏎ on it names where it was and what adopts it where it is.
+        press(&mut grove, KeyCode::Enter);
+        let note = grove.fresh_note().unwrap_or_default().to_string();
+        assert!(note.ends_with("pando there starts it afresh"), "{note}");
+        let text = text_of(&draw(&mut grove, width, 40));
+        assert!(
+            flat_of(&text).contains("starts it afresh"),
+            "{width}:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn two_projects_of_one_name_read_apart_and_a_shared_port_is_marked() {
+    // Two clones of one repository, both up on one port.
+    let clone = |folder: &str| {
+        let mut s = summary("plain", 1, 0);
+        s.id = format!("plain-{folder}");
+        s.root = std::path::PathBuf::from("/").join(folder).join("plain");
+        s.worktrees[0].claimed = [8000].into();
+        s
+    };
+    let mut grove = Grove::new_for_test(vec![clone("work"), clone("tmp"), summary("docs", 0, 0)]);
+    let buf = draw(&mut grove, 160, 40);
+    let text = text_of(&buf);
+    let row = |needle: &str| {
+        text.lines()
+            .find(|l| l.contains(needle))
+            .map(|l| l.split("││").next().unwrap_or(l).to_string())
+            .unwrap_or_default()
+    };
+    // The column: the folder after the name, and `!` before the count.
+    assert!(row("plain work").contains("! 1"), "{text}");
+    assert!(row("plain tmp").contains("! 1"), "{text}");
+    assert!(!row("docs").contains('!'), "{text}");
+    // The home pane's labels under the stems, the same way.
+    let labels = text
+        .lines()
+        .find(|l| l.matches("plain").count() == 2 && !l.contains("▸"))
+        .unwrap_or_default();
+    assert!(
+        labels.contains("plain work !") && labels.contains("plain tmp !"),
+        "{text}"
+    );
+    // A name of its own is left alone.
+    assert!(!text.contains("docs /"), "{text}");
+}
+
+#[test]
+fn enter_on_a_project_nothing_locates_says_how_to_find_it() {
+    let mut lost = summary("lost", 0, 0);
+    lost.moved = true;
+    lost.root = std::path::PathBuf::new();
+    let mut grove = Grove::new_for_test(vec![lost]);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Enter);
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(note.starts_with("lost is not located — "), "{note}");
+    assert!(!note.contains("any more"), "{note}");
+}
+
+/// `name`'s app on its setup screen: a real repository, a real home,
+/// nothing configured.
+fn setup_app_for(dir: &std::path::Path, name: &str) -> crate::tui::app::App {
+    let root = dir.join(name);
+    crate::testutil::init_repo(&root);
+    let paths = PandoPaths::new(
+        dir.join("pando-home"),
+        ProjectRef::from_root(&root).unwrap(),
+    );
+    let mut app = crate::tui::app::App::new_for_test(
+        paths,
+        Config::default(),
+        vec![crate::tui::app::tests::wt("feat+one")],
+    );
+    app.open_setup_if_new();
+    assert!(app.setup_screen.is_some());
+    app
+}
+
+// From the home pane to a project with no settings: the grove's keys move
+// away from its setup screen, and its `q` goes back, skipping nothing.
+#[test]
+fn a_setup_screen_opened_from_the_grove_gives_its_keys_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = setup_app_for(dir.path(), "fresh");
+    let id = app.paths.project.id.clone();
+    let mut fresh = summary("fresh", 0, 0);
+    fresh.id = id.clone();
+    let mut grove = Grove::new_for_test(vec![summary("shop", 1, 0), fresh]);
+    grove.adopt(app_for("shop"), false);
+    grove.adopt(app, true);
+    assert_eq!(grove.front.as_deref(), Some(id.as_str()));
+
+    // `[` brings the other project; `]` the setup screen again, still up.
+    press(&mut grove, KeyCode::Char('['));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    press(&mut grove, KeyCode::Char(']'));
+    assert_eq!(grove.front.as_deref(), Some(id.as_str()));
+    assert!(grove.front_app().unwrap().setup_screen.is_some());
+    // `←` to the column, which takes `j` `k`; `tab` back.
+    press(&mut grove, KeyCode::Left);
+    assert_eq!(grove.focus, Focus::Column);
+    press(&mut grove, KeyCode::Char('k'));
+    assert_eq!(grove.cursor, 0);
+    press(&mut grove, KeyCode::Char('j'));
+    press(&mut grove, KeyCode::Tab);
+    assert_eq!(grove.focus, Focus::List);
+    // `q`: back to the home pane, nothing quit, nothing skipped.
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit);
+    assert_eq!(grove.front, None);
+    assert_eq!(grove.focus, Focus::Column);
+    assert_eq!(grove.selected().unwrap().id, id);
+    let paths = PandoPaths::new(
+        dir.path().join("pando-home"),
+        ProjectRef::from_root(dir.path().join("fresh")).unwrap(),
+    );
+    assert!(crate::setup::SetupMemory::load(&paths).skipped_at.is_none());
+}
+
+// Started in that project, its setup screen's `q` quits as it does alone.
+#[test]
+fn the_setup_screen_of_the_project_pando_started_in_quits_on_q() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = setup_app_for(dir.path(), "fresh");
+    let mut fresh = summary("fresh", 0, 0);
+    fresh.id = app.paths.project.id.clone();
+    let mut grove = Grove::new_for_test(vec![fresh]);
+    grove.started_in = Some(app.paths.project.id.clone());
+    grove.adopt(app, true);
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit);
+}
+
+// `]` asked for a project, and a dialog was opened on the one in front
+// before it landed: it lands behind, and the dialog keeps the keys.
+#[test]
+fn a_project_landing_never_takes_the_front_from_a_dialog() {
+    let mut grove = a_grove();
+    press(&mut grove, KeyCode::Char(']'));
+    assert_eq!(grove.open_requests, [id_of("api")]);
+    assert_eq!(grove.selected().unwrap().name, "api");
+    grove.front_app_mut().unwrap().modal = Some(Modal::Help);
+    grove.handle_event(GroveEvent::Opened(
+        id_of("api"),
+        Box::new(Ok(app_for("api"))),
+    ));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    assert!(matches!(
+        grove.front_app().unwrap().modal,
+        Some(Modal::Help)
+    ));
+    assert!(grove.open.contains_key(&id_of("api")));
+}
+
+// `?` on the home pane, with no project in front to ask: the grove's own
+// help, scrolled by its keys and closed by any other, quitting nothing.
+#[test]
+fn question_mark_on_the_home_pane_opens_the_groves_help() {
+    let mut grove = Grove::new_for_test(vec![summary("shop", 1, 0), summary("api", 0, 0)]);
+    press(&mut grove, KeyCode::Char('?'));
+    assert_eq!(grove.help, Some(0));
+    let all = text_of(&draw(&mut grove, 120, 60));
+    assert!(all.contains("stop everything up in the project"), "{all}");
+    // Each key once: the keys a list reaches across projects with are
+    // the column's own here.
+    assert!(!all.contains("across projects"), "{all}");
+    for what in [
+        "hide the column",
+        "narrow / widen the column",
+        "next project",
+    ] {
+        assert_eq!(all.matches(what).count(), 1, "{what}:\n{all}");
+    }
+    press(&mut grove, KeyCode::Char('j'));
+    assert!(grove.help.is_some());
+    press(&mut grove, KeyCode::Esc);
+    assert_eq!(grove.help, None);
+    assert!(!grove.should_quit);
+    let home = text_of(&draw(&mut grove, 120, 40));
+    assert!(home.contains("? help"), "{home}");
+}
+
+// The stop confirmation has the mouse as it has the keys: a click on a
+// row, or on the front app behind it, does nothing.
+#[test]
+fn a_click_under_the_stop_confirmation_reaches_nothing() {
+    let mut grove = a_grove();
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('X'));
+    draw(&mut grove, 120, 30);
+    assert!(grove.confirm.is_some());
+    let (row, _) = grove.hits.rows[1];
+    click(&mut grove, row.x + 1, row.y);
+    let keys = grove.front_app().unwrap().hits.keys.clone();
+    for (rect, _) in keys {
+        click(&mut grove, rect.x, rect.y);
+    }
+    click(&mut grove, 100, 10);
+    assert!(grove.confirm.is_some());
+    assert_eq!(grove.cursor, 0);
+    assert!(grove.open_requests.is_empty(), "{:?}", grove.open_requests);
+    assert_eq!(grove.focus, Focus::Column);
+    let app = grove.front_app().unwrap();
+    assert!(app.pending.is_empty() && app.modal.is_none() && app.armed.is_none());
+}
+
+/// Two clones of one repository up on one port, in folders whose long
+/// names share their start.
+fn long_twins() -> Grove {
+    let clone = |folder: &str| {
+        let mut s = summary("plain", 1, 0);
+        s.id = format!("plain-{folder}");
+        s.root = std::path::PathBuf::from("/tmp").join(folder).join("plain");
+        s.worktrees[0].claimed = [19744].into();
+        s
+    };
+    Grove::new_for_test(vec![
+        clone("pando-fixture-1793784766375615000"),
+        clone("pando-fixture-1793784766837094000"),
+    ])
+}
+
+/// The home pane's row of labels under the stems.
+fn stem_labels(text: &str) -> String {
+    text.lines()
+        .map(|l| l.rsplit("││").next().unwrap_or(l))
+        .find(|l| l.matches("plain").count() == 2)
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn a_stem_label_cut_to_its_room_keeps_the_clash_mark() {
+    for width in [120, 140, 220] {
+        let mut grove = long_twins();
+        let text = text_of(&draw(&mut grove, width, 40));
+        let labels = stem_labels(&text);
+        assert_eq!(labels.matches("plain").count(), 2, "{width}:\n{text}");
+        assert_eq!(labels.matches('!').count(), 2, "{width}:\n{text}");
+    }
+}
+
+#[test]
+fn twins_in_folders_that_share_their_start_show_where_the_folders_differ() {
+    for width in [120, 140, 220] {
+        let mut grove = long_twins();
+        let text = text_of(&draw(&mut grove, width, 40));
+        // The column: two rows, each with its own part of the folder.
+        let rows: Vec<String> = text
+            .lines()
+            .filter(|l| l.contains("plain") && l.contains("││"))
+            .map(|l| l.split("││").next().unwrap_or(l).to_string())
+            .filter(|l| l.contains("plain"))
+            .collect();
+        assert_eq!(rows.len(), 2, "{width}:\n{text}");
+        assert_ne!(rows[0].replace('▸', " "), rows[1], "{width}:\n{text}");
+        assert!(
+            rows[0].contains("375") && rows[1].contains("837"),
+            "{width}:\n{text}"
+        );
+        // Under the stems, the same.
+        let labels = stem_labels(&text);
+        assert!(
+            labels.contains("375") && labels.contains("837"),
+            "{width}:\n{text}"
+        );
+    }
+    // The strip, on a narrow screen.
+    let mut grove = long_twins();
+    grove.cursor = 1;
+    let text = text_of(&draw(&mut grove, 60, 30));
+    let strip = text
+        .lines()
+        .find(|l| l.contains("plain"))
+        .unwrap_or_default();
+    assert!(strip.contains("837"), "{text}");
+}
+
+#[test]
+fn enter_on_a_moved_project_names_the_command_that_adopts_it() {
+    let mut moved = summary("plain", 0, 0);
+    moved.id = "plain-1a2b3c4d".into();
+    moved.moved = true;
+    let mut grove = Grove::new_for_test(vec![moved.clone(), summary("docs", 0, 0)]);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Enter);
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    // The exact command, with the id `--adopt` takes, and that a renamed
+    // folder is not adopted.
+    assert!(
+        note.contains("`pando doctor --adopt plain-1a2b3c4d` run where it is now adopts it"),
+        "{note}"
+    );
+    assert!(note.contains("still called plain"), "{note}");
+    assert!(
+        note.contains("renamed, pando there starts it afresh"),
+        "{note}"
+    );
+    // A folder of repositories is never adopted.
+    moved.repos = vec!["api".into(), "web".into()];
+    let mut grove = Grove::new_for_test(vec![moved, summary("docs", 0, 0)]);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Enter);
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(!note.contains("--adopt"), "{note}");
+    assert!(note.contains("starts it afresh"), "{note}");
+}
+
+#[test]
+fn the_stop_confirmation_says_which_of_two_projects_of_one_name() {
+    let mut grove = long_twins();
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('j'));
+    press(&mut grove, KeyCode::Char('X'));
+    assert!(grove.confirm.is_some());
+    let all = text_of(&draw(&mut grove, 120, 30));
+    let flat: String = all
+        .lines()
+        .map(|l| l.trim_matches(|c: char| c == '│' || c == ' '))
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        flat.contains("stop the one worktree up in plain (pando-fixture-1793784766837094000)?"),
+        "{all}"
+    );
+}
+
+#[test]
+fn the_home_help_explains_the_clash_mark_and_a_twins_folder() {
+    let mut grove = long_twins();
+    press(&mut grove, KeyCode::Char('?'));
+    let all = text_of(&draw(&mut grove, 120, 60));
+    assert!(
+        all.contains("a port of it another project claims too"),
+        "{all}"
+    );
+    assert!(all.contains("another project has this name"), "{all}");
+}
+
+/// Projects of one name, each up on one port, in `/tmp/<folder>/<name>`.
+fn twins_in(name: &str, folders: &[&str]) -> Grove {
+    let all = folders
+        .iter()
+        .map(|folder| {
+            let mut s = summary(name, 1, 0);
+            s.id = format!("{name}-{folder}");
+            s.root = std::path::PathBuf::from("/tmp").join(folder).join(name);
+            s.worktrees[0].claimed = [19744].into();
+            s
+        })
+        .collect();
+    Grove::new_for_test(all)
+}
+
+/// Each label in the row of the home pane that names `name` `count`
+/// times, from one `name` to the next.
+fn labels_under_stems(text: &str, name: &str, count: usize) -> Vec<String> {
+    let row = text
+        .lines()
+        .filter(|l| !l.contains('◀'))
+        .map(|l| l.rsplit("││").next().unwrap_or(l))
+        .find(|l| l.matches(name).count() == count)
+        .unwrap_or_default();
+    let starts: Vec<usize> = row.match_indices(name).map(|(i, _)| i).collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(k, &from)| {
+            let to = starts.get(k + 1).copied().unwrap_or(row.len());
+            row[from..to].trim_end_matches(['│', ' ']).to_string()
+        })
+        .collect()
+}
+
+/// Each row of the column that names `name`, from its glyph to the end
+/// of its name and folder.
+fn column_labels(text: &str, name: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| l.contains("││"))
+        .map(|l| l.split("││").next().unwrap_or(l))
+        .filter(|l| l.contains(name))
+        .map(|l| {
+            let from = l.find(name).unwrap_or(0);
+            l[from..].trim_end_matches(['│', ' ']).to_string()
+        })
+        .collect()
+}
+
+/// No two of `labels` read alike, and each says more than `name` and the
+/// clash mark.
+fn assert_apart(labels: &[String], name: &str, count: usize, text: &str) {
+    assert_eq!(labels.len(), count, "{labels:?}\n{text}");
+    for (i, a) in labels.iter().enumerate() {
+        let bare = a.trim_end_matches(" ! 1").trim_end_matches(" !").trim();
+        assert_ne!(bare, name, "{labels:?}\n{text}");
+        assert!(
+            !bare.ends_with('…') || bare.chars().filter(|&c| c != '…').count() > name.len(),
+            "{labels:?}\n{text}"
+        );
+        for b in &labels[i + 1..] {
+            assert_ne!(a, b, "{labels:?}\n{text}");
+        }
+    }
+}
+
+// Twins whose name is long: the name gives way to a head, so each still
+// shows where its folder differs, in the column and under the stems.
+#[test]
+fn twins_with_a_long_name_keep_where_their_folders_differ() {
+    let name = "really-long-storefront-service-name";
+    for width in [80, 90, 140, 220] {
+        for widen in 0..=4 {
+            let mut grove = twins_in(name, &["first-customer", "second-customer"]);
+            for _ in 0..widen {
+                press(&mut grove, KeyCode::Char('}'));
+            }
+            let text = text_of(&draw(&mut grove, width, 40));
+            let column = column_labels(&text, "reall");
+            assert_eq!(column.len(), 2, "{text}");
+            assert!(column[0].contains("fi"), "{column:?}\n{text}");
+            assert!(column[1].contains("se"), "{column:?}\n{text}");
+            let stems = labels_under_stems(&text, "reall", 2);
+            assert!(stems[0].contains("fi"), "{stems:?}\n{text}");
+            assert!(stems[1].contains("se"), "{stems:?}\n{text}");
+        }
+    }
+}
+
+// At every narrow width, with two twins and four, every twin's label
+// differs from every other's: by its folder where a character of where
+// it differs fits, by its number in the column's order otherwise.
+#[test]
+fn twins_never_read_alike_at_any_width() {
+    let shapes: [&[&str]; 4] = [
+        &["pando-twins-alpha", "pando-twins-beta"],
+        &[
+            "pando-twins-alpha",
+            "pando-twins-beta",
+            "pando-twins-gamma",
+            "pando-twins-delta",
+        ],
+        &["x-alpha", "x-beta"],
+        &["x-alpha", "x-beta", "y-alpha", "y-beta"],
+    ];
+    for folders in shapes {
+        for width in [64, 80, 90] {
+            let mut grove = twins_in("plain", folders);
+            let text = text_of(&draw(&mut grove, width, 40));
+            let stems = labels_under_stems(&text, "plain", folders.len());
+            assert_apart(&stems, "plain", folders.len(), &text);
+            if width >= 80 {
+                let column = column_labels(&text, "plain");
+                assert_apart(&column, "plain", folders.len(), &text);
+            }
+            // The strip, on each of them.
+            for cursor in 0..folders.len() {
+                let mut grove = twins_in("plain", folders);
+                grove.cursor = cursor;
+                let text = text_of(&draw(&mut grove, 60, 30));
+                let strip = text.lines().find(|l| l.contains('◀')).unwrap_or_default();
+                // Something beside the name, before its state.
+                assert!(!strip.contains("● plain · "), "{strip}");
+            }
+        }
+    }
+}
+
+// Where not one character of where their folders differ fits, the twins
+// carry their number in the column's order.
+#[test]
+fn twins_too_narrow_for_their_folders_are_numbered_in_the_columns_order() {
+    use crate::tui::render::names_apart;
+    let grove = twins_in("plain", &["x-alpha", "x-beta", "y-alpha", "y-beta"]);
+    let rooms = vec![Some(9); 4];
+    let names: Vec<String> = names_apart(&grove.summaries, &rooms)
+        .into_iter()
+        .map(|p| {
+            let (name, aside) = p.unwrap();
+            format!("{name}{aside}")
+        })
+        .collect();
+    assert_eq!(names, ["plain ·1", "plain ·2", "plain ·3", "plain ·4"]);
+    // With the room for it, the folders.
+    let rooms = vec![Some(12); 4];
+    let names: Vec<String> = names_apart(&grove.summaries, &rooms)
+        .into_iter()
+        .map(|p| {
+            let (name, aside) = p.unwrap();
+            format!("{name}{aside}")
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "plain x-alp…",
+            "plain x-beta",
+            "plain y-alp…",
+            "plain y-beta"
+        ]
+    );
+}
+
+// A label takes the room the pane has around its stem, not a fixed share
+// of the tree: on a wide pane every long name is whole, the rightmost no
+// shorter than the leftmost when they must be cut, and two labels never
+// touch.
+#[test]
+fn stem_labels_take_the_room_the_pane_has() {
+    let names = [
+        "mono-web-storefront",
+        "mono-web-admin-console",
+        "mono-api-gateway-service",
+        "mono-worker-queue",
+    ];
+    for width in [180, 220] {
+        let mut grove = Grove::new_for_test(names.iter().map(|n| summary(n, 1, 0)).collect());
+        let text = text_of(&draw(&mut grove, width, 40));
+        let labels = labels_under_stems(&text, "mono-", names.len());
+        assert_eq!(labels, names, "{width}:\n{text}");
+    }
+    for width in [100, 120, 140] {
+        let mut grove = long_twins();
+        let text = text_of(&draw(&mut grove, width, 40));
+        let labels = labels_under_stems(&text, "plain", 2);
+        let (a, b) = (text_width(&labels[0]), text_width(&labels[1]));
+        assert!(b + 1 >= a, "{width}: {labels:?}\n{text}");
+        let row = text
+            .lines()
+            .find(|l| l.matches("plain").count() == 2 && !l.contains('◀'))
+            .unwrap();
+        assert!(
+            row.contains("!  ") && !row.contains("! plain"),
+            "{width}:\n{text}"
+        );
+    }
+}
+
+// `X` and `y` on the home pane: the project is opened to stop what was
+// confirmed and stays behind; the home pane stays in front and says what
+// is being stopped.
+#[test]
+fn a_stop_from_the_home_pane_leaves_the_home_pane_in_front() {
+    let mut grove = Grove::new_for_test(vec![summary("shop", 2, 0), summary("api", 0, 0)]);
+    press(&mut grove, KeyCode::Char('X'));
+    press(&mut grove, KeyCode::Char('y'));
+    assert_eq!(grove.open_requests, [id_of("shop")]);
+    let mut shop = app_for("shop");
+    shop.state.worktrees.clear();
+    grove.handle_event(GroveEvent::Opened(id_of("shop"), Box::new(Ok(shop))));
+    assert_eq!(grove.front, None);
+    assert_eq!(grove.focus, Focus::Column);
+    let shop = &grove.open[&id_of("shop")].app;
+    assert!(shop.pending.iter().any(|p| p.kind == PendingKind::StopAll));
+    let note = grove.fresh_note().unwrap_or_default();
+    assert_eq!(note, "stopping feat+up0, feat+up1 in shop…");
+    // ⏎ still brings it.
+    press(&mut grove, KeyCode::Enter);
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+}
+
+// Begun on the home pane, a project's list goes back to it on `q`, or on
+// esc once esc has nothing left to clear, keeping the project open with
+// what is in flight in it; `q` on the home pane quits.
+#[test]
+fn begun_on_the_home_pane_q_and_esc_on_a_list_go_back_to_it() {
+    let mut grove = Grove::new_for_test(vec![summary("shop", 1, 0), summary("api", 0, 0)]);
+    press(&mut grove, KeyCode::Enter);
+    grove.handle_event(GroveEvent::Opened(
+        id_of("shop"),
+        Box::new(Ok(app_for("shop"))),
+    ));
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    grove
+        .open
+        .get_mut(&id_of("shop"))
+        .unwrap()
+        .app
+        .pending
+        .push(in_flight());
+    // Its footer and its help say where `q` goes.
+    let screen = text_of(&draw(&mut grove, 160, 40));
+    assert!(screen.contains("q home"), "{screen}");
+    press(&mut grove, KeyCode::Char('?'));
+    let help = text_of(&draw(&mut grove, 120, 80));
+    assert!(
+        help.contains("back to the home pane, where q quits"),
+        "{help}"
+    );
+    press(&mut grove, KeyCode::Esc);
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit);
+    assert_eq!(grove.front, None);
+    assert_eq!(grove.focus, Focus::Column);
+    assert_eq!(grove.selected().unwrap().id, id_of("shop"));
+    assert_eq!(grove.open[&id_of("shop")].app.pending.len(), 1);
+    // Back in front: esc clears the filter first, then goes back.
+    press(&mut grove, KeyCode::Enter);
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    grove.front_app_mut().unwrap().filter = "feat".into();
+    press(&mut grove, KeyCode::Esc);
+    assert_eq!(grove.front.as_deref(), Some(id_of("shop").as_str()));
+    assert!(grove.front_app().unwrap().filter.is_empty());
+    press(&mut grove, KeyCode::Esc);
+    assert_eq!(grove.front, None);
+    assert!(!grove.should_quit);
+    // From the column with the project in front, `q` goes back too.
+    press(&mut grove, KeyCode::Enter);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('q'));
+    assert_eq!(grove.front, None);
+    assert!(!grove.should_quit);
+    // On the home pane, `q` quits, asking first about what is in flight.
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(!grove.should_quit);
+    assert!(
+        grove
+            .fresh_note()
+            .unwrap_or_default()
+            .contains("in flight in shop")
+    );
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit);
+}
+
+// Begun in a project, its list's `q` quits as it does alone, and help
+// says so.
+#[test]
+fn begun_in_a_project_q_on_its_list_quits() {
+    let mut grove = a_grove();
+    let screen = text_of(&draw(&mut grove, 160, 40));
+    assert!(
+        screen.contains("q quit") && !screen.contains("q home"),
+        "{screen}"
+    );
+    press(&mut grove, KeyCode::Char('?'));
+    let help = text_of(&draw(&mut grove, 120, 80));
+    assert!(!help.contains("back to the home pane"), "{help}");
+    press(&mut grove, KeyCode::Esc);
+    press(&mut grove, KeyCode::Char('q'));
+    assert!(grove.should_quit);
+    let mut grove = a_grove();
+    press(&mut grove, KeyCode::Esc);
+    assert!(grove.should_quit);
+}
+
+// With two projects of one name open, the header of the one in front
+// says its folder after its name, dimmed, as the column does; a name of
+// its own is left alone.
+#[test]
+fn a_twins_header_says_which_of_its_name_is_in_front() {
+    let clone = |folder: &str| {
+        let mut s = summary("shop", 0, 0);
+        s.id = format!("shop-{folder}");
+        s.root = std::path::PathBuf::from("/tmp").join(folder).join("shop");
+        s
+    };
+    let mut first = clone("work");
+    first.id = id_of("shop");
+    let mut grove = Grove::new_for_test(vec![first, clone("personal"), summary("docs", 0, 0)]);
+    grove.adopt(app_for("shop"), true);
+    for width in [120, 160] {
+        let buf = draw(&mut grove, width, 30);
+        let header = cells(&buf, 0, COLUMN_WIDTH, width);
+        assert!(header.trim_start().starts_with("shop work · "), "{header}");
+        let at = COLUMN_WIDTH + header.find("work").unwrap() as u16;
+        assert_eq!(buf[(at, 0)].fg, crate::theme::text_muted(), "{header}");
+    }
+    let mut grove = a_grove();
+    let buf = draw(&mut grove, 120, 30);
+    let header = cells(&buf, 0, COLUMN_WIDTH, 120);
+    assert!(header.trim_start().starts_with("shop · "), "{header}");
+}
+
+/// Fourteen projects in the column's order: twins in short folders and
+/// long ones, names that share a long start, a long name, dot-folders.
+fn fourteen() -> Grove {
+    let all = [
+        ("app", "work"),
+        ("app", "personal"),
+        ("mono-storefront-checkout", "src"),
+        ("mono-analytics-pipeline", "src"),
+        ("mono-inventory-warehouse", "src"),
+        ("mono-notifications-gateway", "src"),
+        ("mono-web-api", "src"),
+        (".dotfiles", "home"),
+        (".config-sync", "home"),
+        ("really-long-storefront-service-name", "src"),
+        ("docs", "src"),
+        ("plain", "pando-fixture-1793784766375615000"),
+        ("plain", "pando-fixture-1793784766837094000"),
+        ("site", "src"),
+    ]
+    .iter()
+    .map(|(name, folder)| {
+        let mut s = summary(name, 0, 0);
+        s.id = format!("{name}-{folder}");
+        s.root = std::path::PathBuf::from("/tmp").join(folder).join(name);
+        s
+    })
+    .collect();
+    Grove::new_for_test(all)
+}
+
+/// The home pane's row of labels under the stems, and the line under it.
+fn home_labels(text: &str) -> (String, String) {
+    let rows: Vec<&str> = text
+        .lines()
+        .map(|l| l.rsplit("││").next().unwrap_or(l))
+        .collect();
+    let at = rows
+        .iter()
+        .position(|l| l.contains('╺') && l.contains('┻'))
+        .expect("a root line");
+    let at = at
+        + rows[at..]
+            .iter()
+            .skip(1)
+            .position(|l| l.contains('╺'))
+            .map_or(0, |p| p + 1);
+    let row = |i: usize| {
+        rows.get(i)
+            .unwrap_or(&"")
+            .trim_end_matches(['│', ' '])
+            .to_string()
+    };
+    (row(at + 1), row(at + 2))
+}
+
+// With more projects than the home pane can label, it draws a stem only
+// for as many as each keep a readable label, in the column's order, and
+// counts the rest under them: no label is a mark alone or a bare `…`, a
+// twin's number follows part of its name, and no two read alike.
+#[test]
+fn a_crowded_home_draws_only_the_stems_it_can_name() {
+    for reversed in [false, true] {
+        for width in [80, 90, 110, 140] {
+            let mut grove = fourteen();
+            if reversed {
+                grove.summaries.reverse();
+            }
+            let order: Vec<String> = grove.summaries.iter().map(|s| s.name.clone()).collect();
+            let text = text_of(&draw(&mut grove, width, 40));
+            let (row, more) = home_labels(&text);
+            let labels: Vec<String> = row
+                .split("  ")
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect();
+            assert!(
+                labels.len() >= 3 && labels.len() < 14,
+                "{width}: {labels:?}\n{text}"
+            );
+            assert_eq!(
+                more.trim(),
+                format!("+{} more in the column", 14 - labels.len()),
+                "{width}:\n{text}"
+            );
+            for (label, name) in labels.iter().zip(&order) {
+                let head: String = name.chars().take(2).collect();
+                assert!(label.starts_with(&head), "{width}: {labels:?}\n{text}");
+                assert!(text_width(label) >= 4, "{width}: {labels:?}\n{text}");
+                if let Some(at) = label.find('·') {
+                    assert!(label[..at].starts_with(&head), "{width}: {labels:?}");
+                }
+            }
+            for (i, a) in labels.iter().enumerate() {
+                assert!(!labels[i + 1..].contains(a), "{width}: {labels:?}\n{text}");
+            }
+        }
+    }
+}
+
+// The stems the home pane draws: as many as the grove holds while each
+// label keeps its whole or the fewest readable cells, fewer otherwise,
+// never none.
+#[test]
+fn the_home_draws_as_many_stems_as_keep_their_labels() {
+    use crate::tui::render::{STEM_LABEL_MIN, stems_with_room};
+    assert_eq!(stems_with_room(&[4, 4, 4], 10, 40), 3);
+    assert_eq!(stems_with_room(&[30; 14], 22, 110), 9);
+    for width in [40, 60, 80, 110, 140] {
+        let stems = stems_with_room(&[30; 14], 99, width);
+        let rooms = crate::art::share_room(&[30; 14][..stems], width);
+        assert!(
+            rooms.iter().all(|&r| r >= STEM_LABEL_MIN),
+            "{width}: {rooms:?}"
+        );
+        let more = crate::art::share_room(&[30; 14][..stems + 1], width);
+        assert!(
+            more.iter().any(|&r| r < STEM_LABEL_MIN),
+            "{width}: {more:?}"
+        );
+    }
+    assert_eq!(stems_with_room(&[30; 3], 10, 4), 1);
+}
+
+/// Names of their own that share a long start, each up once.
+fn shared_starts() -> Grove {
+    let names = [
+        "mono-storefront-checkout",
+        "mono-analytics-pipeline",
+        "mono-inventory-warehouse",
+        "mono-notifications-gateway",
+        "mono-web-api",
+        "mono-web-admin",
+    ];
+    Grove::new_for_test(names.iter().map(|n| summary(n, 1, 0)).collect())
+}
+
+// Names of their own that would read alike once cut are cut where they
+// differ instead, under the stems and in a column narrowed to its least.
+#[test]
+fn names_that_share_a_long_start_never_read_alike() {
+    for width in [80, 110, 140] {
+        let mut grove = shared_starts();
+        let text = text_of(&draw(&mut grove, width, 40));
+        let (row, _) = home_labels(&text);
+        let labels: Vec<&str> = row
+            .split("  ")
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert!(labels.len() >= 4, "{width}: {labels:?}\n{text}");
+        for (i, a) in labels.iter().enumerate() {
+            assert!(a.starts_with("mo"), "{width}: {labels:?}");
+            assert!(!labels[i + 1..].contains(a), "{width}: {labels:?}\n{text}");
+        }
+        // The column, at its least.
+        let mut grove = shared_starts();
+        grove.focus = Focus::Column;
+        for _ in 0..20 {
+            press(&mut grove, KeyCode::Char('{'));
+        }
+        assert_eq!(grove.width, COLUMN_MIN_WIDTH);
+        let text = text_of(&draw(&mut grove, width, 40));
+        let rows = column_labels(&text, "mo");
+        assert_eq!(rows.len(), 6, "{width}:\n{text}");
+        for (i, a) in rows.iter().enumerate() {
+            assert!(!rows[i + 1..].contains(a), "{width}: {rows:?}\n{text}");
+        }
+    }
+}
+
+// Cut where they differ: a head of the start they share, `…`, and the
+// rest from where each differs.
+#[test]
+fn a_name_cut_alike_is_cut_where_it_differs() {
+    use crate::tui::render::names_apart;
+    let grove = Grove::new_for_test(vec![
+        summary("pando-fixture-alpha", 0, 0),
+        summary("pando-fixture-beta", 0, 0),
+        summary("docs", 0, 0),
+    ]);
+    let names: Vec<String> = names_apart(&grove.summaries, &[Some(10); 3])
+        .into_iter()
+        .map(|p| p.unwrap().0)
+        .collect();
+    assert_eq!(names, ["pando…alp…", "pando…beta", "docs"]);
+    // With the room for an end that already differs, the end cut.
+    let names: Vec<String> = names_apart(&grove.summaries, &[Some(16); 3])
+        .into_iter()
+        .map(|p| p.unwrap().0)
+        .collect();
+    assert_eq!(names, ["pando-fixture-a…", "pando-fixture-b…", "docs"]);
+    let grove = shared_starts();
+    for room in 5..12 {
+        let names: Vec<String> = names_apart(&grove.summaries, &[Some(room); 6])
+            .into_iter()
+            .map(|p| p.unwrap().0)
+            .collect();
+        for (i, a) in names.iter().enumerate() {
+            assert!(text_width(a) <= room, "{room}: {names:?}");
+            assert!(!names[i + 1..].contains(a), "{room}: {names:?}");
+        }
+    }
+}
+
+// The count of the projects with no stem says where they are: the
+// column beside the home pane, the strip it is folded to, where `j` `k`
+// step through them, or nowhere, where `w` brings the column back.
+#[test]
+fn the_home_says_where_the_projects_with_no_stem_are() {
+    let more = |text: &str| {
+        text.lines().find(|l| l.contains(" more")).map(|l| {
+            l.rsplit("││")
+                .next()
+                .unwrap_or(l)
+                .trim_matches(['│', ' '])
+                .to_string()
+        })
+    };
+    let mut grove = shared_starts();
+    let text = text_of(&draw(&mut grove, 80, 40));
+    assert_eq!(
+        more(&text).as_deref(),
+        Some("+2 more in the column"),
+        "{text}"
+    );
+    let mut grove = shared_starts();
+    let text = text_of(&draw(&mut grove, 60, 40));
+    assert!(text.contains("[ ◀"), "the strip: {text}");
+    assert_eq!(
+        more(&text).as_deref(),
+        Some("+2 more · j k steps through them"),
+        "{text}"
+    );
+    let mut grove = shared_starts();
+    grove.shown = Shown::Off;
+    let text = text_of(&draw(&mut grove, 60, 40));
+    assert_eq!(
+        more(&text).as_deref(),
+        Some("+2 more · w shows the column"),
+        "{text}"
+    );
+}
+
+/// The projects of [`shared_starts`], none of them up.
+fn shared_starts_idle() -> Grove {
+    let mut grove = shared_starts();
+    for s in &mut grove.summaries {
+        s.up = 0;
+        s.worktrees.clear();
+    }
+    grove
+}
+
+// On a narrow home pane nothing under the grove is cut: the keys shed
+// whole hints from the least needed end, the tagline is the longest
+// that fits whole or none, and a note breaks only between its parts.
+#[test]
+fn the_home_pane_fits_its_lines_rather_than_cutting_them() {
+    let note = "no repository here (~) · here is every project pando knows";
+    for width in [50, 60, 72, 80, 140] {
+        let mut grove = shared_starts_idle();
+        grove.note = Some((note.into(), std::time::Instant::now()));
+        let text = text_of(&draw(&mut grove, width, 40));
+        let rows: Vec<String> = text
+            .lines()
+            .map(|l| {
+                l.rsplit("││")
+                    .next()
+                    .unwrap_or(l)
+                    .trim_matches(['│', ' '])
+                    .to_string()
+            })
+            .collect();
+        let keys = rows.iter().find(|r| r.contains(" open")).expect("the keys");
+        assert!(!keys.contains('…'), "{width}: {keys}");
+        assert!(keys.starts_with("⏎ open"), "{width}: {keys}");
+        assert!(keys.ends_with("? help  q quit"), "{width}: {keys}");
+        for row in rows
+            .iter()
+            .filter(|r| r.contains("aspen") || r.contains("Pando:"))
+        {
+            assert!(
+                crate::tui::render::IDLE_CAPTIONS.contains(&row.as_str()),
+                "{width}: {row}"
+            );
+        }
+        let said: Vec<&String> = rows
+            .iter()
+            .filter(|r| r.contains("no repository") || r.contains("every project pando"))
+            .collect();
+        let parts = [
+            "no repository here (~)",
+            "here is every project pando knows",
+        ];
+        match said.as_slice() {
+            [one] => assert_eq!(one.as_str(), note, "{width}"),
+            [a, b] => assert_eq!([a.as_str(), b.as_str()], parts, "{width}"),
+            _ => panic!("{width}: {said:?}\n{text}"),
+        }
+        assert!(
+            !rows.iter().any(|r| r.contains("mertk…")),
+            "{width}:\n{text}"
+        );
+    }
+    // Wide enough, every key and the whole tagline.
+    let mut grove = shared_starts_idle();
+    let text = text_of(&draw(&mut grove, 140, 40));
+    assert!(
+        text.contains("⏎ open  j k project  w column  ? help  q quit"),
+        "{text}"
+    );
+    assert!(
+        text.contains(crate::tui::render::IDLE_CAPTIONS[0]),
+        "{text}"
+    );
+}
+
+// Where the room allows, each label is centred under its own stem: a
+// long name is cut to what lets it sit there rather than taking the
+// whole row and pushing the labels after it off their stems.
+#[test]
+fn each_label_sits_under_its_own_stem() {
+    use crate::tui::render::STEM_LABEL_MIN;
+    let mut checked = 0;
+    // Found in a real terminal with sixteen projects: stems seven to ten
+    // cells apart, every label pushed off its own.
+    let groves: [fn() -> Grove; 2] = [shared_starts, fourteen];
+    for (width, make) in [80, 100, 120, 140, 180]
+        .into_iter()
+        .flat_map(|w| groves.iter().map(move |g| (w, g)))
+    {
+        let mut grove = make();
+        let text = text_of(&draw(&mut grove, width, 40));
+        let rows: Vec<&str> = text
+            .lines()
+            .map(|l| l.rsplit("││").next().unwrap_or(l))
+            .collect();
+        let root = rows
+            .iter()
+            .position(|l| l.contains('╺') && l.contains('┻') && l.matches('┻').count() > 1)
+            .expect("the home's root line");
+        let stems: Vec<usize> = rows[root]
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c == '┻')
+            .map(|(x, _)| x)
+            .collect();
+        let row: Vec<char> = rows[root + 1].chars().collect();
+        // Each label: where it starts and how wide it is, in cells.
+        let mut labels = Vec::new();
+        let mut x = 1;
+        while x < row.len() {
+            if row[x] == ' ' || row[x] == '│' {
+                x += 1;
+                continue;
+            }
+            let from = x;
+            while x < row.len()
+                && !(row[x] == ' ' && row.get(x + 1).is_none_or(|c| *c == ' '))
+                && row[x] != '│'
+            {
+                x += 1;
+            }
+            labels.push((from, x - from));
+        }
+        assert_eq!(labels.len(), stems.len(), "{width}: {labels:?}\n{text}");
+        // The room allows it where the stems are further apart than the
+        // fewest cells a label has and the two between labels.
+        assert!(
+            stems.windows(2).all(|w| w[1] - w[0] >= STEM_LABEL_MIN + 2),
+            "{width}: stems closer than a label: {stems:?}\n{text}"
+        );
+        checked += 1;
+        for (&(from, cells), &stem) in labels.iter().zip(&stems) {
+            let centre = from + cells / 2;
+            assert!(
+                centre.abs_diff(stem) <= 2,
+                "{width}: a label at {from}..{} under the stem at {stem}\n{text}",
+                from + cells
+            );
+        }
+    }
+    assert_eq!(checked, 10, "{checked}");
+}

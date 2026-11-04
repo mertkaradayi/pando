@@ -2603,11 +2603,11 @@ pub fn guard_write_locations(paths: &PandoPaths, config: &Config) -> Result<()> 
         .map(|w| w.path.clone())
         .chain(std::iter::once(discovery.main.path.clone()))
         .collect();
-    crate::paths::ensure_outside_repository("pando home", &paths.home, paths.root(), &worktrees)?;
-    crate::paths::ensure_outside_repository(
+    crate::paths::ensure_outside_project("pando home", &paths.home, &paths.project, &worktrees)?;
+    crate::paths::ensure_outside_project(
         "worktrees_dir",
         &config.worktrees_dir(paths),
-        paths.root(),
+        &paths.project,
         &worktrees,
     )
 }

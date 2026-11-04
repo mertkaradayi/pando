@@ -298,7 +298,7 @@
 
 <section>
 <h2 id="repos">Several repositories</h2>
-<p>A product split across repositories cloned side by side is one project. Run <code>pando</code> in the plain folder that holds them:</p>
+<p>A product split across repositories cloned side by side is one project. Run a pando command in the plain folder that holds them; <code>pando init --agent</code> or <code>pando new &lt;branch&gt;</code> makes it one. Until then <code>pando</code> alone there opens <a href="#tui-grove">the grove</a>, so a look at a folder of unrelated clones never makes it a project, and your home directory, or a folder holding pando's own home, never is one:</p>
 <div class="code"><pre class="fit"><span class="w">product/</span>       <span class="d">a plain folder, not a repository</span>
 <span class="d">├──</span> backend/   <span class="d">a git repository</span>
 <span class="d">└──</span> frontend/  <span class="d">a git repository</span></pre></div>
@@ -950,12 +950,12 @@ password = "…"</pre></div></details>
 
 <h3 id="verbs">Every verb</h3>
 <div class="kv">
-<div><div class="k">pando</div><div class="v">Open the TUI for the repository you are in, or the <a href="#setup-screen">setup screen</a> the first time.</div></div>
+<div><div class="k">pando</div><div class="v">Open the TUI for the repository you are in, or the <a href="#setup-screen">setup screen</a> the first time. Outside any repository it opens <a href="#tui-grove">the grove</a> of every project pando knows.</div></div>
 <div><div class="k">pando new &lt;branch&gt;</div><div class="v">Create a worktree and branch: check out, link the provisioned files, install. <span class="fl"><code>--base &lt;ref&gt;</code> fork from here · <code>--yes</code> take pando's first choice for any question</span></div></div>
 <div><div class="k">pando start [name…]</div><div class="v">Start its processes on its ports; on a terminal, wait until each is ready. <span class="fl"><code>--shared</code> · <code>--isolated</code> · <code>--namespaced</code> (experimental) · <code>--only &lt;process&gt;</code> · <code>--wait</code> / <code>--no-wait</code> · <code>--yes</code></span></div></div>
 <div><div class="k">pando stop [name…]</div><div class="v">Stop its processes, private services and public URL, keeping ports, logs and data. With no name, outside a worktree or in the main checkout, it stops every one. <span class="fl"><code>--only &lt;process&gt;</code> · <code>--all</code> every worktree and the main checkout, from anywhere</span></div></div>
 <div><div class="k">pando restart [name…]</div><div class="v">Stop and start again, keeping the ports. <span class="fl"><code>--isolated</code> · <code>--namespaced</code> (experimental) · <code>--only &lt;process&gt;</code> · <code>--wait</code> / <code>--no-wait</code> · <code>--yes</code></span></div></div>
-<div><div class="k">pando ls</div><div class="v">Every worktree, the main checkout first: status, URL, ports and git, fitted to the terminal. <span class="fl"><code>-l</code> adds each commit and path · <code>--json</code></span></div></div>
+<div><div class="k">pando ls</div><div class="v">Every worktree, the main checkout first: status, URL, ports and git, fitted to the terminal. <span class="fl"><code>-l</code> adds each commit and path · <code>--all</code> every project pando knows, from any directory · <code>--json</code></span></div></div>
 <div><div class="k">pando status [name]</div><div class="v">What runs where, per process and service, and why one failed. <span class="fl"><code>--json</code> · <code>--env &lt;name&gt;</code> prints <code>export</code> lines for <code>eval</code></span></div></div>
 <div><div class="k">pando logs [name]</div><div class="v">Its log: <code>dev</code>'s, the only process's, or all of them merged. <span class="fl"><code>-s, --source &lt;name&gt;</code> a process, service or hook · <code>-n, --tail N</code> (50) · <code>-f, --follow</code> · <code>--json</code> one object per line</span></div></div>
 <div><div class="k">pando open [name]</div><div class="v">Print its URL and open it in the browser (<code>$BROWSER</code>, or the desktop's opener), or open its <a href="#mobile">app</a>. <span class="fl"><code>--public</code> the shared URL · <code>--app</code> its app, even beside a page</span></div></div>
@@ -1048,6 +1048,20 @@ password = "…"</pre></div></details>
 <h3 id="tui-sort">Sorting the list</h3>
 <p>The main checkout is always the first row, and the worktrees with something up come right after it: a start moves a row up, and a stop puts it back. <kbd>,</kbd> changes the order within each group: by pull request, highest first (the default), newest first, last run first, or by name. The choice is saved as <code>[ui] sort</code>.</p>
 
+<h3 id="tui-grove">Every project: the grove</h3>
+<p>Pando is one aspen, many stems over one root. The grove carries that up a level: once pando knows two projects on this machine, a column left of the worktrees lists every one, the ones with something up first, each a stem standing on one root line that lights while anything runs. <span class="mk on">●</span> is up, with how many, <span class="mk er">✗</span> failed, and a dimmed stem is a project whose repository has moved, or whose folder pando may not read, shown and never acted on. Two projects of one name show the folder each is in, cut to the part that differs, or their place in the column, <code>·1</code> <code>·2</code>, where not even that fits, and the header of the one in front and its setup screen say its folder after its name, cut to the part that differs before the branch or what runs gives way. Names of their own that would read alike once cut, such as two that share a long start, are cut where they differ instead; a red <span class="mk er">!</span> marks one with a port another project claims too.</p>
+<p>Right of it is the TUI of the project in front, as it is when pando runs in that project alone. A project opened stays open while another is in front, so a start begun in one finishes while you look at the next, and <kbd>q</kbd> asks first when quitting would cut short work in another project; the second <kbd>q</kbd> cancels any start there and quits once it is undone. <code>pando</code> outside any repository opens the grove with no project in front, drawn as the brand's grove, one stem per project, in leaf when something of it is up; where there are more than the pane can name readably, the first in the column's order get a stem and the rest are counted under them, with where to find them: the column, <kbd>j</kbd> <kbd>k</kbd> in the strip it folds to, or <kbd>w</kbd> where it is hidden. Begun there, <kbd>q</kbd> or <kbd>esc</kbd> on a project's list goes back to it, leaving the project open, and <kbd>q</kbd> on the home pane quits. <code>pando ls --all</code> prints the same from any directory, and <code>--json</code> is a published shape.</p>
+<div class="kv keys-kv">
+<div><div class="k"><kbd>[</kbd> <kbd>]</kbd></div><div class="v">Bring the previous or next project to the front.</div></div>
+<div><div class="k"><kbd>←</kbd></div><div class="v">To the column: <kbd>j</kbd> <kbd>k</kbd> move, <kbd>⏎</kbd> or <kbd>→</kbd> opens one, <kbd>tab</kbd> or <kbd>esc</kbd> goes back to the list. A click on the project in front goes back too.</div></div>
+<div><div class="k"><kbd>X</kbd></div><div class="v">In the column: stop everything up in that project, after naming each worktree. What is in front stays there.</div></div>
+<div><div class="k"><kbd>w</kbd></div><div class="v">Show or hide the column.</div></div>
+<div><div class="k"><kbd>{</kbd> <kbd>}</kbd></div><div class="v">Narrow or widen the column.</div></div>
+<div><div class="k"><kbd>|</kbd></div><div class="v">The detail pane right of the list, under it, or hidden.</div></div>
+<div><div class="k"><kbd>&lt;</kbd> <kbd>&gt;</kbd></div><div class="v">A smaller or bigger detail pane.</div></div>
+</div>
+<p>Each of these is saved in <a href="#machine"><code>~/.pando/config.toml</code></a> as <code>[ui] grove</code>, <code>grove_width</code>, <code>detail</code> and <code>detail_size</code>, the way <kbd>,</kbd> saves the list's order, so the screen comes back as you left it. The project in front comes first: where the whole column would leave it under 92 columns, <code>auto</code> folds the column to one line above the list, <code>[ ◀ ● shop · 2 up · 1/4 ▶ ]</code>, and a click on <code>[</code> or <code>]</code> steps through the projects; <code>grove = "on"</code> keeps the whole column down to 72 columns.</p>
+
 <h3 id="tui-refresh">How it keeps up</h3>
 <p>The screen keeps up by polling: processes every second, the worktree list and the selected row's git state every five seconds, the other rows' git state every thirty, and GitHub about once a minute. A watcher on the worktrees directory reads the list again as soon as a worktree appears or goes, and coming back to the pane reads the list, git and pull requests again. It fits a tmux split: below 72 columns, the table and the detail pane stack.</p>
 </section>
@@ -1088,7 +1102,11 @@ theme = "catppuccin"
 <span class="c"># appearance = "dark"   # "light", or "auto" to follow the system
 # sort = "run"          # the list's order: "pr", "newest", "run" or "name"
 # mouse = false         # leave the mouse to the terminal
-# theme_from = "~/.config/theme-switcher/current"</span></pre></figure>
+# theme_from = "~/.config/theme-switcher/current"
+# grove = "auto"        # the column of every project: "on", or "off"
+# grove_width = 26      # 18 to 40 cells
+# detail = "right"      # the detail pane: "bottom", or "off"
+# detail_size = 40      # its share, 20 to 80 percent</span></pre></figure>
 
 <h3 id="themes">Themes</h3>
 <p><kbd>T</kbd> in the TUI lists the colour themes, each with a swatch of its colours. Moving through them repaints the screen, <kbd>⏎</kbd> keeps one, and <kbd>esc</kbd> puts the old one back.</p>
@@ -1164,7 +1182,7 @@ theme = "catppuccin"
 <p>pando starts commands with <code>bash -lc</code>, a login bash, which reads <code>~/.bash_profile</code> and never <code>~/.zshrc</code>. A version manager set up only in <code>.zshrc</code> does not exist there.</p>
 <p><code>pando doctor</code> shows which binary each language resolved to. The fix is a one-line <code>[runtime] prelude</code> for your machine, kept in <code>~/.pando/config.toml</code> rather than in the repository.</p></details>
 <details><summary>I moved my repository and pando forgot it.</summary>
-<p>A project's pando data is keyed by the folder's name and a hash of its path, so after a move pando sees a new project. <code>pando doctor</code> finds the old one, and <code class="lg">pando doctor <span class="nw">--adopt</span> <span class="nw">&lt;old-id&gt;</span></code> moves its config, state and worktrees over.</p></details>
+<p>A project's pando data is keyed by the folder's name and a hash of its path, so after a move pando sees a new project. <code>pando doctor</code> finds the old one, and <code class="lg">pando doctor <span class="nw">--adopt</span> <span class="nw">&lt;old-id&gt;</span></code> run where the repository is now, moves its config, state and worktrees over. It adopts a repository whose folder kept its name; a renamed one is a new project to pando, which starts it afresh.</p></details>
 <details><summary>Does pando new fetch the newest base first?</summary>
 <p>No. A new branch forks from the last-fetched <code>origin/&lt;base&gt;</code>, so run <code>git fetch</code> first when you need the newest commit. An existing branch is looked for locally, then on <code>origin</code>.</p></details>
 <details><summary>How many worktrees can run at once?</summary>

@@ -49,9 +49,41 @@ pub fn grove(width: usize, height: usize, frame: u64, seed: u64) -> Grove {
     }
 }
 
+/// The fewest cells between two stems of [`grove_of`]: closer, and the
+/// crowns run into one hedge and the names under them into each other.
+pub const STEM_SPACING_MIN: usize = 5;
+
+/// A grove with one stem for each entry of `leafed`, evenly spaced across
+/// `width`, in leaf where its entry is true and bare where it is false:
+/// the projects on a machine, the ones with something up in leaf. Empty
+/// below [`GROVE_MIN_WIDTH`] × [`GROVE_MIN_HEIGHT`]; the caller keeps the
+/// stems [`STEM_SPACING_MIN`] apart, see [`stems_that_fit`].
+pub fn grove_of(width: usize, height: usize, frame: u64, seed: u64, leafed: &[bool]) -> Grove {
+    if width < GROVE_MIN_WIDTH || height < GROVE_MIN_HEIGHT {
+        return Grove {
+            cells: Vec::new(),
+            stems: Vec::new(),
+        };
+    }
+    let scene = Scene::with_stems(width, height, seed, leafed);
+    Grove {
+        cells: (0..height)
+            .map(|y| (0..width).map(|x| scene.cell(x, y, frame)).collect())
+            .collect(),
+        stems: scene.trunks.iter().map(|t| t.x).collect(),
+    }
+}
+
+/// How many evenly spaced stems a grove `width` wide holds.
+pub fn stems_that_fit(width: usize) -> usize {
+    width / STEM_SPACING_MIN
+}
+
 /// One stem: where it stands, and where its crown is.
 struct Trunk {
     x: usize,
+    /// In leaf, or a bare stem whose crown is not drawn.
+    leafed: bool,
     /// The row its crown is centred on; the stem shows from there down.
     crown_y: f64,
     /// How far its crown reaches either side, and up and down.
@@ -84,12 +116,45 @@ impl Scene {
             let crown_y = 1.2 + rng.unit() * (canopy_floor as f64 * 0.55);
             trunks.push(Trunk {
                 x,
+                leafed: true,
                 crown_y,
                 crown_rx: 2.2 + rng.unit() * 1.6,
                 crown_ry: (canopy_floor as f64) * (0.38 + rng.unit() * 0.22),
             });
             x += 5 + (rng.next() % 4) as usize;
         }
+        Scene {
+            seed,
+            width,
+            trunks,
+            ground,
+            canopy_floor,
+        }
+    }
+
+    /// One stem per entry of `leafed`, each in the middle of an equal
+    /// share of the width.
+    fn with_stems(width: usize, height: usize, seed: u64, leafed: &[bool]) -> Scene {
+        let ground = height - ROOT_ROWS - 1;
+        let canopy_floor = ((ground as f64) * 0.62).round().max(2.0) as usize;
+        let mut rng = Rng(seed ^ 0x9e37_79b9_7f4a_7c15);
+        let share = width / leafed.len().max(1);
+        let trunks = leafed
+            .iter()
+            .enumerate()
+            .map(|(i, &leafed)| {
+                let crown_y = 1.2 + rng.unit() * (canopy_floor as f64 * 0.55);
+                // A crown no wider than its share, so neighbours stay two.
+                let reach = ((share as f64) / 2.0 - 0.5).max(1.2);
+                Trunk {
+                    x: i * share + share / 2,
+                    leafed,
+                    crown_y,
+                    crown_rx: (2.2 + rng.unit() * 1.6).min(reach),
+                    crown_ry: (canopy_floor as f64) * (0.38 + rng.unit() * 0.22),
+                }
+            })
+            .collect();
         Scene {
             seed,
             width,
@@ -136,6 +201,7 @@ impl Scene {
         let crowns = self
             .trunks
             .iter()
+            .filter(|t| t.leafed)
             .map(|t| {
                 let dx = (fx - t.x as f64) / t.crown_rx;
                 let dy = (fy - t.crown_y) / t.crown_ry;

@@ -1,0 +1,360 @@
+//! The grove's keys: the column's own while it has the focus, and from
+//! the list only `keymap::GROVE_KEYS`, and only while nothing else is
+//! open on it. Everything else is the front app's, so a key a modal, the
+//! log viewer or a filter answers still reaches it.
+
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+use crate::tui::app::{AppEvent, DETAIL_STEP, Modal};
+
+use super::{COLUMN_STEP, Focus, Grove, Shown, StopConfirm};
+
+/// The column's hints while it has the focus, most useful first: each a
+/// key `keymap::COLUMN_KEYS` documents, which a test holds it to.
+pub const COLUMN_HINTS: [(&str, &str); 4] = [
+    ("⏎", "open"),
+    ("X", "stop all"),
+    ("tab", "list"),
+    ("w", "hide"),
+];
+
+impl Grove {
+    pub fn handle_key(&mut self, key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.should_quit = true;
+            return;
+        }
+        if let Some(confirm) = self.confirm.take() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => self.stop_project(confirm),
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {}
+                _ => self.confirm = Some(confirm),
+            }
+            return;
+        }
+        // The grove's help, over the home pane, as a project's own: the
+        // keys that scroll it scroll it, and any other closes it.
+        if let Some(scroll) = self.help {
+            let bottom = self.help_bottom;
+            let delta = match key.code {
+                KeyCode::Down | KeyCode::Char('j') => Some(1),
+                KeyCode::Up | KeyCode::Char('k') => Some(-1),
+                KeyCode::PageDown | KeyCode::Char(' ') => Some(10),
+                KeyCode::PageUp => Some(-10),
+                KeyCode::Char('g') | KeyCode::Home => Some(isize::MIN),
+                KeyCode::Char('G') | KeyCode::End => Some(isize::MAX),
+                _ => None,
+            };
+            self.help =
+                delta.map(|delta| scroll.min(bottom).saturating_add_signed(delta).min(bottom));
+            return;
+        }
+        // The second `q` the grove asked for is the grove's, wherever the
+        // focus is; given to the front app instead, it would ask its own
+        // question again. A dialog on the front app keeps its `q`.
+        if key.code == KeyCode::Char('q')
+            && (self.quitting || self.quit_is_armed())
+            && self.front_app().is_none_or(|app| app.idle_on_list())
+        {
+            match self.quitting {
+                true => self.should_quit = true,
+                false => self.confirm_quit(),
+            }
+            return;
+        }
+        // The setup screen of a project in front answers none of the
+        // grove's keys: they move away from it, which leaves its setup for
+        // later rather than skipping it, and its `q` goes back to where the
+        // grove was, unless pando was started in that very project.
+        if self.on_setup_screen() {
+            if self.focus == Focus::Column {
+                self.column_key(key);
+                return;
+            }
+            if self.grove_key(key) {
+                return;
+            }
+            if key.code == KeyCode::Char('q') && self.front != self.started_in {
+                self.close_front_setup();
+                return;
+            }
+        }
+        // A question, a dialog, the log viewer or a filter on the front
+        // app has the keyboard, wherever the focus was.
+        if self.front_app().is_some_and(|app| !app.idle_on_list()) {
+            self.send_front(AppEvent::Input(Event::Key(key)));
+            return;
+        }
+        if self.focus == Focus::Column || self.front.is_none() {
+            self.column_key(key);
+            return;
+        }
+        if self.grove_key(key) {
+            return;
+        }
+        self.send_front(AppEvent::Input(Event::Key(key)));
+    }
+
+    /// One of `keymap::GROVE_KEYS`, from the list or the column. Returns
+    /// whether it was one.
+    pub(super) fn grove_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('w') => self.toggle_column(),
+            KeyCode::Char('[') => self.step_project(-1),
+            KeyCode::Char(']') => self.step_project(1),
+            KeyCode::Char('{') => self.resize_column(-(COLUMN_STEP as i32)),
+            KeyCode::Char('}') => self.resize_column(COLUMN_STEP as i32),
+            KeyCode::Char('|') => self.cycle_detail(),
+            KeyCode::Char('<') => self.resize_detail(-(DETAIL_STEP as i32)),
+            KeyCode::Char('>') => self.resize_detail(DETAIL_STEP as i32),
+            KeyCode::Left => {
+                if !self.column_shown() {
+                    self.shown = Shown::On;
+                }
+                self.focus = Focus::Column;
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Every key of `keymap::COLUMN_KEYS`, while the column has the focus
+    /// or there is no project in front to have it.
+    fn column_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => self.move_cursor(1),
+            KeyCode::Char('k') | KeyCode::Up => self.move_cursor(-1),
+            KeyCode::Char('g') | KeyCode::Home => self.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => {
+                self.cursor = self.summaries.len().saturating_sub(1)
+            }
+            KeyCode::Enter | KeyCode::Right => self.open_selected(),
+            KeyCode::Tab if self.front.is_some() => self.focus = Focus::List,
+            KeyCode::Esc if self.front.is_some() => self.focus = Focus::List,
+            KeyCode::Esc => self.request_quit(None),
+            KeyCode::Char('X') => self.confirm_stop(),
+            KeyCode::Char('?') => match self.front_app_mut() {
+                Some(app) => {
+                    app.help_scroll = 0;
+                    app.modal = Some(Modal::Help);
+                }
+                None => self.help = Some(0),
+            },
+            // A setup screen in front was only being looked at.
+            KeyCode::Char('q') if self.on_setup_screen() && self.front != self.started_in => {
+                self.close_front_setup();
+            }
+            // The front app's own `q`, which asks first about its own
+            // work in flight; with none in front, the grove's.
+            KeyCode::Char('q') if self.front.is_some() => {
+                self.send_front(AppEvent::Input(Event::Key(key)));
+            }
+            KeyCode::Char('q') => self.request_quit(None),
+            _ => {
+                self.grove_key(key);
+            }
+        }
+    }
+
+    /// Whether the project in front shows its setup screen, with nothing
+    /// open over it.
+    fn on_setup_screen(&self) -> bool {
+        self.front_app()
+            .is_some_and(|app| app.setup_screen.is_some() && app.modal.is_none())
+    }
+
+    /// `q` on the setup screen of a project opened from the grove: back to
+    /// the home pane, the column's cursor on it. Kept open behind while
+    /// it has work in flight, and nothing recorded, so its setup screen is
+    /// there again the next time it is opened.
+    fn close_front_setup(&mut self) {
+        self.go_home(true);
+    }
+
+    /// Back to the home pane from the project in front, the column's
+    /// cursor on it: kept open behind, or, when `close` and nothing is in
+    /// flight in it, closed.
+    pub(super) fn go_home(&mut self, close: bool) {
+        let Some(id) = self.front.take() else {
+            return;
+        };
+        if close && self.open.get(&id).is_some_and(|o| o.app.pending.is_empty()) {
+            self.open.remove(&id);
+        }
+        if let Some(i) = self.summaries.iter().position(|s| s.id == id) {
+            self.cursor = i;
+        }
+        self.focus = Focus::Column;
+    }
+
+    pub(super) fn move_cursor(&mut self, delta: isize) {
+        let last = self.summaries.len().saturating_sub(1);
+        self.cursor = self.cursor.saturating_add_signed(delta).min(last);
+    }
+
+    /// `[` and `]`: the previous or the next project that can be opened,
+    /// round the end of the list, brought to the front.
+    pub(super) fn step_project(&mut self, delta: isize) {
+        let count = self.summaries.len();
+        if count == 0 {
+            return;
+        }
+        let from = self
+            .front
+            .as_deref()
+            .and_then(|id| self.summaries.iter().position(|s| s.id == id))
+            .unwrap_or(self.cursor);
+        let mut at = from;
+        for _ in 0..count {
+            at = (at as isize + delta).rem_euclid(count as isize) as usize;
+            if !self.summaries[at].moved {
+                break;
+            }
+        }
+        if self.summaries[at].moved || (at == from && self.front.is_some()) {
+            return;
+        }
+        let focus = self.focus;
+        self.cursor = at;
+        self.open_selected();
+        // From the list, the keys stay on a list; from the column, on it.
+        self.focus = match self.front.is_some() {
+            true => focus,
+            false => Focus::Column,
+        };
+    }
+
+    /// `⏎` on a project: brought to the front if it is open, opened on a
+    /// worker otherwise, and its list given the keys. A moved project is
+    /// never opened: its repository is not where pando knew it.
+    pub(super) fn open_selected(&mut self) {
+        let Some(summary) = self.selected().cloned() else {
+            return;
+        };
+        if summary.moved {
+            let text = match summary.located() {
+                _ if summary.unreadable => {
+                    format!("{} cannot be read — {}", summary.name, summary.read_again())
+                }
+                true => format!(
+                    "{} is not at {} any more — {}",
+                    summary.name,
+                    crate::tui::render::home_relative(&summary.root),
+                    summary.adopt_hint()
+                ),
+                false => format!("{} is not located — {}", summary.name, summary.find_again()),
+            };
+            self.say(text, true);
+            return;
+        }
+        if self.open.contains_key(&summary.id) {
+            self.bring_send_front(&summary.id);
+            return;
+        }
+        self.request_open(&summary);
+    }
+
+    /// `X`: asks first, naming every worktree of the project it would
+    /// stop.
+    fn confirm_stop(&mut self) {
+        let Some(summary) = self.selected() else {
+            return;
+        };
+        if summary.moved {
+            // Never stopped from here, but what still runs is named, with
+            // the way to end it.
+            let up: Vec<&crate::actions::LiveWorktree> =
+                summary.worktrees.iter().filter(|w| w.is_up()).collect();
+            let text = match up.is_empty() {
+                true if summary.unreadable => {
+                    format!("{} cannot be read — {}", summary.name, summary.read_again())
+                }
+                true => format!("{} has moved — nothing of it is acted on", summary.name),
+                false => {
+                    let names: Vec<&str> = up.iter().map(|w| w.name.as_str()).collect();
+                    let pids: Vec<String> = up
+                        .iter()
+                        .flat_map(|w| w.processes.values().map(|p| p.pid.to_string()))
+                        .collect();
+                    format!(
+                        "{} has moved, and {} of it still {} (pid {}) — pando acts on nothing \
+                         of a moved project; `kill` ends them",
+                        summary.name,
+                        names.join(", "),
+                        if names.len() == 1 { "runs" } else { "run" },
+                        pids.join(", ")
+                    )
+                }
+            };
+            self.say(text, true);
+            return;
+        }
+        // What is up or coming up, as the project's own `X` stops: a
+        // failed worktree is not up, and its ✗ says so.
+        let worktrees: Vec<String> = summary
+            .worktrees
+            .iter()
+            .filter(|w| w.is_up())
+            .map(|w| w.name.clone())
+            .collect();
+        // Which of two projects of one name, as the column tells them
+        // apart: by the folder each is in.
+        let name = match summary.twin_folder(&self.summaries) {
+            Some(twin) => format!("{} ({})", summary.name, twin.folder),
+            None => summary.name.clone(),
+        };
+        if worktrees.is_empty() {
+            self.say(format!("nothing is up in {name}"), false);
+            return;
+        }
+        self.confirm = Some(StopConfirm {
+            id: summary.id.clone(),
+            name,
+            worktrees,
+        });
+    }
+
+    /// The confirmation's `y`: the project's own app stops what it
+    /// showed, opened for it first when it is not.
+    fn stop_project(&mut self, confirm: StopConfirm) {
+        if self.open.contains_key(&confirm.id) {
+            self.stop_in(&confirm.id, confirm.worktrees);
+            return;
+        }
+        let Some(summary) = self.summaries.iter().find(|s| s.id == confirm.id).cloned() else {
+            return;
+        };
+        self.stop_after_open.insert(confirm.id, confirm.worktrees);
+        self.request_open(&summary);
+    }
+
+    /// Stops `names` in `id`'s open app. Its header says so, which
+    /// nobody sees while the project is behind; the grove says then what
+    /// it stops, and why a stop the app refuses — an action already
+    /// covers one of them — did nothing, so a confirmed stop is never
+    /// silent.
+    pub(super) fn stop_in(&mut self, id: &str, names: Vec<String>) {
+        let front = self.front.as_deref() == Some(id);
+        let Some(opened) = self.open.get_mut(id) else {
+            return;
+        };
+        let listed = names.join(", ");
+        let started = opened.app.stop_everything(names);
+        if front {
+            return;
+        }
+        let app = &opened.app;
+        if started {
+            let name = app.paths.project.display_name.clone();
+            self.say(format!("stopping {listed} in {name}…"), false);
+            return;
+        }
+        let why = app
+            .status
+            .as_ref()
+            .map(|s| s.message.clone())
+            .unwrap_or_default();
+        let name = app.paths.project.display_name.clone();
+        self.say(format!("nothing was stopped in {name}: {why}"), true);
+    }
+}

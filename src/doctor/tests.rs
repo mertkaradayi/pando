@@ -3637,9 +3637,23 @@ fn adopting_moves_the_folder_and_everything_in_it() {
     record.ports.insert("web".to_string(), 17_001);
     let path = from.join("state.json");
     state::save(&path, &one_worktree("feat+one", record)).expect("state");
+    // Its registry names where the repository was; this one's own
+    // directory, made by a command run since the move, has its own.
+    let was = crate::project::Registered {
+        root: gone.clone(),
+        name: fx.paths.project.display_name.clone(),
+        repos: Vec::new(),
+    };
+    crate::project::remember_as(&from, &was).expect("registry");
+    fx.paths.ensure_home().expect("home");
 
     let adoption = adopt(&fx.paths, &old_id, &yes).expect("adopt");
     assert_eq!(adoption.to, fx.paths.project_dir());
+    assert_eq!(
+        crate::project::registered(&adoption.to),
+        Some(crate::project::Registered::of(&fx.paths.project)),
+        "the registry names where the repository is now"
+    );
     assert!(!from.exists(), "the old folder is gone");
     assert!(fx.paths.config_file().exists(), "the config came with it");
     assert!(

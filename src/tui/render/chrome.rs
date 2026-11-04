@@ -132,11 +132,13 @@ pub(super) fn setup_hint_line(app: &App, width: usize) -> Option<Line<'static>> 
     Some(truncate_line(Line::from(spans), width))
 }
 
-pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
+/// `screen_height` is the height of the whole area the TUI is drawn in,
+/// which `header_height` was given too.
+pub(super) fn render_header(f: &mut Frame, area: Rect, screen_height: u16, app: &App) {
     // The setup line keeps the header's last row whatever else it says.
     let area = match setup_hint_line(app, area.width as usize) {
         // As `header_height` counted it.
-        Some(line) if f.area().height >= SETUP_LINE_MIN_HEIGHT && area.height >= 2 => {
+        Some(line) if screen_height >= SETUP_LINE_MIN_HEIGHT && area.height >= 2 => {
             let [top, bottom] =
                 Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
             f.render_widget(
@@ -188,11 +190,23 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
     // A folder whose repositories are on different branches says each
     // where the bar has room for them beside the count, and that they
     // differ where it does not: a cut list names some and not others.
-    let essentials = text_width(" pando ")
-        + build_label_spans(crate::version::label())
-            .iter()
-            .map(|span| text_width(&span.content))
-            .sum::<usize>()
+    // The grove's column carries pando's own name and build while it is
+    // up, so the bar starts at the project.
+    let lead = match app.grove_chrome {
+        true => vec![Span::raw(" ")],
+        false => {
+            let mut lead = vec![Span::styled(
+                " pando ",
+                Style::new().fg(blue()).add_modifier(Modifier::BOLD),
+            )];
+            lead.extend(build_label_spans(crate::version::label()));
+            lead
+        }
+    };
+    let essentials = lead
+        .iter()
+        .map(|span| text_width(&span.content))
+        .sum::<usize>()
         + text_width(project)
         + text_width(" · ")
         + text_width(&branch)
@@ -209,13 +223,12 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
             None => {}
         }
     }
-    let mut spans = vec![Span::styled(
-        " pando ",
-        Style::new().fg(blue()).add_modifier(Modifier::BOLD),
-    )];
-    spans.extend(build_label_spans(crate::version::label()));
+    let mut spans = lead;
+    spans.push(Span::styled(project.clone(), Style::new().fg(text())));
+    // Another project in the grove has its name: its folder goes here,
+    // once the rest is known, since it gives way before all of it.
+    let folder_at = spans.len();
     spans.extend([
-        Span::styled(project.clone(), Style::new().fg(text())),
         Span::styled(" · ", Style::new().fg(text_muted())),
         Span::styled(branch, Style::new().fg(blue())),
     ]);
@@ -241,6 +254,7 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
             Style::new().fg(red()).add_modifier(Modifier::BOLD),
         ));
     }
+    let core_width: usize = spans.iter().map(|s| text_width(&s.content)).sum();
     // One chip per shared service, so a dev server that will not connect
     // says whose fault it is before the developer reads a stack trace —
     // under a label that says what the dots are: the project's own
@@ -268,6 +282,22 @@ pub(super) fn render_header(f: &mut Frame, area: Rect, app: &App) {
             " · reading git",
             Style::new().fg(text_muted()),
         ));
+    }
+    // The folder, dimmed, as the column says it, so the one in front
+    // reads as the one it is: whole where everything fits beside it, and
+    // otherwise only where it differs, in what the project, its branch
+    // and what runs leave, so it never pushes those off the bar.
+    if let Some(twin) = &app.twin_folder {
+        let width = area.width as usize;
+        let all_width: usize = spans.iter().map(|s| text_width(&s.content)).sum();
+        let whole_room = width.saturating_sub(all_width + 1);
+        let room = width.saturating_sub(core_width + 1);
+        if let Some(folder) = super::twins::header_folder(twin, whole_room, room) {
+            spans.insert(
+                folder_at,
+                Span::styled(format!(" {folder}"), Style::new().fg(text_muted())),
+            );
+        }
     }
     f.render_widget(
         Paragraph::new(truncate_line(Line::from(spans), area.width as usize))
@@ -463,11 +493,13 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                 .copied()
                 .filter(|(key, ..)| *key != "esc" || app.filter.is_empty())
                 .collect();
-            hint_line(&hints, hints_width)
+            list_hints(app, &hints, hints_width)
         }
         Mode::Normal => match selected {
-            None => hint_line(&EMPTY_HINTS, hints_width),
-            Some(name) if app.start_to_cancel(&name) => hint_line(&STARTING_HINTS, hints_width),
+            None => list_hints(app, &EMPTY_HINTS, hints_width),
+            Some(name) if app.start_to_cancel(&name) => {
+                list_hints(app, &STARTING_HINTS, hints_width)
+            }
             // A shared worktree's public URL is what gets handed out, so
             // its keys come right after the one that shared it.
             Some(name) if app.public_url_of(&name).is_some() => {
@@ -477,15 +509,16 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                     "t",
                     &[("O", "public", false), ("C", "copy public", false)],
                 );
-                hint_line(&with_pr_hint(app, hints), hints_width)
+                list_hints(app, &with_pr_hint(app, hints), hints_width)
             }
             Some(name) if app.phase_of(&name).is_some() => {
-                hint_line(&with_pr_hint(app, RUNNING_HINTS.to_vec()), hints_width)
+                list_hints(app, &with_pr_hint(app, RUNNING_HINTS.to_vec()), hints_width)
             }
             // Said first, in the footer's own row: what `⏎` would have
             // done, and the pane beside it says where to fix it.
             Some(_) if app.nothing_to_run => {
-                let mut line = hint_line(
+                let mut line = list_hints(
+                    app,
                     &with_pr_hint(app, NOTHING_TO_RUN_HINTS.to_vec()),
                     hints_width.saturating_sub(17),
                 );
@@ -495,7 +528,7 @@ pub(super) fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                 );
                 truncate_line(line, hints_width)
             }
-            Some(_) => hint_line(&with_pr_hint(app, STOPPED_HINTS.to_vec()), hints_width),
+            Some(_) => list_hints(app, &with_pr_hint(app, STOPPED_HINTS.to_vec()), hints_width),
         },
     };
     let line = match marked {
@@ -549,6 +582,21 @@ fn insert_after<'a>(
         .position(|(k, ..)| *k == key)
         .map_or(0, |i| i + 1);
     hints.splice(at..at, extra.iter().copied());
+}
+
+/// The list's hints, its `q` saying where it goes: home, in a grove
+/// begun on its home pane.
+fn list_hints(app: &App, hints: &[(&str, &str, bool)], width: usize) -> Line<'static> {
+    let hints: Vec<(&str, &str, bool)> = hints
+        .iter()
+        .map(
+            |&(key, label, essential)| match (key, app.in_grove && app.home_behind) {
+                ("q", true) => (key, "home", essential),
+                _ => (key, label, essential),
+            },
+        )
+        .collect();
+    hint_line(&hints, width)
 }
 
 pub(super) fn hint_line(hints: &[(&str, &str, bool)], width: usize) -> Line<'static> {

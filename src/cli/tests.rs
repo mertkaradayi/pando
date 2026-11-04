@@ -6228,3 +6228,316 @@ fn the_answers_file_takes_repos_as_the_repos_table() {
         "{flat}"
     );
 }
+
+// ---- ls --all ---------------------------------------------------------------
+
+/// A home holding two projects whose live worktrees both claim port
+/// 17_001: the fixture's `acme-shop`, with `feat+one` up and `feat+two`
+/// failed, and `other`, with `feat+web` up. The guards keep the live
+/// processes up until the test ends.
+struct Machine {
+    fx: Fx,
+    other: ProjectRef,
+    _live: Vec<crate::testutil::Detached>,
+}
+
+fn machine() -> Machine {
+    let fx = fixture();
+    actions::new(&fx.paths, &fx.config, "feat/one", None, &|_| {}).unwrap();
+    let logs = fx.paths.home.join("test-logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let spawn = |name: &str| {
+        crate::testutil::spawn_guarded("sleep 30", &logs, &logs.join(format!("{name}.log")))
+    };
+    let (a, b) = (spawn("a"), spawn("b"));
+    let live = |d: &crate::testutil::Detached| ProcessRecord {
+        pid: d.pid,
+        pgid: d.pgid,
+        started_at: Utc::now(),
+        log_path: logs.join("a.log"),
+        ready_port: None,
+        ready_timeout_s: None,
+        observed_ports: Vec::new(),
+        swept: false,
+        phase: Phase::Running { since: Utc::now() },
+    };
+
+    let mut store = crate::state::load(&fx.paths.state_file()).unwrap();
+    let one = store.worktrees.get_mut("feat+one").unwrap();
+    one.processes.insert("dev".into(), live(&a));
+    one.ports.insert("web".into(), 17_001);
+    let mut two = WorktreeRecord::new(fx.paths.worktree_path("feat+two"), true);
+    two.processes.insert(
+        "dev".into(),
+        ProcessRecord {
+            phase: Phase::Failed {
+                at: Utc::now(),
+                reason: "exited with code 1".into(),
+            },
+            ..live(&a)
+        },
+    );
+    store.worktrees.insert("feat+two".into(), two);
+    crate::state::save(&fx.paths.state_file(), &store).unwrap();
+
+    let other_root = fx.root.parent().unwrap().join("other");
+    std::fs::create_dir_all(other_root.join(".git")).unwrap();
+    let other = ProjectRef::from_root(&other_root).unwrap();
+    let other_paths = PandoPaths::new(&fx.paths.home, other.clone());
+    other_paths.ensure_home().unwrap();
+    let mut web = WorktreeRecord::new(other_root.join("trees/feat+web"), true);
+    web.processes.insert("web".into(), live(&b));
+    web.ports.insert("web".into(), 17_001);
+    let mut store = crate::state::State::new();
+    store.worktrees.insert("feat+web".into(), web);
+    crate::state::save(&other_paths.state_file(), &store).unwrap();
+    // `acme-shop` used an hour before `other`, whatever the clock's grain.
+    std::fs::File::options()
+        .write(true)
+        .open(fx.paths.state_file())
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+        .unwrap();
+    Machine {
+        fx,
+        other,
+        _live: vec![a, b],
+    }
+}
+
+#[test]
+fn ls_all_json_emits_the_documented_shape() {
+    let m = machine();
+    let text = capture(|b| ls_machine_json(&m.fx.paths.home, b));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+    // Pinned as a literal on purpose, as `ls --json`'s is.
+    assert_eq!(v["version"], 2);
+    let projects = v["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 2, "{text}");
+    // Both are live; the one used last comes first.
+    assert_eq!(projects[0]["id"], m.other.id.as_str(), "{text}");
+    let shop = &projects[1];
+    assert_eq!(shop["id"], m.fx.paths.project.id.as_str());
+    assert_eq!(shop["name"], "acme-shop");
+    assert_eq!(shop["root"], m.fx.root.display().to_string().as_str());
+    assert_eq!(shop["moved"], false);
+    assert!(shop["last_used"].is_string(), "{text}");
+    assert_eq!(shop["counts"]["up"], 1);
+    assert_eq!(shop["counts"]["failed"], 1);
+    assert_eq!(shop["counts"]["starting"], 0);
+    let worktrees = shop["worktrees"].as_array().unwrap();
+    assert_eq!(worktrees.len(), 2, "{text}");
+    let one = &worktrees[0];
+    assert_eq!(one["name"], "feat+one");
+    assert_eq!(one["status"], "running");
+    assert_eq!(one["reason"], serde_json::Value::Null);
+    assert_eq!(one["ports"]["web"], 17_001);
+    assert_eq!(one["clashes"], serde_json::json!([17_001]));
+    assert_eq!(one["processes"]["dev"]["phase"], "running");
+    let two = &worktrees[1];
+    assert_eq!(two["status"], "failed");
+    assert_eq!(two["reason"], "dev: exited with code 1");
+    // A failed worktree holds no port, so it clashes with nothing.
+    assert_eq!(two["clashes"], serde_json::json!([]));
+}
+
+// Every key `ls --all --json` prints, at every level, is one the contract
+// names.
+#[test]
+fn agent_json_documents_every_ls_all_key() {
+    let m = machine();
+    let text = capture(|b| ls_machine_json(&m.fx.paths.home, b));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let section = contract_section("## `pando ls --all --json`");
+    let documented = |what: &str, value: &serde_json::Value| {
+        for key in value.as_object().unwrap().keys() {
+            assert!(
+                section.contains(&format!("\"{key}\"")),
+                "agent/json.md never documents ls --all {what}.{key}"
+            );
+        }
+    };
+    documented("", &v);
+    for project in v["projects"].as_array().unwrap() {
+        documented("projects[]", project);
+        documented("projects[].counts", &project["counts"]);
+        for worktree in project["worktrees"].as_array().unwrap() {
+            documented("projects[].worktrees[]", worktree);
+            for process in worktree["processes"].as_object().unwrap().values() {
+                documented("projects[].worktrees[].processes.*", process);
+            }
+        }
+    }
+}
+
+#[test]
+fn ls_all_text_groups_by_project_and_marks_a_clash() {
+    let m = machine();
+    let text = capture(|b| ls_machine_text_with(&m.fx.paths.home, b, &LsView::plain(200)));
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].starts_with("● other"), "{text}");
+    assert!(lines[0].contains("1 up"), "{text}");
+    assert!(lines[1].trim_start().starts_with("feat+web"), "{text}");
+    assert!(lines[1].contains("running"), "{text}");
+    assert!(lines[1].contains("17001!"), "{text}");
+    assert!(lines[2].starts_with("✗ acme-shop"), "{text}");
+    assert!(lines[2].contains("1 up · 1 failed"), "{text}");
+    assert!(
+        lines[2].contains(&m.fx.root.display().to_string()),
+        "{text}"
+    );
+    assert!(text.contains("dev: exited with code 1"), "{text}");
+    assert!(
+        text.contains("! port 17001 is claimed by other feat+web and acme-shop feat+one")
+            || text.contains("! port 17001 is claimed by acme-shop feat+one and other feat+web"),
+        "{text}"
+    );
+}
+
+#[test]
+fn ls_all_says_so_when_pando_knows_no_project() {
+    let dir = tempdir().unwrap();
+    let text = capture(|b| ls_machine_text_with(dir.path(), b, &LsView::plain(80)));
+    assert!(text.contains("pando knows no project yet in "), "{text}");
+    assert!(text.contains(&dir.path().display().to_string()), "{text}");
+    let json = capture(|b| ls_machine_json(dir.path(), b));
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["projects"], serde_json::json!([]));
+}
+
+#[test]
+fn ls_all_says_how_to_locate_a_project_nothing_records_the_place_of() {
+    let dir = tempdir().unwrap();
+    let project_dir = dir.path().join("projects").join("acme-shop-1fb718a9");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let mut store = crate::state::State::new();
+    store.worktrees.insert(
+        "feat+old".into(),
+        crate::state::WorktreeRecord::new(dir.path().join("gone"), true),
+    );
+    crate::state::save(&project_dir.join("state.json"), &store).unwrap();
+    let text = capture(|b| ls_machine_text_with(dir.path(), b, &LsView::plain(120)));
+    assert!(text.contains("acme-shop"), "{text}");
+    assert!(text.contains("not located"), "{text}");
+    // How to bring it back, whole, on its own line: the command with the
+    // id `--adopt` takes, never cut to the width.
+    assert!(
+        text.contains(
+            "    run pando in its repository; if it moved, `pando doctor --adopt \
+             acme-shop-1fb718a9` run where it is now adopts it while its folder is still called \
+             acme-shop; renamed, pando there starts it afresh"
+        ),
+        "{text}"
+    );
+    let json = capture(|b| ls_machine_json(dir.path(), b));
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["projects"][0]["root"], "");
+    assert_eq!(v["projects"][0]["moved"], true);
+}
+
+// Two clones of one repository, both main checkouts up on one port:
+// told apart by where each is, and never "plain plain".
+#[test]
+fn a_clash_between_two_projects_of_one_name_names_where_each_is() {
+    let project = |root: &str, claimed: u16| actions::ProjectSummary {
+        id: format!("plain-{:08x}", claimed as u32 + root.len() as u32),
+        name: "plain".into(),
+        root: PathBuf::from(root),
+        repos: Vec::new(),
+        moved: false,
+        unreadable: false,
+        up: 1,
+        starting: 0,
+        failed: 0,
+        stopped: 0,
+        worktrees: vec![actions::LiveWorktree {
+            name: "plain".into(),
+            path: PathBuf::from(root),
+            phase: crate::state::Aggregate::Running {
+                since: chrono::Utc::now(),
+            },
+            processes: Default::default(),
+            ports: Default::default(),
+            claimed: [claimed].into(),
+        }],
+        last_used: None,
+        warning: None,
+    };
+    let summaries = vec![project("/work/plain", 8000), project("/tmp/x/plain", 8000)];
+    let lines = super::machine::clash_lines(&summaries, &crate::term::Style::plain());
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(
+        lines[0].contains("/work/plain (main checkout)"),
+        "{lines:?}"
+    );
+    assert!(
+        lines[0].contains("/tmp/x/plain (main checkout)"),
+        "{lines:?}"
+    );
+    assert!(!lines[0].contains("plain plain"), "{lines:?}");
+}
+
+// `-l` on a narrow terminal: the failed worktree's path and reason share
+// the width rather than the reason being cut and the path run past it.
+#[test]
+fn ls_all_long_fits_a_worktrees_path_and_reason_in_the_width() {
+    let m = machine();
+    let view = LsView {
+        width: 60,
+        long: true,
+        style: crate::term::Style::plain(),
+    };
+    let text = capture(|b| ls_machine_text_with(&m.fx.paths.home, b, &view));
+    for line in text.lines().filter(|l| l.starts_with("    ")) {
+        assert!(
+            crate::term::visible_width(line) <= 60,
+            "{line:?} in\n{text}"
+        );
+    }
+    let failed = text.lines().find(|l| l.contains("feat+two")).unwrap();
+    assert!(failed.contains('…'), "{failed}");
+}
+
+#[test]
+fn ls_all_fails_on_a_home_it_cannot_read_rather_than_listing_none() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("projects"), "").unwrap();
+    let mut out = Vec::new();
+    assert!(ls_machine_json(dir.path(), &mut out).is_err());
+    assert!(out.is_empty(), "{}", String::from_utf8_lossy(&out));
+    let mut out = Vec::new();
+    assert!(ls_machine_text_with(dir.path(), &mut out, &LsView::plain(80)).is_err());
+}
+
+// A state file pando may not read is said under the project, its path
+// written with `~` as the project's own path above it is.
+#[test]
+fn ls_all_writes_an_unreadable_state_files_path_under_the_home_with_a_tilde() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempdir().unwrap();
+    let user_home = std::fs::canonicalize(dir.path()).unwrap();
+    let home = user_home.join(".pando");
+    let project_dir = home.join("projects").join("acme-shop-1fb718a9");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let file = project_dir.join("state.json");
+    crate::state::save(&file, &crate::state::State::new()).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::read(&file).is_ok();
+    let view = LsView {
+        width: 200,
+        long: false,
+        style: crate::term::Style::with(false, Some(user_home.clone())),
+    };
+    let text = capture(|b| ls_machine_text_with(&home, b, &view));
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    // Root reads it all the same: nothing to prove then.
+    if readable {
+        return;
+    }
+    assert!(
+        text.contains("~/.pando/projects/acme-shop-1fb718a9/state.json"),
+        "{text}"
+    );
+    assert!(!text.contains(&user_home.display().to_string()), "{text}");
+}

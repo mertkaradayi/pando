@@ -7,6 +7,85 @@ may change behaviour.
 
 ## Unreleased
 
+### Changed
+
+- `pando` with no command no longer makes a folder of repositories it
+  does not know a project by opening it: it opens the grove and says
+  that `pando init` or `pando new <branch>` there makes them one. A
+  command still takes such a folder as before. Your home directory, the
+  root of the filesystem and any folder holding pando's own home are
+  never a project of the repositories in them, so `cd ~ && pando` opens
+  the grove where it refused with "pando home … is inside the
+  repository ~". Outside a project there, pando says which of these the
+  folder is before it counts the repositories in it.
+- A command outside any project names `pando ls --all`, and the
+  repository in reach when the directory holds one; `pando` alone into a
+  pipe says it needs a terminal wherever it runs. `pando ls --all`
+  answers from a directory that was removed.
+- A pando home or `worktrees_dir` inside a folder of repositories is
+  refused as inside that folder, naming its repositories, rather than
+  inside "the repository" it is not.
+
+### Added
+
+- `pando ls --all` lists every project pando knows on this machine, from
+  any directory, inside a repository or not: the ones with something up
+  first, each with what it has up, starting, failed and stopped, its
+  live worktrees' processes and ports, and a port two projects claim
+  marked. `--json` is a published shape, documented in `agent/json.md`.
+  It reads each project's state the way `status` does and saves none
+  of it.
+  A project whose folder pando may not read is listed as unreadable,
+  with why, and never acted on.
+- The TUI's grove: a column left of the worktrees lists every project
+  pando knows, the ones with something up first, each a stem in the
+  list's glyphs, all standing on one root line that lights while
+  anything is up. `[` `]` bring the previous and next project to the
+  front, `←` moves to the column, where `⏎` opens a project and `X`
+  stops everything up in it after naming each worktree, leaving what is
+  in front there and saying what it stops; `w` hides the
+  column and `{` `}` resize it. A project opened stays open while
+  another is in front, so what is in flight in it finishes, and `q`
+  asks first when it would abandon work in another project. Where the
+  whole column would leave the project in front under 92 columns, it
+  folds to one line above the list (`grove = "on"` keeps it down to 72).
+  With one project known it stays hidden until `w`. Two projects of one
+  name show the folder each is in, cut where it is too long to the part
+  that tells it from every other of the name, a long name giving way to
+  a short head of itself so that part still shows; where not one
+  character of it fits, each carries its place in the column instead,
+  `·1` `·2`; names of their own that would read alike once cut are cut
+  where they differ instead, so no two read alike, and the header of the one in front
+  and its setup screen say its folder after its name, cut to the part
+  that differs before the branch or what runs gives way. `!` marks one with a port another
+  project claims too, kept however short its label is cut.
+- The grove's layout is the developer's, saved in `~/.pando/config.toml`
+  by the key that changes it, as `,` saves the list's order: `[ui] grove`
+  (`auto`, `on`, `off`) by `w`, `grove_width` by `{` `}`, and the detail
+  pane's placement, `detail` (`right`, `bottom`, `off`), by `|` and its
+  share, `detail_size` in percent, by `<` `>`. With nothing set the
+  screen is what it was.
+- `pando` outside any repository opens the grove instead of failing:
+  every project pando knows, drawn as the brand's grove with a stem for
+  each, in leaf when something of it is up. Where the pane cannot name
+  them all readably, the first in the column's order get a stem and the
+  rest are counted under them, so no label is cut to a mark alone, with
+  where to find them: the column, `j` `k` in the strip it folds to, or
+  `w` where it is hidden. Begun there, `q` or esc on
+  a project's list goes back to it, leaving the project open with what
+  is in flight in it, and `q` on the home pane quits.
+- Each project's directory under pando's home records where its
+  repository is, in `project.json`, written when pando runs there,
+  whatever the command, a read-only one included. A
+  project pando ran in before is recovered from the checkouts its state
+  records, and one whose repository has moved is listed as moved, with
+  the `pando doctor --adopt <id>` that adopts it where it is now while
+  its folder keeps its name (a renamed one starts afresh there);
+  what of it still runs is listed as running, with the live projects,
+  and its ports count in a clash. A home whose projects cannot be read
+  is an error, never an empty list, and a project directory that cannot
+  be is listed with why.
+
 ## 0.11.2 — 2026-10-31
 
 ### Added

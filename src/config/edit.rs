@@ -18,7 +18,7 @@ use toml_edit::{DocumentMut, Item, RawString, Table as EditTable, Value};
 pub fn write(paths: &PandoPaths, config: &Config) -> Result<()> {
     paths.ensure_home()?;
     let text = toml::to_string_pretty(config).context("serialize pando.toml")?;
-    write_private_atomic(&paths.config_file(), &text)
+    crate::paths::write_private_atomic(&paths.config_file(), &text, CONFIG_MODE)
 }
 
 /// Which of the files pando may write an answer to.
@@ -140,9 +140,47 @@ where
     F: FnOnce(&mut DocumentMut) -> Result<()>,
 {
     paths.ensure_home()?;
-    let file = layer.file(paths);
+    let root = [paths.root().to_path_buf()];
+    patch_file(&layer.file(paths), &root, layer.header(), edit)
+}
+
+/// [`patch`] for the user layer, where there may be no project: the TUI
+/// outside any repository saves how it is laid out here. Never makes the
+/// home — a home pando never ran in has nothing to lay out — and refuses
+/// one that is not there.
+///
+/// With no project to hold a link against, a link is held against every
+/// project the home registers: one that leads into any of their
+/// repositories is refused, as [`patch`] refuses one into its own.
+pub fn patch_user<F>(home: &Path, edit: F) -> Result<()>
+where
+    F: FnOnce(&mut DocumentMut) -> Result<()>,
+{
+    if !home.is_dir() {
+        anyhow::bail!("there is no pando home at {} yet", home.display());
+    }
+    // Never written past a project it could not read the root of.
+    let roots: Vec<PathBuf> = crate::project::project_dirs(home)?
+        .into_iter()
+        .filter_map(|(_, dir)| crate::project::registered(&dir))
+        .map(|registered| registered.root)
+        .collect();
+    patch_file(
+        &home.join(crate::paths::USER_CONFIG_FILE),
+        &roots,
+        Layer::User.header(),
+        edit,
+    )
+}
+
+/// The patch itself, on `file`; a link it is written through is refused
+/// when it leads into any of `roots`, the repositories it must stay out of.
+fn patch_file<F>(file: &Path, roots: &[PathBuf], header: &str, edit: F) -> Result<()>
+where
+    F: FnOnce(&mut DocumentMut) -> Result<()>,
+{
     let _lock = crate::state::lock(&file.with_extension("toml.lock"))?;
-    let path = written_through(&file, paths.root())?;
+    let path = written_through(file, roots)?;
     let existing = match std::fs::read_to_string(&path) {
         Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -187,14 +225,14 @@ where
         // Nothing to say and nothing to write: a patch that added no keys to
         // a project with no config leaves it without one.
         None if body.trim().is_empty() => return Ok(()),
-        None => format!("{}{body}", layer.header()),
+        None => format!("{header}{body}"),
     };
     // And a file whose bytes already say exactly this is left alone too, so
     // mtime-driven watchers stay quiet and a re-run stays quiet with them.
     if existing.as_deref() == Some(rendered.as_str()) {
         return Ok(());
     }
-    write_private_atomic(&path, &rendered)
+    crate::paths::write_private_atomic(&path, &rendered, CONFIG_MODE)
 }
 
 /// Writes one key with the note explaining where it came from. The
@@ -619,7 +657,7 @@ fn comment_lines(space: Option<&RawString>, out: &mut String) {
 /// pando never writes there, whoever made the link. So is one that leads
 /// nowhere, because a file created wherever a dangling link points is not
 /// one anybody asked for.
-fn written_through(path: &Path, root: &Path) -> Result<PathBuf> {
+fn written_through(path: &Path, roots: &[PathBuf]) -> Result<PathBuf> {
     let linked = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
     if !linked {
         return Ok(path.to_path_buf());
@@ -634,40 +672,9 @@ fn written_through(path: &Path, root: &Path) -> Result<PathBuf> {
             path.display()
         )
     })?;
-    crate::paths::ensure_outside_repository("the config", &target, root, &[])
-        .with_context(|| format!("{} is a link to {}", path.display(), target.display()))?;
-    Ok(target)
-}
-
-/// Atomic, and 0600: the temp file is created 0600, so there is never a
-/// moment where a world-readable config exists at the final path.
-///
-/// The temp file is this writer's own, named for the process and a
-/// counter. With one shared name, a second writer truncated the file the
-/// first was about to rename, or renamed it away before the first could,
-/// and a command failed on a config nothing was wrong with.
-fn write_private_atomic(path: &Path, text: &str) -> Result<()> {
-    use std::io::Write;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let tmp = path.with_file_name(format!(
-        ".{name}.{}.{}.tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let written = crate::platform::files::create_new(&tmp, CONFIG_MODE)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
-        .with_context(|| format!("write {}", tmp.display()))
-        .and_then(|()| {
-            std::fs::rename(&tmp, path)
-                .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))
-        });
-    if written.is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    for root in roots {
+        crate::paths::ensure_outside_repository("the config", &target, root, &[])
+            .with_context(|| format!("{} is a link to {}", path.display(), target.display()))?;
     }
-    written
+    Ok(target)
 }

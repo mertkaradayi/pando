@@ -18,6 +18,7 @@ mod dialogs;
 mod git_menu;
 mod keymap;
 mod launch;
+mod layout;
 mod log_keys;
 mod log_view;
 mod marks;
@@ -40,11 +41,15 @@ pub use dialogs::{
 };
 pub use git_menu::{BY_HAND_KEY, GitStage};
 pub use keymap::{
-    INSPECT_LEGEND, KeyHelp, LEADER_KEYS, LIST_KEYS, LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE,
-    MOUSE_NOTE, MouseHelp, OVERLAY_KEYS, SETUP_KEYS, SETUP_LEGEND,
+    COLUMN_KEYS, GROVE_KEYS, INSPECT_LEGEND, KeyHelp, LEADER_KEYS, LIST_BACK_HOME, LIST_KEYS,
+    LIST_LEGEND, LIST_MOUSE, LOG_KEYS, LOG_MOUSE, MOUSE_NOTE, MouseHelp, OVERLAY_KEYS, SETUP_KEYS,
+    SETUP_LEGEND,
 };
 pub use launch::{
     Launch, LaunchEnv, LaunchRequest, is_terminal_editor, plan_editor, plan_shell, said_after,
+};
+pub use layout::{
+    DETAIL_SIDE_DEFAULT, DETAIL_STACKED_DEFAULT, DETAIL_STEP, DetailLayout, DetailPlacement,
 };
 pub use log_view::{LOG_VIEWER_CAPACITY, LineInspect, LogFilter, LogView, SearchMode, SearchState};
 pub use marks::MarkedRemoval;
@@ -387,6 +392,32 @@ pub struct App {
     pub setup_row: SetupRow,
     /// The four files both of those follow, polled on the tick.
     pub setup_watch: SetupWatch,
+    /// It runs inside the grove, beside every other project pando knows:
+    /// help lists the grove's keys too. Set by the grove, never by the
+    /// app itself.
+    pub in_grove: bool,
+    /// pando began on the grove's home pane, outside any repository, so
+    /// the list's `q` and esc go back there rather than quit. Set by the
+    /// grove.
+    pub home_behind: bool,
+    /// `q` or esc asked to go back to the home pane, which the grove does
+    /// after the event.
+    pub wants_home: bool,
+    /// The grove's column is drawn beside it and carries pando's name and
+    /// build, so the header starts at the project. Set by the grove
+    /// before each frame.
+    pub grove_chrome: bool,
+    /// The folder its repository is in, when another project in the
+    /// grove has its name: the header says it after the name, as the
+    /// column does, cut to the room the header leaves it. Set by the
+    /// grove before each frame.
+    pub twin_folder: Option<crate::actions::TwinFolder>,
+    /// Where the detail pane sits and how much it takes: `[ui] detail`
+    /// and `detail_size`, which the grove changes for every project.
+    pub detail: DetailLayout,
+    /// Whether the last frame stacked the detail pane under the list, so
+    /// `<` and `>` start from the share it had there.
+    pub detail_stacked: bool,
     /// The checks `v` asked for, counted instead of started when tests
     /// drive the app.
     #[cfg(test)]
@@ -408,6 +439,7 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel();
         let theme_settings = config.ui.theme_settings();
         let sort = ListSort::from_config(&config);
+        let detail = DetailLayout::from_config(&config);
         let themes_dir = paths.themes_dir();
         let mut app = Self {
             paths,
@@ -480,6 +512,13 @@ impl App {
             setup_screen: None,
             setup_row: SetupRow::default(),
             setup_watch: SetupWatch::default(),
+            in_grove: false,
+            home_behind: false,
+            wants_home: false,
+            grove_chrome: false,
+            twin_folder: None,
+            detail,
+            detail_stacked: false,
             #[cfg(test)]
             checks_started: 0,
             #[cfg(test)]
@@ -728,6 +767,43 @@ impl App {
         }
     }
 
+    /// Whether the list is all there is to it right now: no modal, no
+    /// setup screen, no log viewer, no filter being typed, no leader or
+    /// second press waiting. The grove takes its own keys only then, so a
+    /// key meant for any of those still reaches it.
+    pub fn idle_on_list(&self) -> bool {
+        self.modal.is_none()
+            && self.setup_screen.is_none()
+            && matches!(self.view, View::List)
+            && self.inspect.is_none()
+            && self.mode == Mode::Normal
+            && !self.leader
+            && self.armed.is_none()
+            && self.queued_questions.is_empty()
+    }
+
+    /// A tick for a project the grove holds open behind the one in front:
+    /// what is in flight in it lands, and its state is read again now and
+    /// then, but nothing on screen is kept up, since none of it is. Returns
+    /// whether something landed, which the column may show.
+    pub fn background_tick(&mut self) -> bool {
+        self.tick = self.tick.wrapping_add(1);
+        let before = self.pending.len();
+        self.poll_pending();
+        if self.tick.is_multiple_of(SLOW_TICK_EVERY) {
+            self.spawn_refresh();
+        }
+        self.expire_status();
+        before != self.pending.len()
+    }
+
+    /// The grove brought this project to the front: what changed while it
+    /// was behind is read again, as when the terminal's focus comes back.
+    pub fn brought_to_front(&mut self) {
+        self.spawn_refresh();
+        self.focus_gained();
+    }
+
     /// Replaces the session's config: a worker resolved something, or the
     /// setup screen hands over what its files say now. The two places the
     /// session's config changes while it runs.
@@ -866,7 +942,9 @@ impl App {
             }
             Some(Modal::StopAll { names }) => {
                 match key.code {
-                    KeyCode::Char('y') | KeyCode::Enter => self.stop_everything(names),
+                    KeyCode::Char('y') | KeyCode::Enter => {
+                        self.stop_everything(names);
+                    }
                     KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {}
                     _ => self.modal = Some(Modal::StopAll { names }),
                 }
@@ -1071,7 +1149,14 @@ impl App {
     /// does not say are isolated. A cancel lands at the start's next safe
     /// point, so a hook it is running finishes first; a `q` meanwhile
     /// quits at once. Anything else in flight is abandoned, as before.
+    ///
+    /// Begun on the grove's home pane, they go back to it instead, which
+    /// abandons nothing: what is in flight goes on behind.
     fn quit(&mut self, key: KeyCode) {
+        if self.home_behind && !self.quitting {
+            self.wants_home = true;
+            return;
+        }
         if self.quitting && key == KeyCode::Char('q') {
             self.should_quit = true;
             return;
@@ -1783,6 +1868,7 @@ impl App {
         let (event_tx, event_rx) = mpsc::channel();
         let theme_settings = config.ui.theme_settings();
         let sort = ListSort::from_config(&config);
+        let detail = DetailLayout::from_config(&config);
         let themes_dir = paths.themes_dir();
         let mut app = Self {
             paths,
@@ -1855,6 +1941,13 @@ impl App {
             setup_screen: None,
             setup_row: SetupRow::default(),
             setup_watch: SetupWatch::default(),
+            in_grove: false,
+            home_behind: false,
+            wants_home: false,
+            grove_chrome: false,
+            twin_folder: None,
+            detail,
+            detail_stacked: false,
             checks_started: 0,
             clipboard: None,
             opened: None,

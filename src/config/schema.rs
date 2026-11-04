@@ -675,6 +675,25 @@ pub struct UiSection {
     /// terminals, option in iTerm2 — so `false` leaves the mouse to it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mouse: Option<bool>,
+    /// The column of every project beside the TUI, one of [`GROVE_MODES`]:
+    /// `auto` (the default) shows it when pando knows two projects or
+    /// more. `w` in the TUI turns it on or off and saves it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grove: Option<String>,
+    /// How many cells wide that column is, within [`GROVE_WIDTH_MIN`] and
+    /// [`GROVE_WIDTH_MAX`]. `{` and `}` change it and save it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grove_width: Option<u16>,
+    /// Where the detail pane sits beside the worktree list, one of
+    /// [`DETAIL_PLACEMENTS`]: `right` (the default; stacked below on a
+    /// narrow screen), `bottom`, or `off`. `|` cycles it and saves it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// The share of the screen the detail pane takes, in percent, within
+    /// [`DETAIL_SIZE_MIN`] and [`DETAIL_SIZE_MAX`]. `<` and `>` change it
+    /// and save it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail_size: Option<u16>,
 }
 
 /// The spellings `[ui] appearance` takes.
@@ -683,6 +702,23 @@ pub const APPEARANCES: [&str; 3] = ["auto", "dark", "light"];
 /// The spellings `[ui] sort` takes, in the order `,` cycles them. The
 /// TUI's `ListSort` is held to this list by a test.
 pub const LIST_SORTS: [&str; 4] = ["pr", "newest", "run", "name"];
+
+/// The spellings `[ui] grove` takes, in the order the TUI's own type
+/// lists them, which a test holds it to.
+pub const GROVE_MODES: [&str; 3] = ["auto", "on", "off"];
+
+/// The narrowest and widest `[ui] grove_width`: a name beside its marks,
+/// and never so wide the project's own list is squeezed.
+pub const GROVE_WIDTH_MIN: u16 = 18;
+pub const GROVE_WIDTH_MAX: u16 = 40;
+
+/// The spellings `[ui] detail` takes, in the order `|` cycles them.
+pub const DETAIL_PLACEMENTS: [&str; 3] = ["right", "bottom", "off"];
+
+/// The smallest and largest `[ui] detail_size`, in percent: under the
+/// one the pane holds no address, over the other the list holds no row.
+pub const DETAIL_SIZE_MIN: u16 = 20;
+pub const DETAIL_SIZE_MAX: u16 = 80;
 
 impl UiSection {
     fn is_empty(&self) -> bool {

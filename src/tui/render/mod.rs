@@ -10,24 +10,33 @@
 
 mod chrome;
 mod detail;
+mod grove;
 mod hints;
 mod list;
 mod log_viewer;
 mod setup;
+mod twins;
 mod welcome;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 
-use super::app::{App, Hits};
+use super::app::{App, DetailLayout, DetailPlacement, Hits};
 
 use chrome::{header_height, render_footer, render_header};
 use detail::render_detail;
+#[cfg(test)]
+pub(super) use grove::PROJECT_ROOMY_WIDTH;
+pub(super) use grove::render_grove;
+#[cfg(test)]
+pub(crate) use grove::{IDLE_CAPTIONS, STEM_LABEL_MIN, column_title, stems_with_room};
 use list::render_list;
 pub(super) use list::run_marker;
 use log_viewer::{render_inspect, render_log_viewer};
 use setup::render_setup;
+#[cfg(test)]
+pub(crate) use twins::names_apart;
 use welcome::render_welcome;
 
 /// Below this the list and the detail pane stop both being readable side by
@@ -41,83 +50,113 @@ const STACK_MIN_LIST_HEIGHT: u16 = 5;
 
 const STACK_MIN_DETAIL_HEIGHT: u16 = 6;
 
-/// List and detail rects for the body: side by side when there is width for
-/// both, stacked when there is not. pando is used in a tmux split, so the
-/// narrow case is the normal one.
-pub fn body_layout(body: Rect) -> [Rect; 2] {
-    let stack = body.width < SIDE_BY_SIDE_MIN_WIDTH
-        && body.height >= STACK_MIN_LIST_HEIGHT + STACK_MIN_DETAIL_HEIGHT;
+/// The list's rect and the detail pane's for the body, and whether they
+/// are stacked: side by side when there is width for both, stacked when
+/// there is not or `[ui] detail` says so, and the list alone when it says
+/// `off`. pando is used in a tmux split, so the narrow case is the normal
+/// one.
+pub fn body_layout(body: Rect, detail: DetailLayout) -> (Rect, Option<Rect>, bool) {
+    let tall_enough = body.height >= STACK_MIN_LIST_HEIGHT + STACK_MIN_DETAIL_HEIGHT;
+    let stack = match detail.placement {
+        DetailPlacement::Off => return (body, None, false),
+        DetailPlacement::Right => body.width < SIDE_BY_SIDE_MIN_WIDTH && tall_enough,
+        // Too short to stack, a cramped side-by-side is the lesser evil.
+        DetailPlacement::Bottom => tall_enough,
+    };
     // The list is a table and the thing the screen is for; the detail
     // pane is read a row at a time, and the full log has its own screen.
     if !stack {
-        return Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .areas(body);
+        let share = detail.share(false);
+        let [list, detail] = Layout::horizontal([
+            Constraint::Percentage(100 - share),
+            Constraint::Percentage(share),
+        ])
+        .areas(body);
+        return (list, Some(detail), false);
     }
-    let list_height = (body.height * 2 / 5)
+    let list_share = match detail.size {
+        Some(size) => body.height * (100 - size) / 100,
+        None => body.height * 2 / 5,
+    };
+    let list_height = list_share
         .max(STACK_MIN_LIST_HEIGHT)
         .min(body.height.saturating_sub(STACK_MIN_DETAIL_HEIGHT));
-    Layout::vertical([Constraint::Length(list_height), Constraint::Fill(1)]).areas(body)
+    let [list, detail] =
+        Layout::vertical([Constraint::Length(list_height), Constraint::Fill(1)]).areas(body);
+    (list, Some(detail), true)
 }
 
+/// One project's TUI on the whole screen, as the tests draw it.
+#[cfg(test)]
 pub fn render(f: &mut Frame, app: &mut App) {
+    render_in(f, f.area(), app);
+}
+
+/// The whole of one project's TUI, drawn into `area`: the screen when it
+/// is the only one, the part right of the grove's column when there is
+/// one. What the mouse acts on is recorded where it was drawn.
+pub fn render_in(f: &mut Frame, area: Rect, app: &mut App) {
     // Each part records where it put what the mouse acts on, so nothing
     // this frame does not draw can be clicked.
     app.hits = Hits::default();
     // The viewer takes the whole screen: the header and footer it would
     // share with the list are the two rows a long stack trace needs most.
     if app.log_view().is_some() {
-        render_log_viewer(f, f.area(), app);
+        render_log_viewer(f, area, app);
         if app.inspect.is_some() {
             // The overlay answers every key, so the viewer's hints under
             // it are not what a press would reach.
             app.hits.keys.clear();
-            render_inspect(f, f.area(), app);
+            render_inspect(f, area, app);
         }
-        paint_modal(f, app);
+        paint_modal(f, area, app);
         return;
     }
     // So does the setup screen, which has a header and a footer of its
     // own, and is up whatever git lists.
     if app.setup_screen.is_some() {
-        render_setup(f, f.area(), app);
-        paint_modal(f, app);
+        render_setup(f, area, app);
+        paint_modal(f, area, app);
         return;
     }
 
     // The header grows for an error that does not fit on one row: the end
     // of an error is usually the part that says what to do.
     let [header, body, footer] = Layout::vertical([
-        Constraint::Length(header_height(app, f.area().width, f.area().height)),
+        Constraint::Length(header_height(app, area.width, area.height)),
         Constraint::Fill(1),
         Constraint::Length(1),
     ])
-    .areas(f.area());
+    .areas(area);
 
-    render_header(f, header, app);
+    render_header(f, header, area.height, app);
     // No worktrees at all is the first run, and a welcome says more than
     // an empty box beside a pane about nothing. A main checkout pando has
     // never run is no row of its own yet: see `App::main_row_shown`.
     if !app.main_row_shown() {
         render_welcome(f, body, app);
     } else {
-        let [list_area, detail_area] = body_layout(body);
+        let (list_area, detail_area, stacked) = body_layout(body, app.detail);
+        app.detail_stacked = stacked;
         render_list(f, list_area, app);
-        render_detail(f, detail_area, app);
+        if let Some(detail_area) = detail_area {
+            render_detail(f, detail_area, app);
+        }
     }
     render_footer(f, footer, app);
     app.hits.keys = hints::key_hints(f.buffer_mut(), footer);
 
-    paint_modal(f, app);
+    paint_modal(f, area, app);
 }
 
 /// The open modal, on top of whatever is under it, keeping how far help
 /// or messages can scroll for the keys that scroll them. Only its own
 /// hints take a click: what is under it is not what the keys answer.
-fn paint_modal(f: &mut Frame, app: &mut App) {
+fn paint_modal(f: &mut Frame, area: Rect, app: &mut App) {
     let Some(modal) = &app.modal else {
         return;
     };
-    let painted = super::modal::render_modal(f, f.area(), modal, app);
+    let painted = super::modal::render_modal(f, area, modal, app);
     if let Some(bottom) = painted.scroll_bottom {
         app.help_scroll_max = bottom;
     }
@@ -237,15 +276,21 @@ pub fn truncate_middle(s: &str, max: usize) -> String {
 }
 
 /// A path as a person writes it: `~` for the home directory.
+/// A home reached through a symlink is matched where it resolves too.
 pub fn home_relative(path: &std::path::Path) -> String {
     let shown = path.display().to_string();
     let Some(home) = crate::platform::dirs::home() else {
         return shown;
     };
-    match path.strip_prefix(&home) {
-        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Ok(rest) => format!("~/{}", rest.display()),
-        Err(_) => shown,
+    let real = crate::term::real_home(&home);
+    let rest = [Some(home.as_path()), real.as_deref()]
+        .into_iter()
+        .flatten()
+        .find_map(|home| path.strip_prefix(home).ok());
+    match rest {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => shown,
     }
 }
 

@@ -6,7 +6,7 @@ the contract. Everything in it is covered by the compatibility statement
 below; anything pando prints that is *not* in here is a human-readable
 convenience and may change without notice.
 
-Six shapes are published:
+Seven shapes are published:
 
 | Command | Shape | Read it for |
 |---|---|---|
@@ -14,6 +14,7 @@ Six shapes are published:
 | `pando doctor --json` | one object | what this *machine* answers, and everything that is wrong |
 | `pando status --json` | one object | what is running, on which ports, with which URL |
 | `pando ls --json` | one object | the worktrees and their git state |
+| `pando ls --all --json` | one object | every project pando knows on this machine, and what each has up |
 | `pando logs <name> --json` | one object **per line** | a log, with a level and a timestamp per line |
 | `pando check --json` | one object | whether the setup works: a test run in a throwaway worktree, and why it failed |
 
@@ -344,7 +345,11 @@ Four more facts about `slots` that are not visible in the shape:
 
 The whole report, plus the exit code as a value. It probes this machine —
 `bash -lc`, the tools on `PATH`, the engines a recipe needs — so it is the
-half `signals` deliberately leaves out. It writes nothing anywhere.
+half `signals` deliberately leaves out. It writes no config, state or
+log. The one write it may make is the one every command may: a
+project's registry, `project.json` under pando's home, written when it
+is missing or says another root — once for a project pando ran in
+before there were registries.
 
 ```jsonc
 {
@@ -645,6 +650,80 @@ each repository measured against its own base.
 `locked` is `null` when the worktree is not locked, and the lock reason —
 possibly an empty string — when it is. `pr` comes from a cache: `ls --json`
 never spawns `gh`, so it works offline and may be stale or `null`.
+
+## `pando ls --all --json`
+
+Every project pando knows on this machine, read from pando's home alone:
+it runs from any directory, inside a repository or not, and asks git
+nothing.
+
+```jsonc
+{
+  "version": 2,
+  "projects": [
+    { "id": "shop-1fb718a9", "root": "...", "name": "shop", "repos": ["backend", "frontend"],
+      "moved": false, "unreadable": false, "last_used": "2026-11-03T09:12:00Z",
+      "counts": { "up": 1, "starting": 0, "failed": 0, "stopped": 2 },
+      "warning": null,
+      "worktrees": [
+        { "name": "feat+one", "path": "...", "status": "starting|running|failed", "reason": null,
+          "processes": { "dev": { "pid": 4242, "phase": "starting|running|failed",
+                                  "since": "2026-11-03T09:12:00Z", "reason": null } },
+          "ports": { "web": 17001 }, "claimed": [17001, 17002], "clashes": [17001] }
+      ] }
+  ]
+}
+```
+
+A project is a directory under pando's home that holds a state file or a
+registry: pando ran there. `id`, `root`, `name` and `repos` are what
+`ls --json` prints as `project` for it, from the registry pando keeps
+beside its state. `moved` is true when that repository is no longer
+there, or its path now belongs to another project: such a project is
+listed so it can be found, and is not one to act on — `pando doctor
+--adopt <id>` in the repository's new place adopts it while its folder
+keeps its name; a renamed one, or a folder of repositories, is started
+afresh by pando there. A project whose
+state records no checkout that is still there, and that has no registry,
+is listed as moved with an empty `root` and the name its id carries;
+any pando command run in its repository registers it again while the
+repository is where it was, and `pando doctor --adopt <id>` in its new
+place adopts it once it moved, under the same folder name.
+
+Projects come in a fixed order: those with something up or starting
+first, moved or not, then those with only failures, then idle ones, then
+moved ones;
+within each, the most recently used first (`last_used`, when pando last
+wrote the project's state, `null` when it never did), then by `id`.
+
+`counts` counts the worktrees pando has a record of, the main checkout
+among them once it was started: `up` with every process running,
+`starting` with one still coming up, `failed` with one that failed, and
+`stopped` with nothing running. `worktrees` lists the ones that are not
+stopped, by name, `status` and `reason` as `status --json` gives them for
+the whole worktree, and `processes` each process by name as there.
+`warning` says why the project's state could not be read; its counts
+are then all zero. A project directory pando may not read is listed so,
+moved, `unreadable` true and with its `warning`: it may be where it was,
+and making that directory the developer's again (a run under `sudo`
+leaves it root's) gives it back. A home whose `projects/` it may not read
+is an error, exit 1, never an empty `projects`.
+
+`ports` are the ports pando gave the worktree, by role. `claimed` is
+every port it holds: those, what its processes were seen listening on,
+and its own services'. `clashes` is the ports in `claimed` that a
+worktree of *another* project that is up or starting claims too; two
+projects pando ports separately can be given the same one. pando shows
+a clash and never resolves it.
+
+The read is a reader's: phases are advanced on a copy as `status` would
+advance them, and nothing is saved or signalled. No lock is waited for
+or made: a project's state lock that is already there is held for the
+moment of the read when it is free, as every reader holds it; while
+another pando holds it, nothing that died is called dead. The one write
+is a project's registry, when a project pando ran in before there were
+registries is listed for the first time: its root is worked out from the
+checkouts its state records, and written down.
 
 ## `pando logs <name> --json`
 

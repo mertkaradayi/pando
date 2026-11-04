@@ -475,6 +475,7 @@ fn every_machine_readable_shape_carries_its_version() {
 
     for args in [
         vec!["ls", "--json"],
+        vec!["ls", "--all", "--json"],
         vec!["status", "--json"],
         vec!["signals"],
         // Whose exit code is a verdict about the machine, not about the
@@ -3368,6 +3369,9 @@ fn init_agent_after_a_failed_check_starts_with_the_failure() {
         "Error: Cannot find module 'dotenv'".to_string(),
     ];
     record.save(&paths).unwrap();
+    // Registered, as every run in a project makes it: what is held here is
+    // that reading the record writes nothing of its own.
+    pando::project::remember(&paths.project_dir(), &paths.project).unwrap();
     let before = contents(&e.home);
 
     let out = e.pando(&["init", "--agent"]);

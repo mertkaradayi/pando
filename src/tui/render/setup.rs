@@ -85,12 +85,23 @@ pub(super) fn render_setup(f: &mut Frame, area: Rect, app: &App) {
     render_setup_footer(f, footer, screen);
 }
 
+/// What the setup screen's header says it is, on the right.
+const FIRST_TIME: &str = "first time here";
+
 /// `pando — <project>`, and on the right what the screen is — or the
 /// flash, which has nowhere else to go here.
 fn render_setup_header(f: &mut Frame, area: Rect, app: &App, screen: &SetupScreen) {
     let width = area.width as usize;
     let title = format!(" pando — {}", app.paths.project.display_name);
-    let title_width = text_width(&title);
+    // Another project in the grove has its name: its folder, dimmed, as
+    // the project's own header says it, whole beside what the screen is
+    // where both fit, and otherwise cut to where it differs, before it.
+    let folder = app.twin_folder.as_ref().and_then(|twin| {
+        let after = width.saturating_sub(text_width(&title) + 1);
+        let beside = after.saturating_sub(3 + text_width(FIRST_TIME));
+        super::twins::header_folder(twin, beside, after.saturating_sub(1))
+    });
+    let title_width = text_width(&title) + folder.as_ref().map_or(0, |f| 1 + text_width(f));
     let room = width.saturating_sub(title_width + 3);
     let right: Vec<Span<'static>> = match app.flash() {
         Some(status) if room > 4 => {
@@ -101,11 +112,8 @@ fn render_setup_header(f: &mut Frame, area: Rect, app: &App, screen: &SetupScree
                 Span::styled(message, Style::new().fg(text_dim())),
             ]
         }
-        None if !screen.is_ready() && room >= "first time here".len() => {
-            vec![Span::styled(
-                "first time here",
-                Style::new().fg(text_muted()),
-            )]
+        None if !screen.is_ready() && room >= text_width(FIRST_TIME) => {
+            vec![Span::styled(FIRST_TIME, Style::new().fg(text_muted()))]
         }
         _ => Vec::new(),
     };
@@ -115,6 +123,12 @@ fn render_setup_header(f: &mut Frame, area: Rect, app: &App, screen: &SetupScree
         title,
         Style::new().fg(text()).add_modifier(Modifier::BOLD),
     )];
+    if let Some(folder) = folder {
+        spans.push(Span::styled(
+            format!(" {folder}"),
+            Style::new().fg(text_muted()),
+        ));
+    }
     if !right.is_empty() {
         spans.push(Span::raw(" ".repeat(gap)));
         spans.extend(right);
@@ -736,11 +750,21 @@ fn stem_names(stems: &[usize], left: usize, width: usize) -> Line<'static> {
 
 /// One row of a picture as spans, a run of one colour at a time.
 fn art_line(row: &[crate::art::Cell], left: usize, alive: bool) -> Line<'static> {
+    art_line_with(row, left, |_, cell| art_style(cell, alive))
+}
+
+/// One row of a picture as spans, each cell in the style `style_of` gives
+/// it from its column and itself, a run of one style at a time.
+pub(super) fn art_line_with(
+    row: &[crate::art::Cell],
+    left: usize,
+    style_of: impl Fn(usize, &crate::art::Cell) -> Style,
+) -> Line<'static> {
     let mut spans = vec![Span::raw(" ".repeat(left))];
     let mut run = String::new();
     let mut style = Style::new();
-    for cell in row {
-        let next = art_style(cell, alive);
+    for (x, cell) in row.iter().enumerate() {
+        let next = style_of(x, cell);
         if next != style && !run.is_empty() {
             spans.push(Span::styled(std::mem::take(&mut run), style));
         }
@@ -755,7 +779,7 @@ fn art_line(row: &[crate::art::Cell], left: usize, alive: bool) -> Line<'static>
 
 /// A picture cell's colour: gold letters and leaves, white stems, and
 /// roots dark while pando is being set up and lit once it is ready.
-fn art_style(cell: &crate::art::Cell, alive: bool) -> Style {
+pub(super) fn art_style(cell: &crate::art::Cell, alive: bool) -> Style {
     use crate::art::Material;
     let fg = match (cell.material, alive) {
         (Material::Sky, _) => return Style::new(),

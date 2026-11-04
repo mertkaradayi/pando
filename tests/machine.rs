@@ -1,0 +1,324 @@
+//! `pando ls --all` through the binary: every project in one home, from a
+//! directory that is no repository, with the registry each project keeps.
+
+use crate::common;
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use common::{Kind, build};
+use tempfile::TempDir;
+
+const SLEEPER: &str = "[dev]\ncmd = \"echo started-ok && sleep 30\"\nports = { PORT = \"web\" }\n";
+
+/// Two fixture projects, `a/` and `b/`, sharing one pando home, and a
+/// directory beside them that is in no repository.
+struct Machine {
+    _dir: TempDir,
+    home: PathBuf,
+    a: PathBuf,
+    b: PathBuf,
+    nowhere: PathBuf,
+}
+
+impl Machine {
+    fn new() -> Self {
+        common::hermetic_home();
+        let dir = TempDir::new().unwrap();
+        let a = build(Kind::Plain, &dir.path().join("a")).root;
+        let b = build(Kind::Plain, &dir.path().join("b")).root;
+        let home = dir.path().join("pando-home");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::create_dir_all(&home).unwrap();
+            std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::write(home.join("config.toml"), "[runtime]\nprelude = \"\"\n").unwrap();
+        }
+        let nowhere = dir.path().join("nowhere");
+        std::fs::create_dir_all(&nowhere).unwrap();
+        let machine = Self {
+            home,
+            a,
+            b,
+            nowhere,
+            _dir: dir,
+        };
+        for root in [&machine.a, &machine.b] {
+            let config = machine.project_dir(root).join("pando.toml");
+            std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+            std::fs::write(config, SLEEPER).unwrap();
+        }
+        machine
+    }
+
+    fn pando_in(&self, cwd: &Path, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_pando"))
+            .env("PANDO_HOME", &self.home)
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .expect("run pando")
+    }
+
+    fn project_dir(&self, root: &Path) -> PathBuf {
+        let project = pando::project::ProjectRef::from_root(root).unwrap();
+        self.home.join("projects").join(project.id)
+    }
+
+    fn id(&self, root: &Path) -> String {
+        pando::project::ProjectRef::from_root(root).unwrap().id
+    }
+
+    /// `ls --all --json` from the directory that is no repository.
+    fn all(&self) -> serde_json::Value {
+        let out = self.pando_in(&self.nowhere, &["ls", "--all", "--json"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        serde_json::from_slice(&out.stdout).unwrap()
+    }
+}
+
+impl Drop for Machine {
+    fn drop(&mut self) {
+        for root in [&self.a, &self.b] {
+            if root.exists() {
+                let _ = self.pando_in(root, &["stop", "--all"]);
+            }
+        }
+    }
+}
+
+fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+fn ok(out: Output) -> Output {
+    assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
+    out
+}
+
+#[test]
+fn ls_all_lists_every_project_from_outside_any_repository() {
+    let m = Machine::new();
+    ok(m.pando_in(&m.a, &["new", "feat/one"]));
+    ok(m.pando_in(&m.b, &["new", "feat/two"]));
+
+    // Each project registered where its repository is, and a run that
+    // finds the registry as it would write it writes nothing.
+    let registry = m.project_dir(&m.a).join("project.json");
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&registry).unwrap()).unwrap();
+    let a_root = std::fs::canonicalize(&m.a).unwrap();
+    assert_eq!(written["root"], a_root.display().to_string().as_str());
+    let bytes = std::fs::read(&registry).unwrap();
+    let modified = std::fs::metadata(&registry).unwrap().modified().unwrap();
+    ok(m.pando_in(&m.a, &["ls"]));
+    assert_eq!(std::fs::read(&registry).unwrap(), bytes);
+    assert_eq!(
+        std::fs::metadata(&registry).unwrap().modified().unwrap(),
+        modified
+    );
+
+    // One up: it comes first, whatever was used last.
+    ok(m.pando_in(&m.b, &["start", "feat/two"]));
+    ok(m.pando_in(&m.a, &["ls"]));
+    let v = m.all();
+    assert_eq!(v["version"], pando::cli::JSON_VERSION);
+    let projects = v["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 2, "{v}");
+    assert_eq!(projects[0]["id"], m.id(&m.b).as_str(), "{v}");
+    let counts = &projects[0]["counts"];
+    assert_eq!(
+        counts["up"].as_u64().unwrap() + counts["starting"].as_u64().unwrap(),
+        1,
+        "{v}"
+    );
+    let two = &projects[0]["worktrees"][0];
+    assert_eq!(two["name"], "feat+two", "{v}");
+    assert!(
+        two["status"] == "starting" || two["status"] == "running",
+        "{v}"
+    );
+    assert!(two["processes"]["dev"]["pid"].is_u64(), "{v}");
+    assert_eq!(projects[1]["id"], m.id(&m.a).as_str(), "{v}");
+    assert_eq!(projects[1]["moved"], false);
+
+    // The text, from the same place, groups them the same way.
+    let out = ok(m.pando_in(&m.nowhere, &["ls", "--all"]));
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let b_at = text.find("feat+two").expect(&text);
+    let a_name = a_root.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(text.rfind(&a_name).unwrap() > b_at, "{text}");
+
+    // From inside a repository it is the same machine-wide answer.
+    let inside = m.pando_in(&m.a, &["ls", "--all", "--json"]);
+    let inside: serde_json::Value = serde_json::from_slice(&ok(inside).stdout).unwrap();
+    assert_eq!(inside["projects"].as_array().unwrap().len(), 2);
+
+    // Plain `ls` outside a repository still says there is none.
+    let out = m.pando_in(&m.nowhere, &["ls"]);
+    assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn a_project_without_a_registry_is_recovered_and_a_moved_one_said_so() {
+    let m = Machine::new();
+    ok(m.pando_in(&m.a, &["new", "feat/one"]));
+    ok(m.pando_in(&m.b, &["new", "feat/two"]));
+
+    // Registered before registries: recovered from what its state records,
+    // and written down then.
+    let registry = m.project_dir(&m.a).join("project.json");
+    std::fs::remove_file(&registry).unwrap();
+    let v = m.all();
+    let a = v["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == m.id(&m.a).as_str())
+        .expect("recovered");
+    let a_root = std::fs::canonicalize(&m.a).unwrap();
+    assert_eq!(a["root"], a_root.display().to_string().as_str(), "{v}");
+    assert_eq!(a["moved"], false, "{v}");
+    assert!(registry.is_file(), "the recovered registry is written");
+
+    // Moved aside: still listed, last, and said to be moved.
+    let b_id = m.id(&m.b);
+    std::fs::rename(&m.b, m.b.with_file_name("elsewhere")).unwrap();
+    let v = m.all();
+    let projects = v["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 2, "{v}");
+    assert_eq!(projects[1]["id"], b_id.as_str(), "{v}");
+    assert_eq!(projects[1]["moved"], true, "{v}");
+    assert_eq!(projects[0]["moved"], false, "{v}");
+}
+
+/// A folder like a developer's home directory: repositories cloned by
+/// tools directly in it, and nothing that is a project of them.
+fn folder_of_clones(parent: &Path) -> PathBuf {
+    let folder = parent.join("me");
+    for repo in ["iterm", "tpm"] {
+        let at = folder.join(repo);
+        std::fs::create_dir_all(&at).unwrap();
+        common::git(&at, &["init", "--quiet"]);
+    }
+    std::fs::create_dir_all(folder.join("Downloads")).unwrap();
+    std::fs::canonicalize(folder).unwrap()
+}
+
+fn pando_with_home(home: &Path, cwd: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_pando"))
+        .env("PANDO_HOME", home)
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("run pando")
+}
+
+fn projects_in(home: &Path) -> Vec<String> {
+    std::fs::read_dir(home.join("projects"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_folder_holding_the_pando_home_is_no_project_of_its_clones() {
+    common::hermetic_home();
+    let dir = TempDir::new().unwrap();
+    let folder = folder_of_clones(dir.path());
+    let home = folder.join(".pando");
+
+    for args in [&["ls"][..], &["status"], &[]] {
+        let out = pando_with_home(&home, &folder, args);
+        let err = stderr(&out);
+        assert_ne!(out.status.code(), Some(0), "{args:?}: {err}");
+        assert!(!err.contains("inside the repository"), "{args:?}: {err}");
+    }
+    assert!(projects_in(&home).is_empty(), "{:?}", projects_in(&home));
+    ok(pando_with_home(&home, &folder, &["ls", "--all"]));
+}
+
+#[test]
+fn a_look_at_an_unknown_folder_of_repositories_makes_it_no_project() {
+    common::hermetic_home();
+    let dir = TempDir::new().unwrap();
+    let folder = folder_of_clones(dir.path());
+    let home = dir.path().join("pando-home");
+
+    // `pando` with no command (here into a pipe) says how to make it one,
+    // and makes nothing.
+    let out = pando_with_home(&home, &folder, &[]);
+    assert_ne!(out.status.code(), Some(0));
+    assert!(projects_in(&home).is_empty(), "{:?}", projects_in(&home));
+    // A command still takes it, and a read-only one writes nothing.
+    ok(pando_with_home(&home, &folder, &["ls"]));
+    assert!(projects_in(&home).is_empty(), "{:?}", projects_in(&home));
+    let out = pando_with_home(&home, &folder.join("Downloads"), &["ls"]);
+    assert!(
+        stderr(&out).contains("not inside a git repository"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn outside_any_project_pando_points_at_ls_all_and_the_repository_in_reach() {
+    common::hermetic_home();
+    let dir = TempDir::new().unwrap();
+    let home = dir.path().join("pando-home");
+    let empty = dir.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+
+    let out = pando_with_home(&home, &empty, &["ls"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("`pando ls --all`"),
+        "{}",
+        stderr(&out)
+    );
+    // Into a pipe, `pando` alone says it needs a terminal, as it does in
+    // a project.
+    let out = pando_with_home(&home, &empty, &[]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("needs a terminal"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("`pando ls --all`"),
+        "{}",
+        stderr(&out)
+    );
+    // One repository in reach is named.
+    let one = dir.path().join("one");
+    std::fs::create_dir_all(one.join("shop")).unwrap();
+    common::git(&one.join("shop"), &["init", "--quiet"]);
+    let out = pando_with_home(&home, &one, &["status"]);
+    assert!(stderr(&out).contains("`cd shop`"), "{}", stderr(&out));
+}
+
+#[test]
+fn ls_all_answers_from_a_directory_that_was_removed() {
+    let m = Machine::new();
+    ok(m.pando_in(&m.a, &["new", "feat/one"]));
+    let gone = m.nowhere.join("gone");
+    std::fs::create_dir_all(&gone).unwrap();
+    // The shell sits in the directory when it goes, as one does in a
+    // worktree removed from another pane.
+    let out = Command::new("sh")
+        .current_dir(&gone)
+        .env("PANDO_HOME", &m.home)
+        .arg("-c")
+        .arg("rmdir \"$PWD\" && exec \"$0\" ls --all --json")
+        .arg(env!("CARGO_BIN_EXE_pando"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["projects"][0]["id"], m.id(&m.a).as_str(), "{v}");
+}
