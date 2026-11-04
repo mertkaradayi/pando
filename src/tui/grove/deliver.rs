@@ -282,6 +282,12 @@ impl Grove {
     /// The mouse: the column's or the strip's own presses, and everything
     /// else the front app's, whose regions are where it was drawn.
     fn handle_mouse(&mut self, mouse: MouseEvent) -> bool {
+        // The grove's own dialog or help has the screen, as it has the
+        // keys: nothing behind it takes a click, which on the front app's
+        // footer would press a key of its list.
+        if self.confirm.is_some() || self.help.is_some() {
+            return false;
+        }
         let at = Position::new(mouse.column, mouse.row);
         if !self.hits.column.contains(at) {
             // A press on the project in front gives it the keys, as `tab`

@@ -1543,3 +1543,27 @@ fn question_mark_on_the_home_pane_opens_the_groves_help() {
     let home = text_of(&draw(&mut grove, 120, 40));
     assert!(home.contains("? help"), "{home}");
 }
+
+// The stop confirmation has the mouse as it has the keys: a click on a
+// row, or on the front app behind it, does nothing.
+#[test]
+fn a_click_under_the_stop_confirmation_reaches_nothing() {
+    let mut grove = a_grove();
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Char('X'));
+    draw(&mut grove, 120, 30);
+    assert!(grove.confirm.is_some());
+    let (row, _) = grove.hits.rows[1];
+    click(&mut grove, row.x + 1, row.y);
+    let keys = grove.front_app().unwrap().hits.keys.clone();
+    for (rect, _) in keys {
+        click(&mut grove, rect.x, rect.y);
+    }
+    click(&mut grove, 100, 10);
+    assert!(grove.confirm.is_some());
+    assert_eq!(grove.cursor, 0);
+    assert!(grove.open_requests.is_empty(), "{:?}", grove.open_requests);
+    assert_eq!(grove.focus, Focus::Column);
+    let app = grove.front_app().unwrap();
+    assert!(app.pending.is_empty() && app.modal.is_none() && app.armed.is_none());
+}
