@@ -1182,7 +1182,7 @@ theme = "catppuccin"
 <p>pando starts commands with <code>bash -lc</code>, a login bash, which reads <code>~/.bash_profile</code> and never <code>~/.zshrc</code>. A version manager set up only in <code>.zshrc</code> does not exist there.</p>
 <p><code>pando doctor</code> shows which binary each language resolved to. The fix is a one-line <code>[runtime] prelude</code> for your machine, kept in <code>~/.pando/config.toml</code> rather than in the repository.</p></details>
 <details><summary>I moved my repository and pando forgot it.</summary>
-<p>A project's pando data is keyed by the folder's name and a hash of its path, so after a move pando sees a new project. <code>pando doctor</code> finds the old one, and <code class="lg">pando doctor <span class="nw">--adopt</span> <span class="nw">&lt;old-id&gt;</span></code> moves its config, state and worktrees over.</p></details>
+<p>A project's pando data is keyed by the folder's name and a hash of its path, so after a move pando sees a new project. <code>pando doctor</code> finds the old one, and <code class="lg">pando doctor <span class="nw">--adopt</span> <span class="nw">&lt;old-id&gt;</span></code> run where the repository is now, moves its config, state and worktrees over. It adopts a repository whose folder kept its name; a renamed one is a new project to pando, which starts it afresh.</p></details>
 <details><summary>Does pando new fetch the newest base first?</summary>
 <p>No. A new branch forks from the last-fetched <code>origin/&lt;base&gt;</code>, so run <code>git fetch</code> first when you need the newest commit. An existing branch is looked for locally, then on <code>origin</code>.</p></details>
 <details><summary>How many worktrees can run at once?</summary>

@@ -680,13 +680,15 @@ registry: pando ran there. `id`, `root`, `name` and `repos` are what
 `ls --json` prints as `project` for it, from the registry pando keeps
 beside its state. `moved` is true when that repository is no longer
 there, or its path now belongs to another project: such a project is
-listed so it can be found, and is not one to act on — `pando doctor`
-in the repository's new place offers to adopt it. A project whose
+listed so it can be found, and is not one to act on — `pando doctor
+--adopt <id>` in the repository's new place adopts it while its folder
+keeps its name; a renamed one, or a folder of repositories, is started
+afresh by pando there. A project whose
 state records no checkout that is still there, and that has no registry,
 is listed as moved with an empty `root` and the name its id carries;
 any pando command run in its repository registers it again while the
-repository is where it was, and `pando doctor` in its new place offers
-to adopt it once it moved, under the same folder name.
+repository is where it was, and `pando doctor --adopt <id>` in its new
+place adopts it once it moved, under the same folder name.
 
 Projects come in a fixed order: those with something up or starting
 first, moved or not, then those with only failures, then idle ones, then

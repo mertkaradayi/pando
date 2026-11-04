@@ -48,11 +48,6 @@ impl ProjectSummary {
         !self.root.as_os_str().is_empty()
     }
 
-    /// What finds a project nothing locates again: its repository is
-    /// registered by any pando run there while it is where it was, and
-    /// adopted by `doctor` in its new place once it moved.
-    pub const FIND_AGAIN: &str = "run pando in its repository, or `pando doctor` there if it moved";
-
     /// What gives an unreadable project back: its directory under the
     /// home made the developer's again — a run under `sudo` leaves it
     /// root's.
@@ -60,11 +55,47 @@ impl ProjectSummary {
         "pando may not read its folder under pando's home — `chown` it back to you";
 
     /// What its line says instead of where it is: why it is not located.
-    pub fn not_located(&self) -> String {
+    /// How to bring it back is [`Self::find_again`].
+    pub fn not_located(&self) -> &'static str {
         match self.unreadable {
-            true => format!("cannot be read · {}", Self::READ_AGAIN),
-            false => format!("not located · {}", Self::FIND_AGAIN),
+            true => "cannot be read",
+            false => "not located",
         }
+    }
+
+    /// What brings back a project nothing locates, or one pando may not
+    /// read: its repository is registered by any pando run there while it
+    /// is where it was, and adopted where it moved to as
+    /// [`Self::adopt_hint`] says.
+    pub fn find_again(&self) -> String {
+        match self.unreadable {
+            true => Self::READ_AGAIN.to_string(),
+            false => format!(
+                "run pando in its repository; if it moved, {}",
+                self.adopt_hint()
+            ),
+        }
+    }
+
+    /// What adopts a moved project where it is now. `doctor --adopt`
+    /// takes a repository whose folder kept its name, never a renamed
+    /// one nor a folder of repositories: pando run there starts those
+    /// afresh.
+    pub fn adopt_hint(&self) -> String {
+        if !self.repos.is_empty() {
+            return "a moved folder of repositories is not adopted: pando run where it is now \
+                    starts it afresh"
+                .to_string();
+        }
+        let folder = self
+            .id
+            .rsplit_once('-')
+            .map_or(self.id.as_str(), |(n, _)| n);
+        format!(
+            "`pando doctor --adopt {}` run where it is now adopts it while its folder is still \
+             called {folder}; renamed, pando there starts it afresh",
+            self.id
+        )
     }
 
     /// The word for a project nothing is done to: `unreadable`, or `moved`.

@@ -44,8 +44,8 @@ impl KnownProject {
 /// every checkout it records is gone — is still listed, as moved, under
 /// the name its directory carries and an empty root, and nothing is
 /// written: running pando in its repository registers it again while the
-/// repository is where it was, and `pando doctor` in its new place adopts
-/// it once it moved, under the same folder name. A directory pando cannot
+/// repository is where it was, and `pando doctor --adopt <id>` in its new
+/// place adopts it once it moved, under the same folder name. A directory pando cannot
 /// read is listed the same way, and its summary says why: its processes
 /// may hold ports all the same.
 ///

@@ -1493,12 +1493,12 @@ fn a_home_pane_note_keeps_its_end_on_any_width() {
         // ⏎ on it names where it was and what adopts it where it is.
         press(&mut grove, KeyCode::Enter);
         let note = grove.fresh_note().unwrap_or_default().to_string();
-        assert!(
-            note.ends_with("`pando doctor` where it is now adopts it"),
-            "{note}"
-        );
+        assert!(note.ends_with("pando there starts it afresh"), "{note}");
         let text = text_of(&draw(&mut grove, width, 40));
-        assert!(flat_of(&text).contains("adopts it"), "{width}:\n{text}");
+        assert!(
+            flat_of(&text).contains("starts it afresh"),
+            "{width}:\n{text}"
+        );
     }
 }
 
@@ -1768,4 +1768,34 @@ fn twins_in_folders_that_share_their_start_show_where_the_folders_differ() {
         .find(|l| l.contains("plain"))
         .unwrap_or_default();
     assert!(strip.contains("837"), "{text}");
+}
+
+#[test]
+fn enter_on_a_moved_project_names_the_command_that_adopts_it() {
+    let mut moved = summary("plain", 0, 0);
+    moved.id = "plain-1a2b3c4d".into();
+    moved.moved = true;
+    let mut grove = Grove::new_for_test(vec![moved.clone(), summary("docs", 0, 0)]);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Enter);
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    // The exact command, with the id `--adopt` takes, and that a renamed
+    // folder is not adopted.
+    assert!(
+        note.contains("`pando doctor --adopt plain-1a2b3c4d` run where it is now adopts it"),
+        "{note}"
+    );
+    assert!(note.contains("still called plain"), "{note}");
+    assert!(
+        note.contains("renamed, pando there starts it afresh"),
+        "{note}"
+    );
+    // A folder of repositories is never adopted.
+    moved.repos = vec!["api".into(), "web".into()];
+    let mut grove = Grove::new_for_test(vec![moved, summary("docs", 0, 0)]);
+    grove.focus = Focus::Column;
+    press(&mut grove, KeyCode::Enter);
+    let note = grove.fresh_note().unwrap_or_default().to_string();
+    assert!(!note.contains("--adopt"), "{note}");
+    assert!(note.contains("starts it afresh"), "{note}");
 }

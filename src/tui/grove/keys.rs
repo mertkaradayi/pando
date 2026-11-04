@@ -232,15 +232,12 @@ impl Grove {
                     crate::actions::ProjectSummary::READ_AGAIN
                 ),
                 true => format!(
-                    "{} is not at {} any more — `pando doctor` where it is now adopts it",
+                    "{} is not at {} any more — {}",
                     summary.name,
-                    crate::tui::render::home_relative(&summary.root)
+                    crate::tui::render::home_relative(&summary.root),
+                    summary.adopt_hint()
                 ),
-                false => format!(
-                    "{} is not located — {}",
-                    summary.name,
-                    crate::actions::ProjectSummary::FIND_AGAIN
-                ),
+                false => format!("{} is not located — {}", summary.name, summary.find_again()),
             };
             self.say(text, true);
             return;

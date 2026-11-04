@@ -572,9 +572,6 @@ fn a_project_dir_that_cannot_be_read_is_listed_with_why() {
     // where it was.
     assert!(all[0].moved && all[0].unreadable, "{all:?}");
     assert_eq!(all[0].hands_off_word(), "unreadable");
-    assert!(
-        all[0].not_located().starts_with("cannot be read · "),
-        "{}",
-        all[0].not_located()
-    );
+    assert_eq!(all[0].not_located(), "cannot be read");
+    assert_eq!(all[0].find_again(), ProjectSummary::READ_AGAIN);
 }

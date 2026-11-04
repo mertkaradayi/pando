@@ -65,7 +65,9 @@ may change behaviour.
   repository is, in `project.json`, written when pando runs there,
   whatever the command, a read-only one included. A
   project pando ran in before is recovered from the checkouts its state
-  records, and one whose repository has moved is listed as moved;
+  records, and one whose repository has moved is listed as moved, with
+  the `pando doctor --adopt <id>` that adopts it where it is now while
+  its folder keeps its name (a renamed one starts afresh there);
   what of it still runs is listed as running, with the live projects,
   and its ports count in a clash. A home whose projects cannot be read
   is an error, never an empty list, and a project directory that cannot

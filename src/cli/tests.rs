@@ -6419,9 +6419,14 @@ fn ls_all_says_how_to_locate_a_project_nothing_records_the_place_of() {
     crate::state::save(&project_dir.join("state.json"), &store).unwrap();
     let text = capture(|b| ls_machine_text_with(dir.path(), b, &LsView::plain(120)));
     assert!(text.contains("acme-shop"), "{text}");
+    assert!(text.contains("not located"), "{text}");
+    // How to bring it back, whole, on its own line: the command with the
+    // id `--adopt` takes, never cut to the width.
     assert!(
         text.contains(
-            "not located · run pando in its repository, or `pando doctor` there if it moved"
+            "    run pando in its repository; if it moved, `pando doctor --adopt \
+             acme-shop-1fb718a9` run where it is now adopts it while its folder is still called \
+             acme-shop; renamed, pando there starts it afresh"
         ),
         "{text}"
     );

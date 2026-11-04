@@ -78,7 +78,7 @@ pub fn ls_machine_text_with<W: Write>(home: &Path, out: &mut W, view: &LsView) -
         // No record says where it is: the place of a path is how to
         // bring it back.
         let root = match summary.located() {
-            false => summary.not_located(),
+            false => summary.not_located().to_string(),
             true => style.tilde(&summary.root.display().to_string()),
         };
         let room = view.width.saturating_sub(text_width(&lead) + 2);
@@ -100,6 +100,11 @@ pub fn ls_machine_text_with<W: Write>(home: &Path, out: &mut W, view: &LsView) -
             line.push_str(&style.paint(&ellipsize_middle(&root, room), Paint::Faint));
         }
         writeln!(out, "{}", line.trim_end())?;
+        // How to bring it back, whole on a line of its own: its end is
+        // the command.
+        if !summary.located() {
+            writeln!(out, "    {}", summary.find_again())?;
+        }
         if let Some(warning) = &summary.warning {
             writeln!(
                 out,
