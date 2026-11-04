@@ -198,20 +198,30 @@ fn write_worktree<W: Write>(
         line.push_str("  ");
         line.push_str(&ports.join(" "));
     }
+    // With `-l` the path comes first, fitted as a project's root is; the
+    // reason gets what is left, and neither runs past the width.
+    let path = match view.long {
+        true => {
+            let room = view
+                .width
+                .saturating_sub(crate::term::visible_width(&line) + 2);
+            let path = style.tilde(&worktree.path.display().to_string());
+            (room >= 8).then(|| ellipsize_middle(&path, room))
+        }
+        false => None,
+    };
+    let path_takes = path.as_ref().map_or(0, |p| text_width(p) + 2);
     if let Some(reason) = worktree.phase.reason() {
-        let used = crate::term::visible_width(&line) + 2;
+        let used = crate::term::visible_width(&line) + 2 + path_takes;
         let room = view.width.saturating_sub(used);
         if room >= 8 {
             line.push_str("  ");
             line.push_str(&style.paint(&ellipsize_end(&reason, room), Paint::Faint));
         }
     }
-    if view.long {
+    if let Some(path) = path {
         line.push_str("  ");
-        line.push_str(&style.paint(
-            &style.tilde(&worktree.path.display().to_string()),
-            Paint::Faint,
-        ));
+        line.push_str(&style.paint(&path, Paint::Faint));
     }
     writeln!(out, "{line}")?;
     Ok(())

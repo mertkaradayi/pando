@@ -6470,3 +6470,24 @@ fn a_clash_between_two_projects_of_one_name_names_where_each_is() {
     );
     assert!(!lines[0].contains("plain plain"), "{lines:?}");
 }
+
+// `-l` on a narrow terminal: the failed worktree's path and reason share
+// the width rather than the reason being cut and the path run past it.
+#[test]
+fn ls_all_long_fits_a_worktrees_path_and_reason_in_the_width() {
+    let m = machine();
+    let view = LsView {
+        width: 60,
+        long: true,
+        style: crate::term::Style::plain(),
+    };
+    let text = capture(|b| ls_machine_text_with(&m.fx.paths.home, b, &view));
+    for line in text.lines().filter(|l| l.starts_with("    ")) {
+        assert!(
+            crate::term::visible_width(line) <= 60,
+            "{line:?} in\n{text}"
+        );
+    }
+    let failed = text.lines().find(|l| l.contains("feat+two")).unwrap();
+    assert!(failed.contains('…'), "{failed}");
+}
