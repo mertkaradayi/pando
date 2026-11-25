@@ -3732,6 +3732,67 @@ fn a_root_with_a_manifest_reads_no_app_directories() {
     }
 }
 
+/// Two apps in sibling directories, each with its own lockfile, under a
+/// root `package.json` that depends on nothing and only runs them: the
+/// shortcut file many repositories of separate apps keep at the root.
+fn apps_under_a_script_runner(runner: &str) -> TempDir {
+    tree(&[
+        ("package.json", runner),
+        (
+            "site/package.json",
+            r#"{ "scripts": { "dev": "vite", "build": "vite build" } }"#,
+        ),
+        ("site/package-lock.json", "{}"),
+        (
+            "api/package.json",
+            r#"{ "scripts": { "dev": "bun --watch src/index.ts" } }"#,
+        ),
+        ("api/bun.lock", "{}"),
+        ("docs/README.md", "# docs\n"),
+    ])
+}
+
+// A root `package.json` that only changes into the apps below it is no
+// app of its own: the root is read one level down, as one with no
+// manifest is, and each app installs in its own directory.
+#[test]
+fn a_root_package_json_that_only_runs_the_apps_below_is_read_one_level_down() {
+    for runner in [
+        r#"{ "private": true, "scripts": { "build": "cd site && npm run build", "check": "bash scripts/check.sh" } }"#,
+        r#"{ "scripts": { "dev:site": "npm --prefix site run dev" } }"#,
+        r#"{ "scripts": { "dev": "pnpm -C ./api/ dev" } }"#,
+    ] {
+        let dir = apps_under_a_script_runner(runner);
+        let found = signals(dir.path());
+        let dirs: Vec<&str> = found.app_dirs.iter().map(|a| a.dir.as_str()).collect();
+        assert_eq!(dirs, ["api", "site"], "{runner}");
+        let proposal = install_proposal(dir.path(), &found).unwrap();
+        assert_eq!(
+            values(&proposal),
+            ["(cd api && bun install --frozen-lockfile) && (cd site && npm ci)"],
+            "{runner}"
+        );
+    }
+}
+
+// A root `package.json` that depends on anything, declares workspaces, or
+// changes into nothing below the root is the project's own manifest, read
+// as it always was.
+#[test]
+fn a_root_package_json_with_dependencies_or_workspaces_is_still_a_manifest() {
+    for root in [
+        r#"{ "devDependencies": { "prettier": "3" }, "scripts": { "build": "cd site && npm run build" } }"#,
+        r#"{ "workspaces": ["site", "api"], "scripts": { "build": "cd site && npm run build" } }"#,
+        r#"{ "scripts": { "build": "cd missing && make" } }"#,
+        r#"{ "scripts": { "build": "cd .. && make", "up": "cd /srv/app && ./run" } }"#,
+        r#"{ "scripts": { "dev": "vite" } }"#,
+        "not json",
+    ] {
+        let dir = apps_under_a_script_runner(root);
+        assert!(signals(dir.path()).app_dirs.is_empty(), "{root}");
+    }
+}
+
 // Each app installs from its own lockfile, in its own directory, the way
 // it would at a root of its own.
 #[test]

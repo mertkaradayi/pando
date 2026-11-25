@@ -7,6 +7,16 @@ may change behaviour.
 
 ## Unreleased
 
+### Fixed
+
+- A root `package.json` that only runs the apps below it no longer
+  hides them. One that depends on nothing, declares no workspaces and
+  has a script that changes into a directory below the root
+  (`cd site && npm run build`, `npm --prefix site run dev`, `pnpm -C api
+  dev`) is read like a root with no manifest: each app directory is
+  found, installed in its own directory and offered as a process, where
+  before the first run found nothing to install or start.
+
 ## 0.11.2 — 2026-10-31
 
 ### Added
