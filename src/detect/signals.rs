@@ -313,11 +313,71 @@ fn is_local_env(name: &str) -> bool {
 /// `package.json`, a lockfile, a workspace marker, or a framework or
 /// toolchain marker. A root with none of them is not an app, and its apps
 /// are in the directories below it.
+///
+/// A `package.json` that only runs the apps below it is not a manifest
+/// either: see [`only_runs_apps_below`].
 fn has_manifest(root: &Path, signals: &Signals) -> bool {
-    root.join("package.json").is_file()
+    (root.join("package.json").is_file() && !only_runs_apps_below(root))
         || !signals.lockfiles.is_empty()
         || !signals.workspace_markers.is_empty()
         || !signals.markers.is_empty()
+}
+
+/// Whether the root's `package.json` is a shortcut to the apps below it
+/// rather than an app of its own: it depends on nothing, declares no
+/// workspaces, and at least one of its scripts changes into a directory
+/// below the root — `"build:site": "cd site && npm run build"`.
+///
+/// Such a file builds nothing at the root, so reading it as the root's
+/// manifest leaves every app below unread and the first run with nothing
+/// to install or start. A root `package.json` with any dependency, or with
+/// workspaces, is the project's own and is read as before.
+fn only_runs_apps_below(root: &Path) -> bool {
+    let manifest = std::fs::read_to_string(root.join("package.json")).unwrap_or_default();
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&manifest) else {
+        return false;
+    };
+    const DECLARES: [&str; 5] = [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+        "workspaces",
+    ];
+    let declares = |key: &str| match value.get(key) {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Object(map)) => !map.is_empty(),
+        Some(serde_json::Value::Array(list)) => !list.is_empty(),
+        Some(_) => true,
+    };
+    if DECLARES.iter().any(|key| declares(key)) {
+        return false;
+    }
+    parse_scripts(&manifest)
+        .values()
+        .any(|body| changes_into_dir_below(root, body))
+}
+
+/// Whether a script changes into a directory below `root` before it runs
+/// anything: `cd <dir>`, or a package manager's own `--prefix`, `--cwd`,
+/// `--dir` or `-C <dir>`.
+fn changes_into_dir_below(root: &Path, script: &str) -> bool {
+    let words: Vec<&str> = script.split_whitespace().collect();
+    words.windows(2).any(|pair| {
+        let dir = match pair[0] {
+            "cd" | "--prefix" | "--cwd" | "--dir" | "-C" => pair[1],
+            _ => return false,
+        };
+        let dir = dir
+            .trim_matches(|c| c == '"' || c == '\'')
+            .trim_end_matches('/');
+        let dir = dir.strip_prefix("./").unwrap_or(dir);
+        !dir.is_empty()
+            && !dir.starts_with('/')
+            && !dir.starts_with('.')
+            && !dir.starts_with('$')
+            && root.join(dir).is_dir()
+    })
 }
 
 /// Where the apps of a root with no manifest are looked for: each
